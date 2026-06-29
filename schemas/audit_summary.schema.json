@@ -10,6 +10,8 @@
     "overall_risk",
     "misconduct_verdict_present",
     "risk_caps_applied",
+    "positive_provenance",
+    "traceability_gaps",
     "findings"
   ],
   "properties": {
@@ -20,6 +22,47 @@
     "overall_risk": {"enum": ["R0", "R1", "R2", "R3", "R4"]},
     "misconduct_verdict_present": {"type": "boolean"},
     "risk_caps_applied": {"type": "array", "items": {"type": "string"}},
+    "positive_provenance": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "provenance_id",
+          "relation_type",
+          "figure_panel",
+          "source_record",
+          "evidence_source",
+          "risk_effect"
+        ],
+        "properties": {
+          "provenance_id": {"type": "string"},
+          "relation_type": {"type": "string"},
+          "figure_panel": {"type": "string"},
+          "source_record": {"type": "string"},
+          "evidence_source": {"type": "string"},
+          "risk_effect": {"type": "string"}
+        }
+      }
+    },
+    "traceability_gaps": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "gap_id",
+          "finding_type",
+          "risk_level",
+          "required_materials_to_resolve"
+        ],
+        "properties": {
+          "gap_id": {"type": "string"},
+          "finding_type": {"type": "string"},
+          "risk_level": {"enum": ["R0", "R1", "R2", "R3", "R4"]},
+          "location": {"type": "string"},
+          "required_materials_to_resolve": {"type": "array", "items": {"type": "string"}}
+        }
+      }
+    },
     "findings": {
       "type": "array",
       "items": {

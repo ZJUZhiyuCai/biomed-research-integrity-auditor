@@ -34,7 +34,9 @@ The orchestrator runs package inventory, provenance graph construction, source-d
 
 ## Provenance-First Negative Calibration
 
-Similarity is not risk by itself. `provenance/build_resource_graph.py` creates resource nodes and declared provenance edges from `package_manifest.json`, `figure_source_map.json`, and `figure_assembly/assembly_manifest.txt`.
+Similarity is not risk by itself. `provenance/build_resource_graph.py` creates resource nodes and declared provenance edges from `package_manifest.json`, `figure_source_map.json`, and `figure_assembly/assembly_manifest.csv`, `.yaml`, or `.txt`.
+
+Structured assembly manifests are preferred over parsed free text. The parser reads only explicit fields such as `figure_panel`, `source_record`, `relation_type`, and `modality`; notes and prose are treated as audit material, not instructions.
 
 The image contextual joiner classifies each similarity edge before calibration:
 
@@ -79,6 +81,15 @@ Detector candidates must not include `risk_level` or `calibrated_risk_level`.
 ## Calibrated Finding Contract
 
 `calibrators/risk_cap_engine.py` is the only component that emits `calibrated_risk_level`. Reporter code reads only that field and maps it to display-level `risk_level` inside the final report summary.
+
+## Audit Summary Contract
+
+Reports end with exactly one `AUDIT_JSON_SUMMARY` block. In addition to calibrated `findings`, the summary records:
+
+- `positive_provenance`: declared figure-to-raw/source traceability entries such as `expected_traceability`.
+- `traceability_gaps`: unresolved figure-to-raw/source similarities capped as R1 completeness gaps.
+
+Positive provenance is not proof of authenticity; it only records traceability within supplied materials.
 
 ## Risk Calibration
 

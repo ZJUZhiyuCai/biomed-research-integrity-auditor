@@ -13,6 +13,7 @@ evals/scorecards/*
 !evals/scorecards/.gitkeep
 evals/prompts/*
 !evals/prompts/.gitkeep
+audit_outputs/
 
 *.log
 tmp/

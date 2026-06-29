@@ -1,11 +1,30 @@
 {
-  "audit_mode": "internal_presubmission or external_literature_triage",
+  "audit_mode": "internal_presubmission, external_public_material, or response_to_concern",
   "case_id": "optional neutral case identifier",
   "materials_reviewed": ["relative paths or public materials reviewed"],
   "materials_missing": ["materials needed to resolve completeness or integrity questions"],
   "overall_risk": "R0, R1, R2, R3, or R4",
   "misconduct_verdict_present": false,
   "risk_caps_applied": ["risk caps applied before finalizing the report"],
+  "positive_provenance": [
+    {
+      "provenance_id": "PROV-0001",
+      "relation_type": "expected_traceability",
+      "figure_panel": "figures/Figure_1A_control.png",
+      "source_record": "raw_images/acquisition_A001.png",
+      "evidence_source": "figure_assembly/assembly_manifest.csv",
+      "risk_effect": "positive_evidence"
+    }
+  ],
+  "traceability_gaps": [
+    {
+      "gap_id": "TRACE-0001",
+      "finding_type": "unresolved_fig_raw_similarity",
+      "risk_level": "R1",
+      "location": "figures/Figure_1A.png / raw_images/acquisition_A001.png",
+      "required_materials_to_resolve": ["figure-source map", "assembly manifest", "raw image metadata"]
+    }
+  ],
   "findings": [
     {
       "finding_id": "BIOMED-XXX-0001",

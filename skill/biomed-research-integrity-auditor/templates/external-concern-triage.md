@@ -33,13 +33,15 @@ State that source data or raw records may not be publicly available and that abs
 
 ```json AUDIT_JSON_SUMMARY
 {
-  "audit_mode": "external_literature_triage",
+  "audit_mode": "external_public_material",
   "case_id": null,
   "materials_reviewed": [],
   "materials_missing": [],
   "overall_risk": "R1",
   "misconduct_verdict_present": false,
   "risk_caps_applied": ["External public-material review cannot resolve source/raw-level questions without author-supplied materials."],
+  "positive_provenance": [],
+  "traceability_gaps": [],
   "findings": []
 }
 ```

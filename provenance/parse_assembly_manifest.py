@@ -1,19 +1,25 @@
 #!/usr/bin/env python3
-"""Extract declared figure-to-source links from assembly manifest text."""
+"""Extract declared figure-to-source links from assembly manifests."""
 
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import re
 from pathlib import Path
 from typing import Any
+
+import yaml
 
 
 IMAGE_OR_DATA_RE = re.compile(
     r"(?:(?:figures|raw_images|source_data)/)?[A-Za-z0-9][A-Za-z0-9_.-]*\.(?:png|jpg|jpeg|tif|tiff|csv|tsv|xlsx|xls)",
     re.I,
 )
+STRUCTURED_SUFFIXES = {".csv", ".tsv", ".yaml", ".yml"}
+TEXT_SUFFIXES = {".txt", ".md"}
+SOURCE_ROLES = {"raw_image", "source_data"}
 
 
 def package_files(package: Path) -> dict[str, list[str]]:
@@ -48,14 +54,98 @@ def role(path: str) -> str:
     return "resource"
 
 
-def manifest_files(package: Path) -> list[Path]:
+def manifest_files(package: Path, suffixes: set[str]) -> list[Path]:
     assembly_dir = package / "figure_assembly"
     if not assembly_dir.exists():
         return []
     return [
         path for path in sorted(assembly_dir.rglob("*"))
-        if path.is_file() and path.suffix.lower() in {".txt", ".md", ".csv", ".tsv"}
+        if path.is_file() and path.suffix.lower() in suffixes
     ]
+
+
+def structured_link_from_row(
+    row: dict[str, Any],
+    files: dict[str, list[str]],
+    evidence_source: str,
+    extraction_method: str,
+) -> dict[str, Any] | None:
+    figure = resolve_token(str(row.get("figure_panel", "") or ""), files)
+    source = resolve_token(str(row.get("source_record", "") or ""), files)
+    if not figure or not source:
+        return None
+    if role(figure) != "figure_panel" or role(source) not in SOURCE_ROLES:
+        return None
+    relation_type = str(row.get("relation_type", "") or "declared_derived_from").strip() or "declared_derived_from"
+    link = {
+        "source_path": figure,
+        "target_path": source,
+        "relation_type": relation_type,
+        "evidence_source": evidence_source,
+        "confidence": 0.98,
+        "risk_effect": "expected_traceability",
+        "extraction_method": extraction_method,
+    }
+    modality = str(row.get("modality", "") or "").strip()
+    if modality:
+        link["modality"] = modality
+    return link
+
+
+def parse_structured_csv(path: Path, package: Path, files: dict[str, list[str]]) -> tuple[list[dict[str, Any]], list[str]]:
+    rel = str(path.relative_to(package))
+    warnings: list[str] = []
+    delimiter = "\t" if path.suffix.lower() == ".tsv" else ","
+    text = path.read_text(encoding="utf-8", errors="ignore")
+    reader = csv.DictReader(text.splitlines(), delimiter=delimiter)
+    fieldnames = set(reader.fieldnames or [])
+    required = {"figure_panel", "source_record"}
+    if not required.issubset(fieldnames):
+        warnings.append(f"{rel} missing required structured manifest columns: figure_panel, source_record")
+        return [], warnings
+    links = [
+        link
+        for row in reader
+        if (link := structured_link_from_row(row, files, rel, "structured_csv_manifest"))
+    ]
+    if not links:
+        warnings.append(f"{rel} did not contain parseable structured figure-source rows.")
+    return links, warnings
+
+
+def yaml_records(payload: Any) -> list[dict[str, Any]]:
+    if isinstance(payload, list):
+        return [item for item in payload if isinstance(item, dict)]
+    if isinstance(payload, dict):
+        for key in ("links", "mappings", "figure_links", "assembly_links"):
+            value = payload.get(key)
+            if isinstance(value, list):
+                return [item for item in value if isinstance(item, dict)]
+    return []
+
+
+def parse_structured_yaml(path: Path, package: Path, files: dict[str, list[str]]) -> tuple[list[dict[str, Any]], list[str]]:
+    rel = str(path.relative_to(package))
+    warnings: list[str] = []
+    payload = yaml.safe_load(path.read_text(encoding="utf-8", errors="ignore")) or []
+    records = yaml_records(payload)
+    if not records:
+        warnings.append(f"{rel} did not contain a list of structured figure-source rows.")
+        return [], warnings
+    links = [
+        link
+        for row in records
+        if (link := structured_link_from_row(row, files, rel, "structured_yaml_manifest"))
+    ]
+    if not links:
+        warnings.append(f"{rel} did not contain parseable structured figure-source rows.")
+    return links, warnings
+
+
+def parse_structured_manifest(path: Path, package: Path, files: dict[str, list[str]]) -> tuple[list[dict[str, Any]], list[str]]:
+    if path.suffix.lower() in {".csv", ".tsv"}:
+        return parse_structured_csv(path, package, files)
+    return parse_structured_yaml(path, package, files)
 
 
 def extract_line_links(line: str, files: dict[str, list[str]], evidence_source: str) -> list[dict[str, Any]]:
@@ -113,7 +203,17 @@ def parse_package(package: Path) -> dict[str, Any]:
     links: list[dict[str, Any]] = []
     parsed_files = []
     warnings = []
-    for manifest in manifest_files(package):
+    structured_files = manifest_files(package, STRUCTURED_SUFFIXES)
+    text_files = [] if structured_files else manifest_files(package, TEXT_SUFFIXES)
+
+    for manifest in structured_files:
+        rel = str(manifest.relative_to(package))
+        parsed_files.append(rel)
+        extracted, structured_warnings = parse_structured_manifest(manifest, package, files)
+        links.extend(extracted)
+        warnings.extend(structured_warnings)
+
+    for manifest in text_files:
         rel = str(manifest.relative_to(package))
         parsed_files.append(rel)
         text = manifest.read_text(encoding="utf-8", errors="ignore")
@@ -133,7 +233,7 @@ def parse_package(package: Path) -> dict[str, Any]:
         warnings.append("No figure_assembly manifest files were supplied.")
     return {
         "parser": "provenance.parse_assembly_manifest",
-        "parser_version": "0.3.1",
+        "parser_version": "0.3.2",
         "package": str(package),
         "parsed_files": parsed_files,
         "links": unique_links,

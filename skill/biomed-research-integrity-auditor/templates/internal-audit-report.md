@@ -52,6 +52,8 @@ State what could not be checked because materials were absent or unreadable.
   "overall_risk": "R1",
   "misconduct_verdict_present": false,
   "risk_caps_applied": [],
+  "positive_provenance": [],
+  "traceability_gaps": [],
   "findings": []
 }
 ```

@@ -134,7 +134,68 @@ def summary_finding(item: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def build_summary(mode: str, case_id: str | None, manifest: dict[str, Any], findings: list[dict[str, Any]]) -> dict[str, Any]:
+def summary_positive_provenance(positive_evidence: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for item in positive_evidence:
+        for edge in item.get("edges", []) or []:
+            left = str(edge.get("left", ""))
+            right = str(edge.get("right", ""))
+            left_role = str(edge.get("left_role", ""))
+            right_role = str(edge.get("right_role", ""))
+            if left_role == "figure_panel":
+                figure_panel, source_record = left, right
+            elif right_role == "figure_panel":
+                figure_panel, source_record = right, left
+            else:
+                figure_panel, source_record = left, right
+
+            provenance_edge = edge.get("provenance_edge") or {}
+            evidence_source = str(
+                provenance_edge.get("evidence_source")
+                or edge.get("evidence_source")
+                or "provenance graph"
+            )
+            key = (figure_panel, source_record, evidence_source)
+            if key in seen:
+                continue
+            seen.add(key)
+            rows.append({
+                "provenance_id": f"PROV-{len(rows) + 1:04d}",
+                "relation_type": str(edge.get("contextual_tag") or "expected_traceability"),
+                "figure_panel": figure_panel,
+                "source_record": source_record,
+                "evidence_source": evidence_source,
+                "risk_effect": "positive_evidence",
+            })
+    return rows
+
+
+def summary_traceability_gaps(findings: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    gaps: list[dict[str, Any]] = []
+    for item in findings:
+        tags = set(str(tag) for tag in item.get("source_candidate_tags", []) or [])
+        finding_type = str(item.get("finding_type", ""))
+        evidence_type = str(item.get("evidence_type", ""))
+        if "unresolved_fig_raw_similarity" not in tags | {finding_type, evidence_type}:
+            continue
+        gaps.append({
+            "gap_id": f"TRACE-{len(gaps) + 1:04d}",
+            "finding_type": finding_type or evidence_type,
+            "risk_level": item.get("risk_level", "R1"),
+            "location": item.get("location", ""),
+            "required_materials_to_resolve": item.get("required_materials_to_resolve", []),
+        })
+    return gaps
+
+
+def build_summary(
+    mode: str,
+    case_id: str | None,
+    manifest: dict[str, Any],
+    findings: list[dict[str, Any]],
+    positive_evidence: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     caps = []
     normalized = normalized_mode(mode)
     if normalized == "external_public_material" and not any(path.lower().endswith((".csv", ".xlsx", ".tif", ".tiff", ".czi", ".nd2", ".fcs")) for path in reviewed_materials(manifest)):
@@ -151,6 +212,8 @@ def build_summary(mode: str, case_id: str | None, manifest: dict[str, Any], find
         "overall_risk": overall_risk(findings, manifest),
         "misconduct_verdict_present": False,
         "risk_caps_applied": sorted(set(caps)),
+        "positive_provenance": summary_positive_provenance(positive_evidence or []),
+        "traceability_gaps": summary_traceability_gaps(findings),
         "findings": [summary_finding(item) for item in findings],
     }
 
@@ -164,7 +227,8 @@ def render_report(
 ) -> str:
     normalized = normalized_mode(mode)
     title = "Biomedical Research Integrity Pre-submission Audit" if normalized == "internal_presubmission" else "Biomedical Literature Concern Triage"
-    summary = build_summary(mode, case_id, manifest, findings)
+    positive_evidence = positive_evidence or []
+    summary = build_summary(mode, case_id, manifest, findings, positive_evidence)
     validate_instance(summary, SUMMARY_SCHEMA, "audit summary")
     lines = [f"# {title}", ""]
     lines += ["## Scope", ""]
@@ -176,7 +240,6 @@ def render_report(
         missing_rows.append([item.get("category", ""), item.get("risk_level", "R1"), item.get("reason", "")])
     lines += [table(missing_rows) if len(missing_rows) > 1 else "No missing expected material categories were reported.\n"]
 
-    positive_evidence = positive_evidence or []
     if positive_evidence:
         lines += ["## Verified Traceability Evidence", ""]
         for item in positive_evidence:

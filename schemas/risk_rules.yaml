@@ -24,12 +24,16 @@ detector_caps:
     max: R2
   cross_file_sequence_reuse:
     max: R2
+
   image_similarity_candidate:
     max: R3
   global_image_similarity:
     max: R3
   image_reuse_cluster:
     max: R3
+  local_patch_reuse:
+    max: R3
+
   unresolved_fig_raw_similarity:
     max: R1
   cross_context_reuse_candidate:
@@ -38,8 +42,7 @@ detector_caps:
     max: R3
   expected_traceability:
     report_as: positive_evidence
-  local_patch_reuse:
-    max: R3
+
   pseudoreplication_candidate:
     max: R3
   completeness_gap:

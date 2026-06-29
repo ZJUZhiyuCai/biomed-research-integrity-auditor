@@ -57,6 +57,16 @@ python3 scripts/audit_package.py evals/cases/case_004 --output-dir audit_outputs
 The orchestrator inventories the package, runs detector scripts, validates detector JSON with `schemas/detector_output.schema.json`, joins context for disclosed reuse, applies `schemas/risk_rules.yaml`, validates calibrated findings, and writes an audit report plus `AUDIT_JSON_SUMMARY.json`.
 
 The pipeline is provenance-aware: figure-panel similarity to a declared raw/source image is reported as positive traceability evidence, while unmapped figure-to-raw similarity is capped as an `R1` traceability gap rather than an `R3` image-reuse concern.
+The JSON summary includes both risk findings and machine-readable positive provenance, so clean traceability can be tested separately from unresolved gaps.
+
+Structured figure assembly manifests are preferred when available:
+
+```csv
+figure_panel,source_record,relation_type,modality,notes
+figures/Figure_1A_control.png,raw_images/acquisition_A001.png,declared_derived_from,microscopy,control representative image
+```
+
+Manifest precedence is `assembly_manifest.csv` or `.yaml`, then parsed text manifests, then filename-derived figure-source maps.
 
 Create prompts for blind testing:
 
