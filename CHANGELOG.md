@@ -8,11 +8,14 @@
 - Section-aware text overlap risk calibration for methods boilerplate, disclosed thesis/preprint overlap, results overlap, and abstract/conclusion overlap.
 - Synthetic text-overlap eval cases `case_025` through `case_030`, including methods boilerplate, disclosed thesis reuse, clean text, and prompt-injection controls.
 - Script-baseline audit-output assertions for CI risk ranges and required finding tags.
+- Explicit `audit_coverage_gap` R1 finding when no detector can run on a supplied package.
 
 ### Changed
 - Figure-to-figure `declared_derived_from` manifest rows no longer clear image-reuse findings as positive traceability.
 - True binary PDFs are now explicitly skipped by the text-overlap detector with a recorded extraction-gap error instead of being read as raw UTF-8 text.
 - The default audit pipeline now runs text overlap screening when supported text files are present.
+- Contract validation now fails closed when `jsonschema` is unavailable instead of silently using a partial fallback.
+- R3/R4 candidates missing benign explanations, resolving materials, or recommended actions are capped to R2 instead of having generic text auto-filled.
 - CI key audit regressions now include local patch cases `case_020` through `case_024` and text-overlap cases `case_025` through `case_030`.
 
 ## v0.4.0 - Provenance-aware Local Patch Reuse Detection

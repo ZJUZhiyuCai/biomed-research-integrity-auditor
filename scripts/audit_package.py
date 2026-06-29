@@ -221,6 +221,65 @@ def run_text_detectors(package: Path, output_dir: Path) -> list[Path]:
     return [text_output]
 
 
+def write_audit_coverage_gap(package: Path, output_dir: Path) -> Path:
+    files = [path for path in sorted(package.rglob("*")) if path.is_file()]
+    relative_files = [str(path.relative_to(package)) for path in files[:25]]
+    observed_suffixes = sorted({path.suffix.lower() or "<none>" for path in files})
+    payload = {
+        "detector_name": "audit.coverage",
+        "detector_version": "0.1.0",
+        "input": {
+            "package": str(package),
+            "file_count": len(files),
+            "observed_suffixes": observed_suffixes,
+            "supported_suffixes": {
+                "image": sorted(IMAGE_EXTS),
+                "source_table": sorted(SOURCE_EXTS),
+                "text": sorted(TEXT_EXTS),
+            },
+        },
+        "candidates": [
+            {
+                "candidate_id": "AUDIT-COVERAGE-0001",
+                "detector": "audit.coverage",
+                "candidate_type": "audit_coverage_gap",
+                "locations": [str(package)],
+                "evidence": {
+                    "message": "No detector outputs were produced for this package; the audit scope is not equivalent to a clean result.",
+                    "file_count": len(files),
+                    "sample_files": relative_files,
+                    "observed_suffixes": observed_suffixes,
+                    "supported_suffixes": {
+                        "image": sorted(IMAGE_EXTS),
+                        "source_table": sorted(SOURCE_EXTS),
+                        "text": sorted(TEXT_EXTS),
+                    },
+                },
+                "evidence_strength": "weak_signal",
+                "risk_suggestion": "R1_max",
+                "risk_cap_tags": ["audit_coverage_gap", "completeness_gap"],
+                "benign_explanations": [
+                    "The package may contain valid research records in formats not yet supported by the current detectors.",
+                    "Relevant raw/source materials may exist but were not supplied in this audit package.",
+                ],
+                "required_materials": [
+                    "supported manuscript text, source-data CSV/TSV files, or image files",
+                    "raw/source records or extracted text suitable for the current detector set",
+                ],
+                "recommended_action": (
+                    "Add supported source/raw/text/image files or extracted text before treating this audit as complete."
+                ),
+                "requires_contextual_calibration": True,
+            }
+        ],
+        "errors": [],
+    }
+    output = output_dir / "audit_coverage_candidates.json"
+    write_json(output, payload)
+    validate_detector(output)
+    return output
+
+
 def write_empty_calibrated(mode: str, output: Path) -> None:
     payload = {
         "mode": mode,
@@ -295,6 +354,8 @@ def run_pipeline(package: Path, mode: str, output_dir: Path, domains: str, case_
     detector_outputs.extend(run_source_detectors(package, output_dir))
     detector_outputs.extend(run_image_detector(package, output_dir, provenance_graph))
     detector_outputs.extend(run_text_detectors(package, output_dir))
+    if not detector_outputs:
+        detector_outputs.append(write_audit_coverage_gap(package, output_dir))
     calibrated = run_calibrator(detector_outputs, mode, output_dir)
     report = run_report(manifest, calibrated, detector_outputs, mode, case_id, output_dir)
     audit_summary = extract_audit_summary(report)

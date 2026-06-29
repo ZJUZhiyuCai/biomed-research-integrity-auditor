@@ -49,6 +49,8 @@ Use when the user is responding to reviewer, journal, or PubPeer-style concerns.
    - Run `scripts/audit_package.py <package_dir> --mode internal_presubmission --output-dir audit_outputs/<case_or_package_id>`.
    - This is the default path: it inventories the package, builds a provenance graph, runs detectors, validates detector schemas, joins context, applies `schemas/risk_rules.yaml`, validates calibrated findings, and assembles the report.
    - Do not bypass this orchestrator for routine audits. Use individual detector scripts only for debugging or focused unit checks.
+   - If no detector can run on the supplied files, treat the result as an R1 audit-coverage/completeness gap, not a clean audit.
+   - Schema validation is required; do not accept a partial fallback contract check when `jsonschema` is unavailable.
    - If files are missing, keep them as R1 completeness gaps before doing deeper analysis.
    - Never imply that an audit is complete when source data or raw records are unavailable.
 
@@ -133,6 +135,7 @@ Apply these caps before finalizing the report:
 - Statistical forensic screens: preserved terminal/ones/tenths digits, whole-group constant offsets, time-stratified offsets, whole-group scaling, identical rank order, repeated residual/noise pattern, abnormal rounding, precision mixing, repeated mean/SD pairs, cross-table sequence reuse, linear timepoint shifts, or overly mechanical animal/sample trajectories are R1/R2 triage signals unless tied to a direct source-to-figure or raw-to-source contradiction.
 - Text overlap: package-internal overlap without a direct contradiction cannot exceed R3. Methods/protocol boilerplate and disclosed thesis/preprint-derived overlap are capped at R2, subject to citation, disclosure, and journal-policy review.
 - Missing data: absent source data, raw images, FCS files, accession metadata, or protocols are R1 completeness gaps unless supplied materials directly contradict each other.
+- Audit coverage gap: no supported detector input or no detector output is an R1 completeness gap and must not be described as R0.
 - R4 requires direct conflict: source data cannot generate the published figure, raw image does not match the panel, figure assembly conflicts with raw records, statistical code outputs conflict with paper values, or raw records contradict reported n/group identity.
 - Disclosure is not automatic clearance: disclosed reuse may still be R2/R3 if the scientific justification is insufficient.
 

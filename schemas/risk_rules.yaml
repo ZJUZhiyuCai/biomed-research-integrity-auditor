@@ -55,6 +55,8 @@ detector_caps:
 
   pseudoreplication_candidate:
     max: R3
+  audit_coverage_gap:
+    max: R1
   completeness_gap:
     max: R1
   text_overlap_candidate:

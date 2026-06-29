@@ -55,6 +55,8 @@ python3 scripts/audit_package.py evals/cases/case_004 --output-dir audit_outputs
 ```
 
 The orchestrator inventories the package, runs detector scripts, validates detector JSON with `schemas/detector_output.schema.json`, joins context for disclosed reuse, applies `schemas/risk_rules.yaml`, validates calibrated findings, and writes an audit report plus `AUDIT_JSON_SUMMARY.json`.
+Schema validation requires `jsonschema`; if it is unavailable, the pipeline fails closed instead of falling back to partial contract checks.
+If no detector can run on the supplied package, the pipeline emits an explicit `audit_coverage_gap` R1 finding rather than treating the package as clean.
 
 The pipeline is provenance-aware: figure-panel similarity to a declared raw/source image is reported as positive traceability evidence, while unmapped figure-to-raw similarity is capped as an `R1` traceability gap rather than an `R3` image-reuse concern.
 The JSON summary includes both risk findings and machine-readable positive provenance, so clean traceability can be tested separately from unresolved gaps.

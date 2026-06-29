@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import builtins
 import importlib.util
 import json
 import shutil
@@ -165,6 +166,28 @@ def write_text_package(package: Path, scenario: str) -> None:
 
 
 class ContractPipelineTests(unittest.TestCase):
+    def test_contract_validation_fails_closed_without_jsonschema(self) -> None:
+        original_import = builtins.__import__
+
+        def blocked_import(name: str, *args, **kwargs):  # type: ignore[no-untyped-def]
+            if name == "jsonschema" or name.startswith("jsonschema."):
+                raise ImportError("blocked jsonschema import")
+            return original_import(name, *args, **kwargs)
+
+        payload = {
+            "detector_name": "unit.test",
+            "detector_version": "0.0",
+            "input": {},
+            "candidates": [],
+            "errors": [],
+        }
+        builtins.__import__ = blocked_import
+        try:
+            with self.assertRaises(ContractError):
+                validate_instance(payload, ROOT / "schemas" / "detector_output.schema.json", "blocked detector output")
+        finally:
+            builtins.__import__ = original_import
+
     def test_image_detector_clusters_case004_and_keeps_flip_edge(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             output = Path(tmp) / "case004_image.json"
@@ -413,6 +436,27 @@ class RiskCapTests(unittest.TestCase):
             result = calibrate_payload([detector_output], "internal_presubmission", ROOT / "schemas" / "risk_rules.yaml")
             self.assertEqual(result["findings"][0]["calibrated_risk_level"], "R3")
 
+    def test_r3_plus_missing_mandatory_fields_caps_to_r2_without_autofill(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            detector_output = Path(tmp) / "detector.json"
+            payload = self.detector_payload("R3_possible")
+            candidate = payload["candidates"][0]
+            candidate["candidate_type"] = "image_reuse_cluster"
+            candidate["evidence_strength"] = "strong_candidate"
+            candidate["risk_cap_tags"] = ["image_reuse_cluster"]
+            candidate["benign_explanations"] = []
+            candidate["required_materials"] = []
+            candidate["recommended_action"] = ""
+            detector_output.write_text(json.dumps(payload), encoding="utf-8")
+
+            result = calibrate_payload([detector_output], "internal_presubmission", ROOT / "schemas" / "risk_rules.yaml")
+            finding = result["findings"][0]
+            self.assertEqual(finding["calibrated_risk_level"], "R2")
+            self.assertEqual(finding["benign_explanations_considered"], [])
+            self.assertEqual(finding["required_materials_to_resolve"], [])
+            self.assertEqual(finding["recommended_action"], "")
+            self.assertTrue(any(cap.startswith("r3_plus_missing_mandatory_fields:") for cap in finding["risk_caps_applied"]))
+
     def test_risk_rules_are_readable_and_cover_contextual_tags(self) -> None:
         rules_path = ROOT / "schemas" / "risk_rules.yaml"
         text = rules_path.read_text(encoding="utf-8")
@@ -447,6 +491,7 @@ class RiskCapTests(unittest.TestCase):
         self.assertEqual(missing, [])
         self.assertEqual(detector_caps["expected_traceability"]["report_as"], "positive_evidence")
         self.assertEqual(detector_caps["unresolved_fig_raw_similarity"]["max"], "R1")
+        self.assertEqual(detector_caps["audit_coverage_gap"]["max"], "R1")
         self.assertEqual(detector_caps["local_patch_reuse"]["max"], "R3")
         self.assertTrue(detector_caps["local_patch_reuse"]["unless_r4_requirement"])
         self.assertEqual(detector_caps["methods_boilerplate_overlap"]["max"], "R2")
@@ -552,6 +597,28 @@ class ProvenanceManifestTests(unittest.TestCase):
 
 
 class EndToEndTests(unittest.TestCase):
+    def test_unsupported_package_emits_audit_coverage_gap(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "unsupported_case"
+            package.mkdir()
+            (package / "instrument_export.bin").write_bytes(b"\x00\x01unsupported binary payload")
+            out = Path(tmp) / "out"
+            run([
+                PYTHON,
+                "scripts/audit_package.py",
+                str(package),
+                "--output-dir",
+                str(out),
+                "--case-id",
+                "unsupported_case",
+            ])
+            calibrated = json.loads((out / "calibrated_findings.json").read_text(encoding="utf-8"))
+            coverage = [item for item in calibrated["findings"] if item["finding_type"] == "audit_coverage_gap"]
+            self.assertTrue(coverage)
+            self.assertTrue(all(item["calibrated_risk_level"] == "R1" for item in coverage))
+            summary = json.loads((out / "AUDIT_JSON_SUMMARY.json").read_text(encoding="utf-8"))
+            self.assertTrue(any(item["finding_type"] == "audit_coverage_gap" for item in summary["findings"]))
+
     def test_text_results_overlap_without_disclosure_can_reach_r3(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             package = Path(tmp) / "text_results_case"

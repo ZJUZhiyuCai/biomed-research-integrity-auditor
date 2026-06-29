@@ -108,6 +108,17 @@ def evidence_text(candidate: dict[str, Any]) -> str:
         return str(candidate.get("evidence", ""))
 
 
+def missing_r3_mandatory_fields(candidate: dict[str, Any], mandatory: set[str]) -> list[str]:
+    missing = []
+    if "benign_explanations" in mandatory and not (candidate.get("benign_explanations", []) or []):
+        missing.append("benign_explanations")
+    if "required_materials_to_resolve" in mandatory and not (candidate.get("required_materials", []) or []):
+        missing.append("required_materials_to_resolve")
+    if "recommended_action" in mandatory and not candidate.get("recommended_action", ""):
+        missing.append("recommended_action")
+    return missing
+
+
 def calibrate_candidate(candidate: dict[str, Any], mode: str, rules: dict[str, Any]) -> dict[str, Any]:
     if mode not in rules["mode_caps"]:
         raise ContractError(f"unknown audit mode for risk rules: {mode}")
@@ -149,15 +160,10 @@ def calibrate_candidate(candidate: dict[str, Any], mode: str, rules: dict[str, A
     action = candidate.get("recommended_action", "")
     mandatory = set(rules.get("mandatory_fields_for_r3_plus", []) or [])
     if risk_value(risk) >= risk_value("R3"):
-        if "benign_explanations" in mandatory and not benign:
-            benign = ["benign or technical explanation must be tested before escalation"]
-            caps_applied.append("filled_mandatory_benign_explanations")
-        if "required_materials_to_resolve" in mandatory and not required:
-            required = ["source/raw records needed to resolve candidate"]
-            caps_applied.append("filled_mandatory_required_materials")
-        if "recommended_action" in mandatory and not action:
-            action = "Verify against source/raw records before escalation."
-            caps_applied.append("filled_mandatory_recommended_action")
+        missing = missing_r3_mandatory_fields(candidate, mandatory)
+        if missing:
+            caps_applied.append(f"r3_plus_missing_mandatory_fields:{','.join(missing)}:R2")
+            risk = "R2"
 
     return {
         "finding_id": candidate.get("candidate_id", ""),
