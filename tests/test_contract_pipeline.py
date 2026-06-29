@@ -21,7 +21,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from calibrators.contract_validation import ContractError, validate_instance  # noqa: E402
-from calibrators.risk_cap_engine import calibrate_payload  # noqa: E402
+from calibrators.risk_cap_engine import calibrate_payload, load_rules  # noqa: E402
 
 
 def run(cmd: list[str]) -> None:
@@ -456,6 +456,82 @@ class RiskCapTests(unittest.TestCase):
             self.assertEqual(finding["required_materials_to_resolve"], [])
             self.assertEqual(finding["recommended_action"], "")
             self.assertTrue(any(cap.startswith("r3_plus_missing_mandatory_fields:") for cap in finding["risk_caps_applied"]))
+
+    def test_external_missing_source_data_mode_cap_is_enforced(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            detector_output = Path(tmp) / "detector.json"
+            payload = self.detector_payload("R3_possible")
+            candidate = payload["candidates"][0]
+            candidate["candidate_type"] = "missing_source_data"
+            candidate["evidence_strength"] = "candidate"
+            candidate["risk_cap_tags"] = ["missing_source_data"]
+            detector_output.write_text(json.dumps(payload), encoding="utf-8")
+
+            result = calibrate_payload(
+                [detector_output],
+                "external_public_material",
+                ROOT / "schemas" / "risk_rules.yaml",
+            )
+            finding = result["findings"][0]
+            self.assertEqual(finding["calibrated_risk_level"], "R1")
+            self.assertIn("mode_cap:missing_source_data:R1", finding["risk_caps_applied"])
+
+    def test_report_as_positive_evidence_candidate_is_not_calibrated_as_finding(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            detector_output = Path(tmp) / "detector.json"
+            payload = self.detector_payload("R0_positive_traceability")
+            payload["candidates"][0].update({
+                "candidate_type": "expected_traceability",
+                "evidence_strength": "candidate",
+                "risk_cap_tags": ["expected_traceability"],
+            })
+            detector_output.write_text(json.dumps(payload), encoding="utf-8")
+
+            result = calibrate_payload([detector_output], "internal_presubmission", ROOT / "schemas" / "risk_rules.yaml")
+            self.assertEqual(result["candidate_count"], 1)
+            self.assertEqual(result["skipped_candidate_count"], 1)
+            self.assertEqual(result["skipped_candidates"][0]["report_as"], "positive_evidence")
+            self.assertEqual(result["findings"], [])
+
+    def test_report_as_tag_does_not_hide_mixed_risk_candidate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            detector_output = Path(tmp) / "detector.json"
+            payload = self.detector_payload("R3_possible")
+            payload["candidates"][0].update({
+                "candidate_type": "image_reuse_cluster",
+                "evidence_strength": "candidate",
+                "risk_cap_tags": ["expected_traceability", "image_reuse_cluster"],
+            })
+            detector_output.write_text(json.dumps(payload), encoding="utf-8")
+
+            result = calibrate_payload([detector_output], "internal_presubmission", ROOT / "schemas" / "risk_rules.yaml")
+            self.assertEqual(result["skipped_candidate_count"], 0)
+            self.assertEqual(len(result["findings"]), 1)
+            self.assertEqual(result["findings"][0]["calibrated_risk_level"], "R3")
+
+    def test_calibrator_rejects_legacy_findings_input(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            legacy = Path(tmp) / "legacy.json"
+            legacy.write_text(json.dumps({
+                "findings": [
+                    {
+                        "finding_id": "LEGACY-0001",
+                        "risk_level": "R4",
+                        "finding_type": "legacy finding",
+                    }
+                ]
+            }), encoding="utf-8")
+            with self.assertRaises(ContractError):
+                calibrate_payload([legacy], "internal_presubmission", ROOT / "schemas" / "risk_rules.yaml")
+
+    def test_risk_rules_reject_unsupported_safety_keys(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            rules = yaml.safe_load((ROOT / "schemas" / "risk_rules.yaml").read_text(encoding="utf-8"))
+            rules["detector_caps"]["weak_signal"]["unused_safety_key"] = "R1"
+            rules_path = Path(tmp) / "risk_rules.yaml"
+            rules_path.write_text(yaml.safe_dump(rules), encoding="utf-8")
+            with self.assertRaises(ContractError):
+                load_rules(rules_path)
 
     def test_risk_rules_are_readable_and_cover_contextual_tags(self) -> None:
         rules_path = ROOT / "schemas" / "risk_rules.yaml"

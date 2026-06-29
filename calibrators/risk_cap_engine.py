@@ -24,6 +24,16 @@ DETECTOR_SCHEMA = ROOT / "schemas" / "detector_output.schema.json"
 CALIBRATED_SCHEMA = ROOT / "schemas" / "calibrated_findings.schema.json"
 RISK_ORDER = {"R0": 0, "R1": 1, "R2": 2, "R3": 3, "R4": 4}
 ORDER_RISK = {value: key for key, value in RISK_ORDER.items()}
+ALLOWED_MODE_CAP_KEYS = {"default_max", "missing_source_data_max"}
+ALLOWED_RULE_KEYS = {"max", "default_max", "unless_r4_requirement", "report_as"}
+MISSING_SOURCE_DATA_TAGS = {
+    "audit_coverage_gap",
+    "completeness_gap",
+    "missing_source_data",
+    "source_data_missing",
+    "source_data_unavailable",
+    "unresolved_fig_raw_similarity",
+}
 
 
 def risk_value(risk: str | None) -> int:
@@ -45,6 +55,16 @@ def load_rules(path: Path) -> dict[str, Any]:
     for mode, cfg in rules["mode_caps"].items():
         if not isinstance(cfg, dict) or "default_max" not in cfg:
             raise ContractError(f"risk rules mode_caps.{mode} must define default_max")
+        unknown = sorted(set(cfg) - ALLOWED_MODE_CAP_KEYS)
+        if unknown:
+            raise ContractError(f"risk rules mode_caps.{mode} has unsupported keys: {', '.join(unknown)}")
+    for section_name in ("detector_caps", "contextual_caps"):
+        for tag, cfg in (rules.get(section_name, {}) or {}).items():
+            if not isinstance(cfg, dict):
+                continue
+            unknown = sorted(set(cfg) - ALLOWED_RULE_KEYS)
+            if unknown:
+                raise ContractError(f"risk rules {section_name}.{tag} has unsupported keys: {', '.join(unknown)}")
     return rules
 
 
@@ -101,6 +121,17 @@ def apply_cap(risk: str, cap: str | None, reason: str, caps_applied: list[str]) 
     return risk
 
 
+def apply_mode_specific_caps(risk: str, mode_cfg: dict[str, Any], tags: set[str], caps_applied: list[str]) -> str:
+    if tags & MISSING_SOURCE_DATA_TAGS:
+        risk = apply_cap(
+            risk,
+            str(mode_cfg.get("missing_source_data_max")) if mode_cfg.get("missing_source_data_max") else None,
+            "mode_cap:missing_source_data",
+            caps_applied,
+        )
+    return risk
+
+
 def evidence_text(candidate: dict[str, Any]) -> str:
     try:
         return json.dumps(candidate.get("evidence", {}), ensure_ascii=False)
@@ -119,6 +150,28 @@ def missing_r3_mandatory_fields(candidate: dict[str, Any], mandatory: set[str]) 
     return missing
 
 
+def report_as_for_candidate(candidate: dict[str, Any], rules: dict[str, Any], tags: set[str], starting_risk: str) -> str | None:
+    if starting_risk != "R0":
+        return None
+
+    report_as_values = []
+    recognized_risk_tags = set(str(tag) for tag in rules.get("r4_requirements", []) or [])
+    for section_name in ("detector_caps", "contextual_caps"):
+        section = rules.get(section_name, {}) or {}
+        for tag in tags:
+            rule = section.get(tag)
+            if not isinstance(rule, dict):
+                continue
+            if rule.get("report_as"):
+                report_as_values.append(str(rule["report_as"]))
+            if rule.get("max") or rule.get("default_max"):
+                recognized_risk_tags.add(tag)
+
+    if report_as_values and not (tags & recognized_risk_tags):
+        return report_as_values[0]
+    return None
+
+
 def calibrate_candidate(candidate: dict[str, Any], mode: str, rules: dict[str, Any]) -> dict[str, Any]:
     if mode not in rules["mode_caps"]:
         raise ContractError(f"unknown audit mode for risk rules: {mode}")
@@ -130,8 +183,10 @@ def calibrate_candidate(candidate: dict[str, Any], mode: str, rules: dict[str, A
     r4_tags = set(str(tag) for tag in rules.get("r4_requirements", []) or [])
     has_r4_requirement = bool(tags & r4_tags)
 
-    mode_cap = str(rules["mode_caps"][mode]["default_max"])
+    mode_cfg = rules["mode_caps"][mode]
+    mode_cap = str(mode_cfg["default_max"])
     risk = apply_cap(risk, mode_cap, "mode_cap", caps_applied)
+    risk = apply_mode_specific_caps(risk, mode_cfg, tags, caps_applied)
 
     detector_caps = rules.get("detector_caps", {})
     for tag in sorted(tags):
@@ -190,25 +245,6 @@ def calibrate_candidate(candidate: dict[str, Any], mode: str, rules: dict[str, A
     }
 
 
-def legacy_finding_to_candidate(item: dict[str, Any]) -> dict[str, Any]:
-    evidence_type = str(item.get("evidence_type", item.get("finding_type", "legacy_finding")))
-    weak = "weak" in evidence_type or "terminal" in evidence_type or "precision" in evidence_type
-    return {
-        "candidate_id": item.get("finding_id", ""),
-        "detector": item.get("module", "legacy_finding"),
-        "candidate_type": evidence_type,
-        "locations": [item.get("location", "")],
-        "evidence": item.get("evidence", {}),
-        "evidence_strength": "weak_signal" if weak else "candidate",
-        "risk_suggestion": item.get("risk_level", "R1"),
-        "risk_cap_tags": [evidence_type, "weak_signal"] if weak else [evidence_type],
-        "benign_explanations": item.get("benign_explanations_considered", []),
-        "required_materials": item.get("required_materials_to_resolve", []),
-        "recommended_action": item.get("recommended_action", ""),
-        "requires_contextual_calibration": True,
-    }
-
-
 def load_candidates(paths: list[Path]) -> list[dict[str, Any]]:
     candidates: list[dict[str, Any]] = []
     for path in paths:
@@ -217,7 +253,9 @@ def load_candidates(paths: list[Path]) -> list[dict[str, Any]]:
             validate_instance(payload, DETECTOR_SCHEMA, f"detector output {path}")
             candidates.extend(payload["candidates"])
         elif isinstance(payload, dict) and isinstance(payload.get("findings"), list):
-            candidates.extend(legacy_finding_to_candidate(item) for item in payload["findings"])
+            raise ContractError(
+                f"{path} contains legacy findings; calibrator input must be detector_output.schema.json candidates"
+            )
         else:
             raise ContractError(f"{path} is not a detector output or legacy findings payload")
     return candidates
@@ -226,7 +264,19 @@ def load_candidates(paths: list[Path]) -> list[dict[str, Any]]:
 def calibrate_payload(input_paths: list[Path], mode: str, rules_path: Path) -> dict[str, Any]:
     rules = load_rules(rules_path)
     candidates = load_candidates(input_paths)
-    findings = [calibrate_candidate(candidate, mode, rules) for candidate in candidates]
+    findings = []
+    skipped = []
+    for candidate in candidates:
+        tags = candidate_tags(candidate)
+        starting_risk = suggested_risk(candidate)
+        report_as = report_as_for_candidate(candidate, rules, tags, starting_risk)
+        if report_as:
+            skipped.append({
+                "candidate_id": candidate.get("candidate_id", ""),
+                "report_as": report_as,
+            })
+            continue
+        findings.append(calibrate_candidate(candidate, mode, rules))
     for idx, finding in enumerate(findings, start=1):
         if not finding.get("finding_id"):
             finding["finding_id"] = f"BIOMED-CAL-{idx:04d}"
@@ -234,6 +284,8 @@ def calibrate_payload(input_paths: list[Path], mode: str, rules_path: Path) -> d
         "mode": mode,
         "findings": findings,
         "candidate_count": len(candidates),
+        "skipped_candidate_count": len(skipped),
+        "skipped_candidates": skipped,
         "rules": str(rules_path),
     }
     validate_instance(result, CALIBRATED_SCHEMA, "calibrated findings")

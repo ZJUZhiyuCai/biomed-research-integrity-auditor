@@ -51,6 +51,8 @@ Use when the user is responding to reviewer, journal, or PubPeer-style concerns.
    - Do not bypass this orchestrator for routine audits. Use individual detector scripts only for debugging or focused unit checks.
    - If no detector can run on the supplied files, treat the result as an R1 audit-coverage/completeness gap, not a clean audit.
    - Schema validation is required; do not accept a partial fallback contract check when `jsonschema` is unavailable.
+   - Send only detector-candidate JSON through the calibrator; do not use legacy hand-written findings as calibrator input.
+   - Treat unsupported keys in `schemas/risk_rules.yaml` as configuration errors, not comments.
    - If files are missing, keep them as R1 completeness gaps before doing deeper analysis.
    - Never imply that an audit is complete when source data or raw records are unavailable.
 
@@ -131,6 +133,7 @@ Even R4 is not a misconduct verdict.
 Apply these caps before finalizing the report:
 
 - Public materials only: in external mode with only a public PDF or public figures, do not assign R4 unless the public materials contain a direct internal contradiction. Most public-only concerns are capped at R3 candidate concern.
+- External missing source data: when an external-public-material finding is specifically a missing source-data/completeness gap, cap it at R1.
 - Weak statistics only: terminal-digit anomalies, p-value clustering, unusually small variance, or baseline balance concerns alone cannot exceed R2.
 - Statistical forensic screens: preserved terminal/ones/tenths digits, whole-group constant offsets, time-stratified offsets, whole-group scaling, identical rank order, repeated residual/noise pattern, abnormal rounding, precision mixing, repeated mean/SD pairs, cross-table sequence reuse, linear timepoint shifts, or overly mechanical animal/sample trajectories are R1/R2 triage signals unless tied to a direct source-to-figure or raw-to-source contradiction.
 - Text overlap: package-internal overlap without a direct contradiction cannot exceed R3. Methods/protocol boilerplate and disclosed thesis/preprint-derived overlap are capped at R2, subject to citation, disclosure, and journal-policy review.

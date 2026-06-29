@@ -16,6 +16,8 @@
 - The default audit pipeline now runs text overlap screening when supported text files are present.
 - Contract validation now fails closed when `jsonschema` is unavailable instead of silently using a partial fallback.
 - R3/R4 candidates missing benign explanations, resolving materials, or recommended actions are capped to R2 instead of having generic text auto-filled.
+- Risk-rule configuration now rejects unsupported safety keys, applies external `missing_source_data_max`, and honors R0 `report_as: positive_evidence` routing without hiding mixed risk candidates.
+- The risk calibrator now rejects legacy hand-written findings payloads; inputs must satisfy the detector-output contract.
 - CI key audit regressions now include local patch cases `case_020` through `case_024` and text-overlap cases `case_025` through `case_030`.
 
 ## v0.4.0 - Provenance-aware Local Patch Reuse Detection
