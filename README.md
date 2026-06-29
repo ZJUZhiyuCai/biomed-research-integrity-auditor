@@ -101,6 +101,14 @@ python3 evals/run_script_baseline.py --case case_020
 python3 evals/run_script_baseline.py --case case_026
 ```
 
+Run the true-PDF benchmark starter:
+
+```bash
+python3 benchmarks/true_pdf/run_true_pdf_benchmark.py
+```
+
+This benchmark currently asserts a known gap: true binary PDFs are detected and skipped by text-overlap screening unless a PDF text-extraction stage supplies extracted text.
+
 ## Regenerate Synthetic Cases
 
 The generated cases are already committed. To regenerate them:
@@ -119,7 +127,7 @@ The `ground_truth/` directory is included so the harness is reproducible. A test
 
 - Local patch detection is single-package only; it does not search across papers or external image corpora.
 - Text overlap screening is package-internal only; it does not perform web-scale plagiarism search, cross-paper corpus search, or a plagiarism verdict.
-- True PDF figure/caption extraction is still limited; synthetic evals use simplified manuscript text and generated assets.
+- True PDF figure/caption/text extraction is still limited; the true-PDF benchmark starter documents this known gap and prevents raw PDF bytes from being treated as extracted manuscript text.
 - Public-material review remains capped by missing source/raw records and must not be treated as a misconduct verdict.
 
 ## License

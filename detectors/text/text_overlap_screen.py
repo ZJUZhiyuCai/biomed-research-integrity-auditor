@@ -82,7 +82,21 @@ def collect_text_files(root: Path) -> list[tuple[Path, str]]:
     return files
 
 
+def is_true_pdf(path: Path) -> bool:
+    if path.suffix.lower() != ".pdf":
+        return False
+    try:
+        return path.read_bytes()[:5] == b"%PDF-"
+    except OSError:
+        return False
+
+
 def read_text(path: Path) -> str:
+    if is_true_pdf(path):
+        raise ValueError(
+            "true binary PDF text extraction is not implemented; provide extracted text "
+            "or run a PDF extraction stage before text overlap screening"
+        )
     return path.read_text(encoding="utf-8", errors="ignore")
 
 
@@ -268,7 +282,7 @@ def scan(root: Path, ngram: int, threshold: float, min_tokens: int) -> dict[str,
 
     return {
         "detector_name": "text.text_overlap_screen",
-        "detector_version": "0.4.1",
+        "detector_version": "0.4.2",
         "input": {
             "root": str(root),
             "ngram": ngram,

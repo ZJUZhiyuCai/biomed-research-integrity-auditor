@@ -321,6 +321,40 @@ class ContractPipelineTests(unittest.TestCase):
             self.assertEqual(payload["candidates"][0]["candidate_type"], "methods_boilerplate_overlap")
             self.assertEqual(payload["candidates"][0]["risk_suggestion"], "R2_max")
 
+    def test_true_pdf_text_extraction_gap_is_explicit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            cases_dir = Path(tmp) / "cases"
+            run([
+                PYTHON,
+                "benchmarks/true_pdf/generate_true_pdf_benchmark.py",
+                "--output-dir",
+                str(cases_dir),
+            ])
+            package = cases_dir / "true_pdf_001"
+            expected = json.loads((package / "expected_pdf_intake.json").read_text(encoding="utf-8"))
+            pdf_bytes = (package / expected["pdf"]).read_bytes()
+            self.assertTrue(pdf_bytes.startswith(b"%PDF-"))
+            for marker in expected["expected_markers"]:
+                self.assertNotIn(marker.encode("ascii"), pdf_bytes)
+
+            output = Path(tmp) / "text.json"
+            run([
+                PYTHON,
+                "detectors/text/text_overlap_screen.py",
+                str(package),
+                "--output",
+                str(output),
+            ])
+            payload = json.loads(output.read_text(encoding="utf-8"))
+            validate_instance(payload, ROOT / "schemas" / "detector_output.schema.json", "true pdf text detector")
+            self.assertEqual(payload["candidates"], [])
+            self.assertGreaterEqual(payload["paragraphs_screened"], 1)
+            self.assertTrue(any(
+                item.get("path") == expected["pdf"]
+                and "PDF text extraction is not implemented" in item.get("error", "")
+                for item in payload["errors"]
+            ))
+
 
 class RiskCapTests(unittest.TestCase):
     def detector_payload(self, risk_suggestion: str = "R4_possible") -> dict:

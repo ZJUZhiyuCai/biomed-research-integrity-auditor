@@ -76,6 +76,7 @@ Use when the user is responding to reviewer, journal, or PubPeer-style concerns.
    - The orchestrator runs `detectors/text/text_overlap_screen.py` when supplied manuscript, supplement, prior draft, thesis, preprint, or lab-previous-paper text is present.
    - Treat text overlap as a paragraph-level candidate, not plagiarism proof.
    - The detector does not search the web, external publisher corpora, PubMed, Google Scholar, Crossref, or plagiarism databases.
+   - True binary PDFs are not decoded by this detector. They are recorded as a PDF text-extraction gap unless extracted text is supplied separately.
    - Methods/protocol boilerplate is capped at R2; disclosed thesis/preprint-derived text is capped at R2 unless supplied materials create a direct contradiction.
    - Undisclosed results, abstract, or conclusion overlap may justify R2/R3 review depending on section, score, disclosure, and journal-policy context.
    - For every text-overlap finding, request prior drafts/source documents, disclosure or citation trail, and relevant journal policy before escalation.
@@ -188,6 +189,7 @@ Scripts are screening aids. Read or patch them before relying on them in unfamil
 - `../../detectors/image/global_near_duplicate.py`: multi-hash plus D4 transform global image candidate detector.
 - `../../detectors/image/local_patch_reuse.py`: overlapping-tile local patch candidate detector with evidence crop export.
 - `../../detectors/text/text_overlap_screen.py`: package-internal paragraph overlap candidate detector; no web-scale plagiarism search.
+- `../../benchmarks/true_pdf/run_true_pdf_benchmark.py`: true binary-PDF benchmark starter that records the current PDF text-extraction gap.
 - `../../detectors/stats/pseudoreplication_screen.py`: unit-of-analysis mismatch candidate detector.
 - `../../calibrators/contextual_joiner.py`: enrich detector candidates with disclosed-reuse and source-availability context before calibration.
 - `../../calibrators/risk_cap_engine.py`: convert detector candidates into capped findings.
