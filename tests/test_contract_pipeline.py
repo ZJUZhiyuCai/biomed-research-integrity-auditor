@@ -37,6 +37,16 @@ def load_report_assembler():
     return module
 
 
+def load_audit_package():
+    path = ROOT / "scripts" / "audit_package.py"
+    spec = importlib.util.spec_from_file_location("audit_package", path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec and spec.loader
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
 def risk_value(risk: str) -> int:
     return RISK_ORDER.get(risk, -1)
 
@@ -628,6 +638,7 @@ class RiskCapTests(unittest.TestCase):
         self.assertEqual(missing, [])
         self.assertEqual(detector_caps["expected_traceability"]["report_as"], "positive_evidence")
         self.assertEqual(detector_caps["unresolved_fig_raw_similarity"]["max"], "R1")
+        self.assertEqual(detector_caps["detector_execution_failure"]["max"], "R1")
         self.assertEqual(detector_caps["audit_coverage_gap"]["max"], "R1")
         self.assertEqual(detector_caps["local_patch_reuse"]["max"], "R3")
         self.assertTrue(detector_caps["local_patch_reuse"]["unless_r4_requirement"])
@@ -734,6 +745,54 @@ class ProvenanceManifestTests(unittest.TestCase):
 
 
 class EndToEndTests(unittest.TestCase):
+    def test_detector_nonzero_exit_is_isolated_as_r1_finding(self) -> None:
+        audit_package = load_audit_package()
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "pkg"
+            package.mkdir()
+            out = Path(tmp) / "out"
+            out.mkdir()
+            expected = out / "nonexistent_detector_output.json"
+            result = audit_package.run_detector(
+                "forced_failure",
+                package,
+                out,
+                [PYTHON, "-c", "import sys; sys.stderr.write('forced detector failure'); sys.exit(7)"],
+                expected,
+            )
+            self.assertFalse(result.ok)
+            payload = json.loads(result.output.read_text(encoding="utf-8"))
+            validate_instance(payload, ROOT / "schemas" / "detector_output.schema.json", "detector failure output")
+            self.assertEqual(payload["candidates"][0]["candidate_type"], "detector_execution_failure")
+            self.assertEqual(payload["errors"][0]["returncode"], 7)
+
+            calibrated = calibrate_payload([result.output], "internal_presubmission", ROOT / "schemas" / "risk_rules.yaml")
+            self.assertEqual(calibrated["findings"][0]["calibrated_risk_level"], "R1")
+            self.assertEqual(calibrated["findings"][0]["finding_type"], "detector_execution_failure")
+
+    def test_detector_invalid_output_is_isolated_as_r1_finding(self) -> None:
+        audit_package = load_audit_package()
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "pkg"
+            package.mkdir()
+            out = Path(tmp) / "out"
+            out.mkdir()
+            expected = out / "bad_output.json"
+            result = audit_package.run_detector(
+                "bad_json_detector",
+                package,
+                out,
+                [PYTHON, "-c", f"from pathlib import Path; Path({str(expected)!r}).write_text('not json')"],
+                expected,
+            )
+            self.assertFalse(result.ok)
+            payload = json.loads(result.output.read_text(encoding="utf-8"))
+            self.assertEqual(payload["candidates"][0]["candidate_type"], "detector_execution_failure")
+            self.assertIn("failed contract validation", payload["errors"][0]["reason"])
+
+            calibrated = calibrate_payload([result.output], "internal_presubmission", ROOT / "schemas" / "risk_rules.yaml")
+            self.assertEqual(calibrated["findings"][0]["calibrated_risk_level"], "R1")
+
     def test_xlsx_source_data_runs_source_detectors_without_coverage_gap(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             package = Path(tmp) / "xlsx_source_case"

@@ -57,6 +57,7 @@ python3 scripts/audit_package.py evals/cases/case_004 --output-dir audit_outputs
 The orchestrator inventories the package, runs detector scripts, validates detector JSON with `schemas/detector_output.schema.json`, joins context for disclosed reuse, applies `schemas/risk_rules.yaml`, validates calibrated findings, and writes an audit report plus `AUDIT_JSON_SUMMARY.json`.
 Schema validation requires `jsonschema`; if it is unavailable, the pipeline fails closed instead of falling back to partial contract checks.
 If no detector can run on the supplied package, the pipeline emits an explicit `audit_coverage_gap` R1 finding rather than treating the package as clean.
+If an individual detector exits non-zero or writes invalid JSON, the pipeline preserves other detector outputs and emits a `detector_execution_failure` R1 finding for the failed module.
 The calibrator accepts detector-candidate payloads only; legacy hand-written findings are rejected as inputs.
 Risk-rule keys are validated, including mode-specific `missing_source_data_max` caps and `report_as: positive_evidence` routing for R0 traceability candidates.
 

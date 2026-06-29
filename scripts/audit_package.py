@@ -4,8 +4,10 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import dataclass
 import json
 import re
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -29,6 +31,12 @@ TEXT_EXTS = {".txt", ".md", ".pdf"}
 MODES = ("internal_presubmission", "external_public_material", "response_to_concern")
 
 
+@dataclass(frozen=True)
+class DetectorRunResult:
+    output: Path
+    ok: bool
+
+
 def run(cmd: list[str]) -> None:
     subprocess.run(cmd, cwd=ROOT, check=True)
 
@@ -43,6 +51,20 @@ def read_json(path: Path) -> dict[str, Any]:
 
 def write_json(path: Path, payload: dict[str, Any]) -> None:
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+
+
+def command_display(cmd: list[str]) -> str:
+    return " ".join(shlex.quote(str(part)) for part in cmd)
+
+
+def text_tail(value: str, limit: int = 4000) -> str:
+    if len(value) <= limit:
+        return value
+    return value[-limit:]
+
+
+def stage_slug(stage: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "_", stage.lower()).strip("_") or "detector"
 
 
 def manifest_mode(mode: str) -> str:
@@ -113,6 +135,123 @@ def validate_detector(path: Path) -> None:
     validate_instance(read_json(path), DETECTOR_SCHEMA, f"detector output {path}")
 
 
+def write_detector_failure(
+    stage: str,
+    package: Path,
+    output_dir: Path,
+    cmd: list[str],
+    expected_output: Path,
+    reason: str,
+    returncode: int | None = None,
+    stdout: str = "",
+    stderr: str = "",
+) -> Path:
+    slug = stage_slug(stage)
+    error = {
+        "stage": stage,
+        "command": command_display(cmd),
+        "expected_output": str(expected_output),
+        "reason": reason,
+        "returncode": returncode,
+        "stdout_tail": text_tail(stdout),
+        "stderr_tail": text_tail(stderr),
+    }
+    payload = {
+        "detector_name": "audit.detector_failure",
+        "detector_version": "0.1.0",
+        "input": {
+            "package": str(package),
+            "stage": stage,
+            "expected_output": str(expected_output),
+        },
+        "candidates": [
+            {
+                "candidate_id": f"AUDIT-DETECTOR-{slug.upper()}",
+                "detector": "audit.detector_failure",
+                "candidate_type": "detector_execution_failure",
+                "locations": [str(package)],
+                "evidence": {
+                    "message": "A detector failed or produced invalid output; audit results are partial for this module.",
+                    **error,
+                },
+                "evidence_strength": "weak_signal",
+                "risk_suggestion": "R1_max",
+                "risk_cap_tags": ["detector_execution_failure", "audit_coverage_gap", "completeness_gap"],
+                "benign_explanations": [
+                    "The input may use a format, encoding, image mode, or file structure not yet supported by this detector.",
+                    "The detector or its runtime dependency may have failed independently of the research materials.",
+                ],
+                "required_materials": [
+                    "detector stdout/stderr logs",
+                    "supported source/raw files or converted exports for the failed module",
+                    "manual review of the materials covered by the failed detector",
+                ],
+                "recommended_action": (
+                    "Review the detector error, convert unsupported files when appropriate, and do not treat this module as clean."
+                ),
+                "requires_contextual_calibration": True,
+            }
+        ],
+        "errors": [error],
+    }
+    output = output_dir / f"{slug}_failure_candidates.json"
+    write_json(output, payload)
+    validate_detector(output)
+    return output
+
+
+def run_detector(stage: str, package: Path, output_dir: Path, cmd: list[str], expected_output: Path) -> DetectorRunResult:
+    result = subprocess.run(cmd, cwd=ROOT, check=False, capture_output=True, text=True)
+    if result.returncode != 0:
+        return DetectorRunResult(
+            write_detector_failure(
+                stage,
+                package,
+                output_dir,
+                cmd,
+                expected_output,
+                "detector command exited non-zero",
+                result.returncode,
+                result.stdout,
+                result.stderr,
+            ),
+            False,
+        )
+    if not expected_output.exists():
+        return DetectorRunResult(
+            write_detector_failure(
+                stage,
+                package,
+                output_dir,
+                cmd,
+                expected_output,
+                "detector command completed but did not write the expected output",
+                result.returncode,
+                result.stdout,
+                result.stderr,
+            ),
+            False,
+        )
+    try:
+        validate_detector(expected_output)
+    except Exception as exc:  # noqa: BLE001 - invalid detector output becomes an audit finding.
+        return DetectorRunResult(
+            write_detector_failure(
+                stage,
+                package,
+                output_dir,
+                cmd,
+                expected_output,
+                f"detector output failed contract validation: {exc}",
+                result.returncode,
+                result.stdout,
+                result.stderr,
+            ),
+            False,
+        )
+    return DetectorRunResult(expected_output, True)
+
+
 def run_source_detectors(package: Path, output_dir: Path) -> list[Path]:
     source_dir = package / "source_data"
     outputs: list[Path] = []
@@ -120,26 +259,24 @@ def run_source_detectors(package: Path, output_dir: Path) -> list[Path]:
         return outputs
 
     stats_output = output_dir / "stats_consistency_candidates.json"
-    run([
+    result = run_detector("stats_consistency", package, output_dir, [
         PYTHON,
         "skill/biomed-research-integrity-auditor/scripts/stats_consistency_check.py",
         str(source_dir),
         "--output",
         str(stats_output),
-    ])
-    validate_detector(stats_output)
-    outputs.append(stats_output)
+    ], stats_output)
+    outputs.append(result.output)
 
     pseudo_output = output_dir / "pseudoreplication_candidates.json"
-    run([
+    result = run_detector("pseudoreplication", package, output_dir, [
         PYTHON,
         "detectors/stats/pseudoreplication_screen.py",
         str(source_dir),
         "--output",
         str(pseudo_output),
-    ])
-    validate_detector(pseudo_output)
-    outputs.append(pseudo_output)
+    ], pseudo_output)
+    outputs.append(result.output)
     return outputs
 
 
@@ -149,33 +286,34 @@ def run_image_detector(package: Path, output_dir: Path, provenance_graph: Path) 
 
     outputs: list[Path] = []
     image_output = output_dir / "global_image_candidates.json"
-    run([
+    global_result = run_detector("global_image", package, output_dir, [
         PYTHON,
         "detectors/image/global_near_duplicate.py",
         str(package),
         "--output",
         str(image_output),
-    ])
-    validate_detector(image_output)
+    ], image_output)
 
-    contextual_output = output_dir / "contextual_image_candidates.json"
-    run([
-        PYTHON,
-        "calibrators/contextual_joiner.py",
-        "--input",
-        str(image_output),
-        "--package",
-        str(package),
-        "--provenance",
-        str(provenance_graph),
-        "--output",
-        str(contextual_output),
-    ])
-    validate_detector(contextual_output)
-    outputs.append(contextual_output)
+    if global_result.ok:
+        contextual_output = output_dir / "contextual_image_candidates.json"
+        contextual_result = run_detector("contextual_image", package, output_dir, [
+            PYTHON,
+            "calibrators/contextual_joiner.py",
+            "--input",
+            str(image_output),
+            "--package",
+            str(package),
+            "--provenance",
+            str(provenance_graph),
+            "--output",
+            str(contextual_output),
+        ], contextual_output)
+        outputs.append(contextual_result.output)
+    else:
+        outputs.append(global_result.output)
 
     local_patch_output = output_dir / "local_patch_candidates.json"
-    run([
+    local_patch_result = run_detector("local_patch", package, output_dir, [
         PYTHON,
         "detectors/image/local_patch_reuse.py",
         str(package),
@@ -185,24 +323,25 @@ def run_image_detector(package: Path, output_dir: Path, provenance_graph: Path) 
         str(output_dir / "evidence" / "local_patch"),
         "--output",
         str(local_patch_output),
-    ])
-    validate_detector(local_patch_output)
+    ], local_patch_output)
 
-    local_patch_contextual_output = output_dir / "local_patch_contextual_candidates.json"
-    run([
-        PYTHON,
-        "calibrators/contextual_joiner.py",
-        "--input",
-        str(local_patch_output),
-        "--package",
-        str(package),
-        "--provenance",
-        str(provenance_graph),
-        "--output",
-        str(local_patch_contextual_output),
-    ])
-    validate_detector(local_patch_contextual_output)
-    outputs.append(local_patch_contextual_output)
+    if local_patch_result.ok:
+        local_patch_contextual_output = output_dir / "local_patch_contextual_candidates.json"
+        local_patch_contextual_result = run_detector("local_patch_contextual", package, output_dir, [
+            PYTHON,
+            "calibrators/contextual_joiner.py",
+            "--input",
+            str(local_patch_output),
+            "--package",
+            str(package),
+            "--provenance",
+            str(provenance_graph),
+            "--output",
+            str(local_patch_contextual_output),
+        ], local_patch_contextual_output)
+        outputs.append(local_patch_contextual_result.output)
+    else:
+        outputs.append(local_patch_result.output)
     return outputs
 
 
@@ -210,15 +349,14 @@ def run_text_detectors(package: Path, output_dir: Path) -> list[Path]:
     if not has_files(package, TEXT_EXTS):
         return []
     text_output = output_dir / "text_overlap_candidates.json"
-    run([
+    result = run_detector("text_overlap", package, output_dir, [
         PYTHON,
         "detectors/text/text_overlap_screen.py",
         str(package),
         "--output",
         str(text_output),
-    ])
-    validate_detector(text_output)
-    return [text_output]
+    ], text_output)
+    return [result.output]
 
 
 def write_audit_coverage_gap(package: Path, output_dir: Path) -> Path:

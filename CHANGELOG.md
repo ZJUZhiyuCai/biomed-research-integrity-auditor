@@ -9,6 +9,7 @@
 - Synthetic text-overlap eval cases `case_025` through `case_030`, including methods boilerplate, disclosed thesis reuse, clean text, and prompt-injection controls.
 - Script-baseline audit-output assertions for CI risk ranges and required finding tags.
 - Explicit `audit_coverage_gap` R1 finding when no detector can run on a supplied package.
+- Detector failure isolation: non-zero detector exits or invalid detector JSON now produce `detector_execution_failure` R1 findings while preserving other module outputs.
 - XLSX source-data intake for statistical consistency and pseudoreplication screening.
 
 ### Changed

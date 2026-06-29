@@ -55,6 +55,8 @@ detector_caps:
 
   pseudoreplication_candidate:
     max: R3
+  detector_execution_failure:
+    max: R1
   audit_coverage_gap:
     max: R1
   completeness_gap:

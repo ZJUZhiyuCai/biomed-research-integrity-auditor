@@ -29,6 +29,7 @@ ALLOWED_RULE_KEYS = {"max", "default_max", "unless_r4_requirement", "report_as"}
 MISSING_SOURCE_DATA_TAGS = {
     "audit_coverage_gap",
     "completeness_gap",
+    "detector_execution_failure",
     "missing_source_data",
     "source_data_missing",
     "source_data_unavailable",
