@@ -109,6 +109,12 @@ python3 benchmarks/true_pdf/run_true_pdf_benchmark.py
 
 This benchmark currently asserts a known gap: true binary PDFs are detected and skipped by text-overlap screening unless a PDF text-extraction stage supplies extracted text.
 
+CI also asserts key script-baseline audit outputs against `evals/ground_truth/` with:
+
+```bash
+python3 evals/assert_audit_outputs.py --outputs-root audit_outputs
+```
+
 ## Regenerate Synthetic Cases
 
 The generated cases are already committed. To regenerate them:

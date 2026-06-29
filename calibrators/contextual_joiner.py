@@ -21,6 +21,15 @@ DETECTOR_SCHEMA = ROOT / "schemas" / "detector_output.schema.json"
 TEXT_EXTS = {".txt", ".md", ".pdf", ".csv", ".tsv", ".json", ".yaml", ".yml"}
 SOURCE_EXTS = {".csv", ".tsv", ".xlsx", ".xls"}
 RAW_IMAGE_EXTS = {".czi", ".nd2", ".lif", ".oib", ".oir", ".svs", ".vsi", ".tif", ".tiff", ".png", ".jpg", ".jpeg"}
+FIGURE_SOURCE_TRACEABILITY_RELATIONS = {
+    "declared_derived_from",
+    "declared_same_source",
+    "same_membrane_reprobe",
+}
+FIGURE_FIGURE_TRACEABILITY_RELATIONS = {
+    "same_field_different_channel",
+    "same_membrane_reprobe",
+}
 
 
 def read_package_text(package: Path) -> str:
@@ -130,11 +139,29 @@ def undirected_pair(left: str, right: str) -> tuple[str, str]:
     return tuple(sorted((left, right)))
 
 
-def declared_traceability_pairs(provenance: dict[str, Any]) -> set[tuple[str, str]]:
-    pairs = set()
+def is_authoritative_traceability_edge(edge: dict[str, Any], provenance: dict[str, Any]) -> bool:
+    if edge.get("risk_effect") != "expected_traceability":
+        return False
+    source_path = str(edge.get("source_path", ""))
+    target_path = str(edge.get("target_path", ""))
+    if not source_path or not target_path or source_path == target_path:
+        return False
+    source_role = role_from_path(source_path, provenance)
+    target_role = role_from_path(target_path, provenance)
+    roles = {source_role, target_role}
+    relation = str(edge.get("relation_type", "")).lower()
+    if roles == {"figure_panel", "raw_image"} or roles == {"figure_panel", "source_data"}:
+        return relation in FIGURE_SOURCE_TRACEABILITY_RELATIONS
+    if source_role == "figure_panel" and target_role == "figure_panel":
+        return relation in FIGURE_FIGURE_TRACEABILITY_RELATIONS
+    return False
+
+
+def declared_traceability_pairs(provenance: dict[str, Any]) -> dict[tuple[str, str], dict[str, Any]]:
+    pairs = {}
     for edge in provenance.get("edges", []) or []:
-        if edge.get("risk_effect") == "expected_traceability":
-            pairs.add(undirected_pair(str(edge.get("source_path", "")), str(edge.get("target_path", ""))))
+        if is_authoritative_traceability_edge(edge, provenance):
+            pairs[undirected_pair(str(edge.get("source_path", "")), str(edge.get("target_path", "")))] = edge
     return pairs
 
 
@@ -154,7 +181,7 @@ def classify_similarity_edge(
     edge: dict[str, Any],
     context: dict[str, Any],
     provenance: dict[str, Any],
-    declared_pairs: set[tuple[str, str]],
+    declared_pairs: dict[tuple[str, str], dict[str, Any]],
 ) -> dict[str, Any]:
     left, right = edge_paths(edge)
     left_role = role_from_path(left, provenance)
@@ -164,15 +191,20 @@ def classify_similarity_edge(
     classified["right_role"] = right_role
     is_local_patch = edge.get("similarity_scope") == "local_patch"
 
-    if undirected_pair(left, right) in declared_pairs:
+    pair = undirected_pair(left, right)
+    provenance_edge = provenance_edge_for_pair(left, right, provenance)
+    if pair in declared_pairs:
         classified.update({
             "contextual_tag": "expected_traceability",
             "reportable_as_risk": False,
             "positive_evidence": True,
             "risk_suggestion": "R0_positive_traceability",
-            "provenance_edge": provenance_edge_for_pair(left, right, provenance),
+            "provenance_edge": declared_pairs[pair],
         })
         return classified
+    if provenance_edge:
+        classified["provenance_edge"] = provenance_edge
+        classified["declared_relation_unverified"] = True
 
     roles = {left_role, right_role}
     if roles == {"figure_panel", "raw_image"}:

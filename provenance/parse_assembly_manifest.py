@@ -26,6 +26,10 @@ EXPECTED_RELATION_TYPES = {
     "same_membrane_reprobe",
     "declared_same_source",
 }
+FIGURE_FIGURE_TRACEABILITY_RELATIONS = {
+    "same_field_different_channel",
+    "same_membrane_reprobe",
+}
 
 
 def package_files(package: Path) -> dict[str, list[str]]:
@@ -86,13 +90,23 @@ def structured_link_from_row(
         return None
     if target_role not in SOURCE_ROLES and not (target_role == "figure_panel" and relation_type in EXPECTED_RELATION_TYPES):
         return None
+    relation_key = relation_type.lower()
+    if target_role in SOURCE_ROLES:
+        risk_effect = "expected_traceability"
+        confidence = 0.98
+    elif target_role == "figure_panel" and relation_key in FIGURE_FIGURE_TRACEABILITY_RELATIONS:
+        risk_effect = "expected_traceability"
+        confidence = 0.98
+    else:
+        risk_effect = "candidate_traceability"
+        confidence = 0.5
     link = {
         "source_path": figure,
         "target_path": source,
         "relation_type": relation_type,
         "evidence_source": evidence_source,
-        "confidence": 0.98,
-        "risk_effect": "expected_traceability",
+        "confidence": confidence,
+        "risk_effect": risk_effect,
         "extraction_method": extraction_method,
     }
     modality = str(row.get("modality", "") or "").strip()

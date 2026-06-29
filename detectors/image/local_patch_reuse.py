@@ -11,6 +11,15 @@ from typing import Any
 
 
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp"}
+FIGURE_SOURCE_TRACEABILITY_RELATIONS = {
+    "declared_derived_from",
+    "declared_same_source",
+    "same_membrane_reprobe",
+}
+FIGURE_FIGURE_TRACEABILITY_RELATIONS = {
+    "same_field_different_channel",
+    "same_membrane_reprobe",
+}
 TRANSFORMS = {
     "identity": None,
     "rot90": "ROTATE_90",
@@ -72,10 +81,38 @@ def load_provenance(path: Path | None) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def role_from_path(path: str) -> str:
+    if path.startswith("figures/"):
+        return "figure_panel"
+    if path.startswith("raw_images/"):
+        return "raw_image"
+    if path.startswith("source_data/"):
+        return "source_data"
+    return "resource"
+
+
+def is_authoritative_traceability_edge(edge: dict[str, Any]) -> bool:
+    if edge.get("risk_effect") != "expected_traceability":
+        return False
+    source_path = str(edge.get("source_path", ""))
+    target_path = str(edge.get("target_path", ""))
+    if not source_path or not target_path or source_path == target_path:
+        return False
+    source_role = role_from_path(source_path)
+    target_role = role_from_path(target_path)
+    roles = {source_role, target_role}
+    relation = str(edge.get("relation_type", "")).lower()
+    if roles == {"figure_panel", "raw_image"} or roles == {"figure_panel", "source_data"}:
+        return relation in FIGURE_SOURCE_TRACEABILITY_RELATIONS
+    if source_role == "figure_panel" and target_role == "figure_panel":
+        return relation in FIGURE_FIGURE_TRACEABILITY_RELATIONS
+    return False
+
+
 def expected_traceability_pairs(provenance: dict[str, Any]) -> set[tuple[str, str]]:
     pairs: set[tuple[str, str]] = set()
     for edge in provenance.get("edges", []) or []:
-        if edge.get("risk_effect") == "expected_traceability":
+        if is_authoritative_traceability_edge(edge):
             pairs.add(undirected_pair(str(edge.get("source_path", "")), str(edge.get("target_path", ""))))
     return pairs
 

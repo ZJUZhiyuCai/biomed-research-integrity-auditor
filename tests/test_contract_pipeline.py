@@ -254,6 +254,7 @@ class ContractPipelineTests(unittest.TestCase):
                     {
                         "source_path": "figures/Figure_A.png",
                         "target_path": "raw_images/raw_A.png",
+                        "relation_type": "declared_derived_from",
                         "risk_effect": "expected_traceability",
                     }
                 ]
@@ -528,6 +529,27 @@ class ProvenanceManifestTests(unittest.TestCase):
             self.assertEqual(payload["links"][0]["target_path"], "raw_images/raw_B.png")
             self.assertEqual(payload["links"][0]["extraction_method"], "structured_yaml_manifest")
 
+    def test_figure_to_figure_derived_from_manifest_is_not_expected_traceability(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "pkg"
+            (package / "figures").mkdir(parents=True)
+            (package / "figure_assembly").mkdir()
+            (package / "figures/Figure_2B.png").write_bytes(b"figure-a")
+            (package / "figures/Figure_4D.png").write_bytes(b"figure-b")
+            (package / "figure_assembly/assembly_manifest.csv").write_text(
+                "figure_panel,source_record,relation_type,modality,notes\n"
+                "figures/Figure_2B.png,figures/Figure_4D.png,declared_derived_from,microscopy,"
+                "author-declared relationship must not clear cross-context reuse\n",
+                encoding="utf-8",
+            )
+            output = Path(tmp) / "links.json"
+            run([PYTHON, "provenance/parse_assembly_manifest.py", str(package), "--output", str(output)])
+            payload = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual(len(payload["links"]), 1)
+            self.assertEqual(payload["links"][0]["relation_type"], "declared_derived_from")
+            self.assertEqual(payload["links"][0]["risk_effect"], "candidate_traceability")
+            self.assertLess(payload["links"][0]["confidence"], 0.9)
+
 
 class EndToEndTests(unittest.TestCase):
     def test_text_results_overlap_without_disclosure_can_reach_r3(self) -> None:
@@ -797,6 +819,41 @@ class EndToEndTests(unittest.TestCase):
             tags = [tag for item in calibrated["findings"] for tag in item.get("source_candidate_tags", [])]
             self.assertIn("cross_context_reuse_candidate", tags)
             self.assertTrue(any(item["calibrated_risk_level"] == "R3" for item in calibrated["findings"]))
+
+    def test_author_declared_figure_to_figure_manifest_does_not_clear_case004_reuse(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "manifest_attack"
+            shutil.copytree(ROOT / "evals/cases/case_004", package)
+            (package / "figure_assembly").mkdir(exist_ok=True)
+            (package / "figure_assembly/assembly_manifest.csv").write_text(
+                "figure_panel,source_record,relation_type,modality,notes\n"
+                "figures/Figure_2B.png,figures/Figure_4D.png,declared_derived_from,microscopy,"
+                "same field reused\n",
+                encoding="utf-8",
+            )
+            out = Path(tmp) / "out"
+            run([
+                PYTHON,
+                "scripts/audit_package.py",
+                str(package),
+                "--output-dir",
+                str(out),
+                "--case-id",
+                "manifest_attack",
+            ])
+            summary = json.loads((out / "AUDIT_JSON_SUMMARY.json").read_text(encoding="utf-8"))
+            self.assertEqual(summary["overall_risk"], "R3")
+            self.assertTrue(any(item["finding_type"] == "image_reuse_cluster" for item in summary["findings"]))
+            contextual = json.loads((out / "contextual_image_candidates.json").read_text(encoding="utf-8"))
+            positive_edges = [
+                edge
+                for item in contextual.get("positive_evidence", [])
+                for edge in item.get("edges", [])
+            ]
+            self.assertFalse(any(
+                {edge.get("left"), edge.get("right")} == {"figures/Figure_2B.png", "figures/Figure_4D.png"}
+                for edge in positive_edges
+            ))
 
     def test_case005_disclosed_legitimate_reuse_caps_at_r2(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

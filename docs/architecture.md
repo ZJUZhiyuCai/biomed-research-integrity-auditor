@@ -46,6 +46,8 @@ The image contextual joiner classifies each similarity edge before calibration:
 - `local_patch_cross_context`: a region-level patch similarity across figure panels. This can remain R3, but it is still a candidate requiring raw/source review.
 - disclosed loading-control reuse is capped according to the contextual tags in `schemas/risk_rules.yaml`.
 
+Author-supplied assembly manifests are not treated as truth. Ordinary figure-to-figure `declared_derived_from` rows are retained as context but do not clear cross-context image reuse. Figure-to-figure positive traceability is limited to explicit same-field or same-membrane relation types.
+
 This layer is designed to reduce high-risk false positives in clean-control and prompt-injection packages.
 
 ## Package-Internal Text Overlap
