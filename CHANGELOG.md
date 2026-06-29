@@ -12,7 +12,7 @@
 
 ### Added
 - OCR fallback for image-only/scanned PDFs when PyMuPDF, pytesseract, and the tesseract binary are available.
-- Scanned-PDF benchmark package and runner, with CI enforcing the OCR path.
+- Scanned-PDF benchmark package and runner, with required mode for environments that provide the OCR runtime.
 - Real-microscopy-image benchmark based on a public-domain National Cancer Institute image, replacing one purely toy benchmark path with a real image asset.
 - External literature/library phrase-search detector with Europe PMC, Crossref, and fixture-backed CI modes.
 
