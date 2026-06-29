@@ -9,7 +9,7 @@ This is deliberately **not** a "paper fraud detector." It is a risk-auditing wor
 ## What Is Included
 
 - `skill/biomed-research-integrity-auditor/` - the installable Codex skill.
-- `evals/` - 12 neutral synthetic manuscript packages for blind testing.
+- `evals/` - neutral synthetic manuscript packages for blind testing.
 - `evals/run_eval.py` - prompt generation and JSON-summary scoring.
 - `evals/generate_synthetic_cases.py` - deterministic synthetic package generator.
 - `docs/design-notes.md` - design rationale, boundaries, and source anchors.

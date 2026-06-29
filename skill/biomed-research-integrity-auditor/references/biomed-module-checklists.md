@@ -71,9 +71,16 @@ Weak triage checks:
 
 - Terminal-digit patterns.
 - Repeated decimals.
-- Mechanical differences or ratios.
+- Abnormal rounding or terminal 0/5 preference.
+- Repeated means, SDs, SEMs, or repeated mean/SD pairs.
+- Mechanical differences, preserved last digits, or constant offsets across a whole group.
+- Whole-group multiply/divide relationships or normalization-like scaling.
+- Identical rank ordering across groups, conditions, or time points.
+- Adjacent time points that are linear shifts of prior values.
+- Longitudinal animal/sample trajectories with nearly identical increments, over-smoothing, or repeated increment patterns.
 - Very small variance.
 - P value clustering near thresholds.
+- Implausibly high correlations between supposedly independent conditions.
 
 Weak checks should not drive R4 findings.
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check biomedical source-data summaries for simple consistency issues."""
+"""Check biomedical source-data summaries for statistical consistency and weak forensic triage signals."""
 
 from __future__ import annotations
 
@@ -7,12 +7,17 @@ import argparse
 import csv
 import json
 import math
+import re
+from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
 
 
 CSV_EXTS = {".csv", ".tsv"}
 NUMERIC_HINTS = ("mean", "sd", "sem", "se", "n", "p", "p_value", "pvalue")
+TIME_HINT_RE = re.compile(r"(^|[_\-\s])(t\d+|day\d+|d\d+|week\d+|w\d+|hour\d+|h\d+|baseline|endpoint)($|[_\-\s])", re.I)
+SUMMARY_COLUMNS = {"mean", "sd", "sem", "se", "n", "p", "p_value", "pvalue"}
+TERMINAL_DIGIT_SKIP_COLUMNS = {"n"}
 
 
 def parse_float(value: Any) -> float | None:
@@ -44,10 +49,31 @@ def read_table(path: Path) -> list[dict[str, str]]:
 
 
 def row_label(path: Path, idx: int, row: dict[str, str]) -> str:
-    for key in ("id", "group", "condition", "figure", "panel", "comparison"):
+    for key in ("id", "animal_id", "mouse_id", "subject_id", "group", "condition", "figure", "panel", "comparison"):
         if row.get(key):
             return f"{path.name}:row{idx}:{key}={row[key]}"
     return f"{path.name}:row{idx}"
+
+
+def issue(location: str, risk_level: str, message: str, values: dict[str, Any], evidence_type: str = "statistics_consistency") -> dict[str, Any]:
+    return {
+        "finding_id": "",
+        "risk_level": risk_level,
+        "module": "Numerical and Statistical Consistency",
+        "location": location,
+        "finding_type": message,
+        "evidence_type": evidence_type,
+        "evidence": values,
+        "note": "Screening result only; inspect source data, analysis code, rounding, normalization, and benign explanations.",
+    }
+
+
+def weak_issue(location: str, message: str, values: dict[str, Any]) -> dict[str, Any]:
+    return issue(location, "R2", message, values, evidence_type="weak_forensic_triage_signal")
+
+
+def almost_equal(a: float, b: float, tolerance: float) -> bool:
+    return abs(a - b) <= max(tolerance, max(abs(a), abs(b)) * tolerance)
 
 
 def check_rows(path: Path, rows: list[dict[str, str]], sem_tolerance: float) -> list[dict[str, Any]]:
@@ -92,20 +118,308 @@ def check_rows(path: Path, rows: list[dict[str, str]], sem_tolerance: float) -> 
             findings.append(issue(label, "R1", "Extremely small relative SD; weak triage signal", {
                 "mean": mean,
                 "sd": sd,
-            }))
+            }, evidence_type="weak_forensic_triage_signal"))
     return findings
 
 
-def issue(location: str, risk_level: str, message: str, values: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "finding_id": "",
-        "risk_level": risk_level,
-        "module": "Numerical and Statistical Consistency",
-        "location": location,
-        "finding_type": message,
-        "evidence": values,
-        "note": "Screening result only; inspect source data, analysis code, rounding, and benign explanations.",
+def numeric_columns(rows: list[dict[str, str]]) -> dict[str, list[tuple[int, str, float]]]:
+    columns: dict[str, list[tuple[int, str, float]]] = defaultdict(list)
+    for idx, row in enumerate(rows, start=2):
+        for key, raw in row.items():
+            value = parse_float(raw)
+            if value is not None:
+                columns[key].append((idx, str(raw), value))
+    return dict(columns)
+
+
+def terminal_digit(raw: str) -> str | None:
+    text = raw.strip().lower()
+    if not text or text in {"na", "n/a", "nan", "null", "-"}:
+        return None
+    text = text.replace(",", "")
+    if text.startswith("<"):
+        text = text[1:]
+    if "e" in text:
+        return None
+    digits = re.sub(r"[^0-9]", "", text)
+    return digits[-1] if digits else None
+
+
+def decimal_places(raw: str) -> int | None:
+    text = raw.strip().lower().replace(",", "")
+    if "e" in text or not text:
+        return None
+    if "." not in text:
+        return 0
+    return len(text.split(".", 1)[1].rstrip("%"))
+
+
+def check_terminal_digits(path: Path, columns: dict[str, list[tuple[int, str, float]]], min_count: int, dominance: float) -> list[dict[str, Any]]:
+    findings = []
+    for column, values in columns.items():
+        if column in TERMINAL_DIGIT_SKIP_COLUMNS:
+            continue
+        digits = [digit for _, raw, _ in values if (digit := terminal_digit(raw)) is not None]
+        if len(digits) < min_count:
+            continue
+        counts = Counter(digits)
+        digit, count = counts.most_common(1)[0]
+        share = count / len(digits)
+        if share >= dominance:
+            findings.append(issue(f"{path.name}:{column}", "R1", "Terminal-digit preference; weak triage signal", {
+                "column": column,
+                "values_screened": len(digits),
+                "dominant_terminal_digit": digit,
+                "dominant_share": round(share, 3),
+                "digit_counts": dict(sorted(counts.items())),
+            }, evidence_type="weak_forensic_triage_signal"))
+    return findings
+
+
+def check_rounding_patterns(path: Path, columns: dict[str, list[tuple[int, str, float]]], min_count: int, share_threshold: float) -> list[dict[str, Any]]:
+    findings = []
+    for column, values in columns.items():
+        if column in TERMINAL_DIGIT_SKIP_COLUMNS:
+            continue
+        raw_values = [raw for _, raw, _ in values]
+        if len(raw_values) < min_count:
+            continue
+        terminal = [terminal_digit(raw) for raw in raw_values]
+        terminal = [d for d in terminal if d is not None]
+        if len(terminal) < min_count:
+            continue
+        zero_or_five = sum(1 for digit in terminal if digit in {"0", "5"})
+        decimal_counts = Counter(dp for raw in raw_values if (dp := decimal_places(raw)) is not None)
+        if zero_or_five / len(terminal) >= share_threshold:
+            findings.append(issue(f"{path.name}:{column}", "R1", "Values disproportionately end in 0 or 5; possible rounding/convenience pattern", {
+                "column": column,
+                "values_screened": len(terminal),
+                "zero_or_five_share": round(zero_or_five / len(terminal), 3),
+                "decimal_place_counts": dict(sorted(decimal_counts.items())),
+            }, evidence_type="weak_forensic_triage_signal"))
+    return findings
+
+
+def check_repeated_summaries(path: Path, rows: list[dict[str, str]]) -> list[dict[str, Any]]:
+    findings = []
+    if not rows:
+        return findings
+    pair_counts: Counter[tuple[str, str]] = Counter()
+    pair_locations: dict[tuple[str, str], list[str]] = defaultdict(list)
+    for idx, row in enumerate(rows, start=2):
+        mean_raw = row.get("mean")
+        sd_raw = row.get("sd")
+        if parse_float(mean_raw) is None or parse_float(sd_raw) is None:
+            continue
+        key = (str(mean_raw).strip(), str(sd_raw).strip())
+        pair_counts[key] += 1
+        pair_locations[key].append(row_label(path, idx, row))
+    repeated = {
+        f"mean={mean}, sd={sd}": locations
+        for (mean, sd), count in pair_counts.items()
+        if count >= 2
+        for locations in [pair_locations[(mean, sd)]]
     }
+    if repeated:
+        findings.append(weak_issue(f"{path.name}:mean/sd", "Repeated mean/SD pairs across rows; weak-to-moderate triage signal", {
+            "repeated_pairs": repeated,
+            "rows_screened": len(rows),
+        }))
+    return findings
+
+
+def shared_pairs(a_values: list[tuple[int, str, float]], b_values: list[tuple[int, str, float]]) -> list[tuple[int, float, float]]:
+    a_by_row = {idx: value for idx, _, value in a_values}
+    b_by_row = {idx: value for idx, _, value in b_values}
+    return [(idx, a_by_row[idx], b_by_row[idx]) for idx in sorted(a_by_row.keys() & b_by_row.keys())]
+
+
+def ols_fit(pairs: list[tuple[int, float, float]]) -> dict[str, float] | None:
+    if len(pairs) < 3:
+        return None
+    xs = [x for _, x, _ in pairs]
+    ys = [y for _, _, y in pairs]
+    mean_x = sum(xs) / len(xs)
+    mean_y = sum(ys) / len(ys)
+    ss_x = sum((x - mean_x) ** 2 for x in xs)
+    ss_y = sum((y - mean_y) ** 2 for y in ys)
+    if ss_x <= 0 or ss_y <= 0:
+        return None
+    cov = sum((x - mean_x) * (y - mean_y) for x, y in zip(xs, ys))
+    slope = cov / ss_x
+    intercept = mean_y - slope * mean_x
+    residuals = [y - (slope * x + intercept) for x, y in zip(xs, ys)]
+    sse = sum(r * r for r in residuals)
+    rmse = math.sqrt(sse / len(residuals))
+    max_abs = max(abs(r) for r in residuals)
+    r2 = 1 - (sse / ss_y) if ss_y > 0 else 1.0
+    scale = max(1.0, max(abs(x) for x in xs), max(abs(y) for y in ys))
+    return {
+        "slope": slope,
+        "intercept": intercept,
+        "rmse": rmse,
+        "max_abs_residual": max_abs,
+        "r2": r2,
+        "scale": scale,
+    }
+
+
+def ranks(values: list[float]) -> list[int]:
+    ordered = sorted(range(len(values)), key=lambda idx: (values[idx], idx))
+    result = [0] * len(values)
+    for rank, idx in enumerate(ordered):
+        result[idx] = rank
+    return result
+
+
+def looks_time_column(header: str) -> bool:
+    return bool(TIME_HINT_RE.search(header))
+
+
+def relation_label(fit: dict[str, float], tolerance: float) -> str:
+    slope = fit["slope"]
+    intercept = fit["intercept"]
+    scale = fit["scale"]
+    if abs(slope - 1) <= 0.01 and abs(intercept) <= tolerance * scale:
+        return "exact or near-exact duplicate column"
+    if abs(slope - 1) <= 0.01 and abs(intercept) > tolerance * scale:
+        return "whole-column additive/subtractive shift"
+    if abs(intercept) <= tolerance * scale and abs(slope - 1) > 0.01:
+        return "whole-column multiplicative/divisive scaling"
+    return "whole-column affine linear transformation"
+
+
+def check_column_relationships(
+    path: Path,
+    columns: dict[str, list[tuple[int, str, float]]],
+    min_pairs: int,
+    residual_tolerance: float,
+) -> list[dict[str, Any]]:
+    findings = []
+    names = list(columns)
+    for i, left in enumerate(names):
+        for j, right in enumerate(names[i + 1:], start=i + 1):
+            if left in SUMMARY_COLUMNS or right in SUMMARY_COLUMNS:
+                continue
+            if looks_time_column(left) and looks_time_column(right) and abs(j - i) > 1:
+                continue
+            pairs = shared_pairs(columns[left], columns[right])
+            if len(pairs) < min_pairs:
+                continue
+            xs = [x for _, x, _ in pairs]
+            ys = [y for _, _, y in pairs]
+            fit = ols_fit(pairs)
+            if not fit:
+                continue
+            tolerance = residual_tolerance * fit["scale"]
+            same_rank = ranks(xs) == ranks(ys)
+            near_exact_linear = fit["r2"] >= 0.999999 and fit["max_abs_residual"] <= tolerance
+
+            if near_exact_linear:
+                label = relation_label(fit, residual_tolerance)
+                if looks_time_column(left) and looks_time_column(right):
+                    message = f"Adjacent/paired time columns show {label}; weak-to-moderate triage signal"
+                else:
+                    message = f"Columns show {label}; weak-to-moderate triage signal"
+                findings.append(weak_issue(f"{path.name}:{left}<->{right}", message, {
+                    "left_column": left,
+                    "right_column": right,
+                    "paired_rows": len(pairs),
+                    "slope": round(fit["slope"], 8),
+                    "intercept": round(fit["intercept"], 8),
+                    "r2": round(fit["r2"], 10),
+                    "max_abs_residual": fit["max_abs_residual"],
+                    "same_rank_order": same_rank,
+                }))
+            elif same_rank and len(set(xs)) == len(xs) and len(set(ys)) == len(ys):
+                findings.append(issue(f"{path.name}:{left}<->{right}", "R1", "Rank order is identical across columns; weak triage signal", {
+                    "left_column": left,
+                    "right_column": right,
+                    "paired_rows": len(pairs),
+                    "r2": round(fit["r2"], 6),
+                }, evidence_type="weak_forensic_triage_signal"))
+    return findings
+
+
+def row_identity(row: dict[str, str], idx: int) -> str:
+    for key in ("animal_id", "mouse_id", "subject_id", "sample_id", "id"):
+        if row.get(key):
+            return str(row[key])
+    return f"row{idx}"
+
+
+def time_ordered_numeric_columns(rows: list[dict[str, str]], columns: dict[str, list[tuple[int, str, float]]]) -> list[str]:
+    if not rows:
+        return []
+    names = [name for name in rows[0] if name in columns and len(columns[name]) >= 3]
+    time_like = [name for name in names if looks_time_column(name)]
+    return time_like if len(time_like) >= 3 else names
+
+
+def check_longitudinal_mechanics(path: Path, rows: list[dict[str, str]], columns: dict[str, list[tuple[int, str, float]]], tolerance: float) -> list[dict[str, Any]]:
+    findings = []
+    time_cols = time_ordered_numeric_columns(rows, columns)
+    if len(time_cols) < 4:
+        return findings
+
+    linear_rows = []
+    increment_patterns: dict[tuple[float, ...], list[str]] = defaultdict(list)
+    for idx, row in enumerate(rows, start=2):
+        values = [parse_float(row.get(col)) for col in time_cols]
+        if any(value is None for value in values):
+            continue
+        series = [float(value) for value in values if value is not None]
+        diffs = [series[i + 1] - series[i] for i in range(len(series) - 1)]
+        if not diffs:
+            continue
+        scale = max(1.0, max(abs(value) for value in series))
+        mean_diff = sum(diffs) / len(diffs)
+        max_deviation = max(abs(diff - mean_diff) for diff in diffs)
+        label = row_identity(row, idx)
+        pattern = tuple(round(diff, 4) for diff in diffs)
+        increment_patterns[pattern].append(label)
+        if max_deviation <= tolerance * scale:
+            linear_rows.append({
+                "row": label,
+                "increments": [round(diff, 6) for diff in diffs],
+                "max_increment_deviation": max_deviation,
+            })
+
+    screened = len([row for row in rows if all(parse_float(row.get(col)) is not None for col in time_cols)])
+    if screened >= 3 and len(linear_rows) / screened >= 0.6:
+        findings.append(weak_issue(f"{path.name}:{','.join(time_cols)}", "Longitudinal trajectories are unusually linear/mechanical across rows", {
+            "time_columns": time_cols,
+            "rows_screened": screened,
+            "linear_rows": linear_rows[:12],
+            "linear_row_share": round(len(linear_rows) / screened, 3),
+        }))
+
+    repeated_patterns = {str(pattern): labels for pattern, labels in increment_patterns.items() if len(labels) >= 3}
+    if repeated_patterns:
+        findings.append(weak_issue(f"{path.name}:{','.join(time_cols)}", "Repeated longitudinal increment pattern across animals/samples", {
+            "time_columns": time_cols,
+            "repeated_increment_patterns": repeated_patterns,
+        }))
+    return findings
+
+
+def check_table_forensics(
+    path: Path,
+    rows: list[dict[str, str]],
+    min_pairs: int,
+    min_digit_count: int,
+    digit_dominance: float,
+    rounding_share: float,
+    residual_tolerance: float,
+) -> list[dict[str, Any]]:
+    columns = numeric_columns(rows)
+    findings = []
+    findings.extend(check_terminal_digits(path, columns, min_digit_count, digit_dominance))
+    findings.extend(check_rounding_patterns(path, columns, min_digit_count, rounding_share))
+    findings.extend(check_repeated_summaries(path, rows))
+    findings.extend(check_column_relationships(path, columns, min_pairs, residual_tolerance))
+    findings.extend(check_longitudinal_mechanics(path, rows, columns, residual_tolerance))
+    return findings
 
 
 def collect_files(path: Path) -> list[Path]:
@@ -118,6 +432,11 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("path", type=Path, help="CSV/TSV file or folder containing source-data tables")
     parser.add_argument("--sem-tolerance", type=float, default=1e-3)
+    parser.add_argument("--min-pairs", type=int, default=4, help="Minimum paired numeric rows for column relationship checks")
+    parser.add_argument("--min-digit-count", type=int, default=8, help="Minimum numeric values for terminal-digit and rounding checks")
+    parser.add_argument("--digit-dominance", type=float, default=0.65, help="Dominant terminal digit share needed to flag")
+    parser.add_argument("--rounding-share", type=float, default=0.85, help="Share of values ending in 0 or 5 needed to flag")
+    parser.add_argument("--residual-tolerance", type=float, default=1e-9, help="Relative tolerance for exact linear transformation screens")
     parser.add_argument("--output", type=Path, default=Path("stats_consistency_findings.json"))
     args = parser.parse_args()
 
@@ -129,6 +448,15 @@ def main() -> int:
         try:
             rows = read_table(file_path)
             findings.extend(check_rows(file_path, rows, args.sem_tolerance))
+            findings.extend(check_table_forensics(
+                file_path,
+                rows,
+                args.min_pairs,
+                args.min_digit_count,
+                args.digit_dominance,
+                args.rounding_share,
+                args.residual_tolerance,
+            ))
         except Exception as exc:  # noqa: BLE001 - report unreadable data without aborting.
             errors.append({"path": str(file_path), "error": str(exc)})
     for idx, item in enumerate(findings, start=1):

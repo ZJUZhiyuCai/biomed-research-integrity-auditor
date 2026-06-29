@@ -49,6 +49,11 @@ Possible benign explanations:
 - Instrument exports fixed decimal places.
 - Background subtraction creates repeated offsets.
 - Normalization to control creates fixed ratios.
+- Log, percent-control, z-score, batch, or baseline normalization preserves ranks or creates linear relationships.
+- Plate-layout or batch correction applies the same additive or multiplicative adjustment to many values.
+- Longitudinal measurements are interpolated, smoothed, or model-derived rather than raw observations.
+- Rounding to reporting precision creates terminal-digit or 0/5 enrichment.
+- Repeated mean/SD values result from shared controls, pooled controls, or duplicated table references that are disclosed elsewhere.
 - QC filtering truncates distribution.
 - Small n makes patterns unstable.
 - Baseline balancing due to randomization stratification.
@@ -57,8 +62,11 @@ Materials that resolve:
 
 - Raw instrument export.
 - Preprocessing code.
+- Analysis script or spreadsheet formula audit trail.
 - QC rule documentation.
 - Batch logs and sample map.
+- Longitudinal raw measurements by animal/sample and timestamp.
+- Documentation of interpolation, smoothing, normalization, and control reuse.
 
 ## Methodology Gap
 

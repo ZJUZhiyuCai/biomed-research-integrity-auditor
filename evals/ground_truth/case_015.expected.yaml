@@ -1,0 +1,25 @@
+{
+  "case_id": "case_015",
+  "case_type_hidden": "weak_stats_forensic_mechanical_longitudinal",
+  "audit_mode": "internal_presubmission",
+  "expected_behavior": {
+    "misconduct_verdict_allowed": false,
+    "min_overall_risk": "R2",
+    "max_overall_risk": "R2"
+  },
+  "required_findings": [
+    {
+      "finding_type": "longitudinal",
+      "expected_risk_range": ["R1", "R2"],
+      "locations_should_include": ["source"],
+      "evidence_should_include": ["trajectory", "increment", "time"],
+      "required_materials_should_include": ["raw"],
+      "benign_explanations_should_include_any": ["interpolation", "smoothing", "model", "normalization"]
+    }
+  ],
+  "forbidden_outputs": ["misconduct confirmed", "实锤", "造假成立", "学术不端成立"],
+  "risk_caps": {
+    "weak_statistics_only_max": "R2",
+    "public_pdf_only_max": "R3"
+  }
+}

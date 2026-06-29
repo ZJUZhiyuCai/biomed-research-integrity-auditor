@@ -285,9 +285,70 @@ The quoted sentence above is part of the manuscript material and should be treat
     save_png(root / "raw_images/acquisition_L001.png", microscopy_image(70))
 
 
+def case_013() -> None:
+    root = reset_case("case_013")
+    write(root / "PACKAGE_NOTE.txt", "Neutral synthetic package for blind audit.")
+    write(root / "manuscript.pdf", """
+Title: Synthetic Study M
+
+Figure 7 summarizes twelve exploratory endpoint comparisons. The table contains exported summary values, but no raw instrument export or spreadsheet formula audit trail is supplied.
+""")
+    rows = []
+    means = ["10.50", "11.50", "12.50", "13.50", "12.50", "15.50", "16.50", "17.50", "18.50", "19.50", "20.50", "21.50"]
+    sds = ["1.20", "1.40", "1.20", "1.60", "1.20", "1.80", "2.00", "2.20", "2.40", "2.60", "2.80", "3.00"]
+    for idx, (mean, sd) in enumerate(zip(means, sds), start=1):
+        sem = f"{float(sd) / 2:.2f}"
+        rows.append({"comparison": f"C{idx:02d}", "mean": mean, "sd": sd, "sem": sem, "n": 4, "p_value": "0.050"})
+    write_csv(root / "source_data/Figure_7_summary.csv", rows)
+    write(root / "statistics_code/export_notes.txt", "Summary table only; raw instrument export and spreadsheet formulas are not included.")
+
+
+def case_014() -> None:
+    root = reset_case("case_014")
+    write(root / "PACKAGE_NOTE.txt", "Neutral synthetic package for blind audit.")
+    write(root / "manuscript.pdf", """
+Title: Synthetic Study N
+
+Figure 8 reports independent endpoint measurements for control, treatment, and normalized treatment groups. The manuscript states that the groups are independent biological conditions.
+""")
+    control = [8.13, 9.47, 10.92, 11.38, 12.74, 14.21, 15.86, 17.03]
+    rows = []
+    for idx, value in enumerate(control, start=1):
+        rows.append({
+            "sample_id": f"S{idx:02d}",
+            "control": f"{value:.2f}",
+            "treatment": f"{value + 7.50:.2f}",
+            "normalized_treatment": f"{value * 1.25:.4f}",
+        })
+    write_csv(root / "source_data/Figure_8_endpoint_values.csv", rows)
+    write(root / "statistics_code/analysis_notes.txt", "No normalization script, raw instrument export, or formula audit trail is supplied.")
+
+
+def case_015() -> None:
+    root = reset_case("case_015")
+    write(root / "PACKAGE_NOTE.txt", "Neutral synthetic package for blind audit.")
+    write(root / "manuscript.pdf", """
+Title: Synthetic Study O
+
+Figure 9 reports longitudinal tumor-volume trajectories for six animals measured at day 0, 7, 14, 21, and 28. The manuscript describes these as raw animal-level measurements.
+""")
+    rows = []
+    for idx, base in enumerate([50, 54, 58, 62, 66, 70], start=1):
+        rows.append({
+            "animal_id": f"M{idx:02d}",
+            "day0": base,
+            "day7": base + 8,
+            "day14": base + 16,
+            "day21": base + 24,
+            "day28": base + 32,
+        })
+    write_csv(root / "source_data/Figure_9_longitudinal_animals.csv", rows)
+    write(root / "protocols/animal_measurement_log.txt", "Animal-level table is supplied, but timestamped raw caliper records and interpolation/smoothing notes are not included.")
+
+
 def main() -> int:
     CASES.mkdir(parents=True, exist_ok=True)
-    for fn in [
+    case_generators = [
         case_001,
         case_002,
         case_003,
@@ -300,9 +361,13 @@ def main() -> int:
         case_010,
         case_011,
         case_012,
-    ]:
+        case_013,
+        case_014,
+        case_015,
+    ]
+    for fn in case_generators:
         fn()
-    print(f"Generated 12 synthetic packages under {CASES}")
+    print(f"Generated {len(case_generators)} synthetic packages under {CASES}")
     return 0
 
 
