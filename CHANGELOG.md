@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.3.2 - Release Hardening and Provenance Summaries
 
 ### Added
 - GitHub Actions validation across Python 3.10, 3.11, and 3.12.
