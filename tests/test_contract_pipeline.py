@@ -23,6 +23,7 @@ if str(ROOT) not in sys.path:
 
 from calibrators.contract_validation import ContractError, validate_instance  # noqa: E402
 from calibrators.risk_cap_engine import calibrate_payload, load_rules  # noqa: E402
+from detectors.image.image_io import normalized_rgb  # noqa: E402
 
 
 def run(cmd: list[str]) -> None:
@@ -248,6 +249,14 @@ class ContractPipelineTests(unittest.TestCase):
             self.assertEqual(candidate["candidate_type"], "image_reuse_cluster")
             transforms = {edge["best_transform"] for edge in candidate["evidence"]["edges"]}
             self.assertIn("flip_h", transforms)
+
+    def test_image_normalization_preserves_16bit_contrast(self) -> None:
+        img = Image.new("I;16", (16, 16))
+        img.putdata([idx * 257 for idx in range(256)])
+        normalized = normalized_rgb(img)
+        self.assertEqual(normalized.mode, "RGB")
+        extrema = normalized.convert("L").getextrema()
+        self.assertEqual(extrema, (0, 255))
 
     def test_case008_adaptive_weak_stats_default(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

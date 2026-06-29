@@ -6,8 +6,15 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import sys
 from pathlib import Path
 from typing import Any
+
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from detectors.image.image_io import normalized_rgb
 
 
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp"}
@@ -437,7 +444,7 @@ def scan(
     for path in image_paths:
         try:
             with Image.open(path) as img:
-                base = img.convert("RGB")
+                base = normalized_rgb(img)
                 tiles = generate_tiles(base, tile_size, stride, hash_size, min_stddev)
                 images.append({
                     "path": str(path.relative_to(root)),

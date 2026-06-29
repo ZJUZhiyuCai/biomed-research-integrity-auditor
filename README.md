@@ -130,6 +130,7 @@ python3 benchmarks/real_image/run_real_image_benchmark.py
 ```
 
 This benchmark uses a downscaled public-domain National Cancer Institute microscopy image to test duplicate detection on real image texture rather than hand-drawn synthetic shapes.
+It also generates a 16-bit TIFF microscopy-derived pair to verify that image detectors normalize high-bit-depth grayscale inputs before hashing.
 
 Run an explicit external literature/library phrase search:
 
@@ -164,6 +165,7 @@ The `ground_truth/` directory is included so the harness is reproducible. A test
 - Local patch detection is single-package only; it does not search across papers or external image corpora.
 - Default text overlap screening is package-internal only; explicit external phrase search is available but does not perform exhaustive plagiarism-database coverage or a plagiarism verdict.
 - True PDF intake supports machine-readable text and OCR-capable scanned PDFs when OCR runtime dependencies are available; figure/caption extraction remains limited.
+- Image intake now normalizes high-bit-depth grayscale TIFF-style inputs, but broad validation on multi-frame/Z-stack/channel microscopy corpora remains future work.
 - Public-material review remains capped by missing source/raw records and must not be treated as a misconduct verdict.
 
 ## License

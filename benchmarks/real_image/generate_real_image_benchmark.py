@@ -15,6 +15,13 @@ ASSET = ROOT / "benchmarks" / "real_image" / "assets" / "nci_cancer_cells_public
 METADATA = ROOT / "benchmarks" / "real_image" / "asset_metadata.json"
 
 
+def to_16bit_gray(image: Image.Image) -> Image.Image:
+    gray = image.convert("L")
+    high = Image.new("I;16", gray.size)
+    high.putdata([value * 257 for value in gray.getdata()])
+    return high
+
+
 def write_package(root: Path) -> dict:
     package = root / "real_image_001"
     package.mkdir(parents=True, exist_ok=True)
@@ -29,6 +36,10 @@ def write_package(root: Path) -> dict:
         crop.save(package / "figures/Figure_Real_1A.jpg", quality=92)
         duplicate.save(package / "figures/Figure_Real_4D.jpg", quality=92)
         negative.save(package / "raw_images/source_context_real_negative.jpg", quality=92)
+        tiff_crop = base.crop((96, 60, 416, 300))
+        tiff_duplicate = ImageOps.mirror(tiff_crop)
+        to_16bit_gray(tiff_crop).save(package / "figures/Figure_16bit_1A.tif")
+        to_16bit_gray(tiff_duplicate).save(package / "figures/Figure_16bit_4D.tif")
 
     metadata = json.loads(METADATA.read_text(encoding="utf-8"))
     (package / "real_image_source_metadata.json").write_text(
@@ -49,6 +60,10 @@ def write_package(root: Path) -> dict:
         "expected_duplicate_pair": [
             "figures/Figure_Real_1A.jpg",
             "figures/Figure_Real_4D.jpg"
+        ],
+        "expected_16bit_pair": [
+            "figures/Figure_16bit_1A.tif",
+            "figures/Figure_16bit_4D.tif"
         ],
         "expected_transform": "flip_h",
         "expected_status": "real_image_global_duplicate_detected",

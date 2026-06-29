@@ -6,8 +6,15 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import sys
 from pathlib import Path
 from typing import Any
+
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from detectors.image.image_io import normalized_rgb
 
 
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp"}
@@ -183,7 +190,7 @@ def scan(root: Path, threshold: int, hash_size: int) -> dict[str, Any]:
     for path in image_paths:
         try:
             with Image.open(path) as img:
-                base = img.convert("RGB")
+                base = normalized_rgb(img)
                 transform_hashes = {
                     name: hash_bundle(transformed(base, name), hash_size)
                     for name in TRANSFORMS

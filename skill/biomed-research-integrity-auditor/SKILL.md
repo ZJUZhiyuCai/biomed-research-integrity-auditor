@@ -75,6 +75,7 @@ Use when the user is responding to reviewer, journal, or PubPeer-style concerns.
    - Local patch similarity is a region-level candidate only. Declared traceability, same-field different-channel relationships, and same-membrane/reprobe relationships must be checked through provenance before treating patch similarity as a risk.
    - Evidence crops from local patch screening are written under `audit_outputs/<case>/evidence/local_patch/`.
    - `scripts/image_similarity_screen.py` is a deprecated compatibility wrapper only; it delegates to the global near-duplicate detector and should not be the recommended workflow.
+   - High-bit-depth grayscale inputs such as 16-bit TIFFs are contrast-normalized for screening before hashing or tile comparison.
    - Inspect candidate repeats across main figures, supplementary figures, source images, and raw images.
    - Prioritize Western blot/gel, microscopy, histology/IHC/IF, wound healing, colony formation, animal images, and flow plots.
 

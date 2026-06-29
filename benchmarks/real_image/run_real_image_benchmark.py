@@ -50,17 +50,26 @@ def main() -> int:
     ])
     detector = load_json(detector_output)
     pair = set(expected["expected_duplicate_pair"])
+    bit16_pair = set(expected["expected_16bit_pair"])
     matched_edges = [
         edge
         for candidate in detector.get("candidates", [])
         for edge in candidate.get("evidence", {}).get("edges", [])
         if {edge.get("left"), edge.get("right")} == pair
     ]
+    matched_16bit_edges = [
+        edge
+        for candidate in detector.get("candidates", [])
+        for edge in candidate.get("evidence", {}).get("edges", [])
+        if {edge.get("left"), edge.get("right")} == bit16_pair
+    ]
     checks = {
         "source_asset_present": (ROOT / expected["source_asset"]).exists(),
-        "images_screened": detector.get("images_screened", 0) >= 3,
+        "images_screened": detector.get("images_screened", 0) >= 5,
         "expected_pair_detected": bool(matched_edges),
         "expected_transform_detected": any(edge.get("best_transform") == expected["expected_transform"] for edge in matched_edges),
+        "expected_16bit_pair_detected": bool(matched_16bit_edges),
+        "expected_16bit_transform_detected": any(edge.get("best_transform") == expected["expected_transform"] for edge in matched_16bit_edges),
         "no_detector_errors": not detector.get("errors"),
     }
     status = "passed" if all(checks.values()) else "failed"
@@ -69,6 +78,7 @@ def main() -> int:
         "status": status,
         "checks": checks,
         "matched_edges": matched_edges,
+        "matched_16bit_edges": matched_16bit_edges,
         "detector_output": str(detector_output),
         "source_metadata": expected["source_metadata"],
         "expected_status": expected["expected_status"],

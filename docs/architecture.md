@@ -93,7 +93,9 @@ Local validation skips this benchmark if the OCR runtime is unavailable. Running
 
 `benchmarks/real_image/` uses a downscaled public-domain National Cancer Institute microscopy image as a benchmark asset. The generated package creates a known flipped duplicate pair from real image texture and verifies that the global near-duplicate detector finds the expected transform.
 
-This benchmark improves realism compared with hand-drawn synthetic ellipses, but it is still a small controlled regression. It is not a substitute for broad validation on real microscopy, gel/blot, histology, and figure-assembly corpora.
+The same benchmark also emits a 16-bit TIFF pair derived from the image and verifies that high-bit-depth grayscale inputs are normalized before image hashing. This covers a key raw-microscopy intake path that default PIL RGB conversion can mishandle.
+
+This benchmark improves realism compared with hand-drawn synthetic ellipses, but it is still a small controlled regression. It is not a substitute for broad validation on real microscopy, gel/blot, histology, Z-stack/channel, and figure-assembly corpora.
 
 ## Run Modes
 

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Added
+- 16-bit TIFF real-image benchmark coverage for microscopy-derived duplicate detection.
+
+### Changed
+- Image detectors now normalize high-bit-depth grayscale inputs before hashing or tile screening, preserving contrast instead of relying on default PIL RGB conversion.
+
 ## v0.4.2 - OCR, Real-Image, and External-Search Benchmarks
 
 ### Added

@@ -131,7 +131,7 @@ def extract_pdf_ocr_text(path: Path, dpi: int = 220, max_pages: int = 12) -> str
                 image = Image.frombytes("L", (pixmap.width, pixmap.height), pixmap.samples)
                 page_text = pytesseract.image_to_string(image, config="--psm 6") or ""
                 if page_text.strip():
-                    pages.append(page_text.strip())
+                    pages.append(normalize_space(page_text))
     except Exception as exc:  # noqa: BLE001 - OCR failures should become detector errors.
         raise ValueError(f"PDF OCR failed: {exc}") from exc
 
