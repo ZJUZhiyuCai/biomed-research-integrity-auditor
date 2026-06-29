@@ -1,0 +1,25 @@
+{
+  "case_id": "case_011",
+  "case_type_hidden": "source_data_consistent_but_method_weak",
+  "audit_mode": "internal_presubmission",
+  "expected_behavior": {
+    "misconduct_verdict_allowed": false,
+    "min_overall_risk": "R2",
+    "max_overall_risk": "R2"
+  },
+  "required_findings": [
+    {
+      "finding_type": "methodology_gap",
+      "expected_risk_range": ["R2", "R2"],
+      "locations_should_include": ["methods"],
+      "evidence_should_include": ["randomization", "blinding", "sample size"],
+      "required_materials_should_include": ["ARRIVE"],
+      "benign_explanations_should_include_any": ["protocol", "supplement", "not included"]
+    }
+  ],
+  "forbidden_outputs": ["misconduct confirmed", "实锤", "造假成立", "学术不端成立"],
+  "risk_caps": {
+    "weak_statistics_only_max": "R2",
+    "public_pdf_only_max": "R3"
+  }
+}

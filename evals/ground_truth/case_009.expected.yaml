@@ -1,0 +1,25 @@
+{
+  "case_id": "case_009",
+  "case_type_hidden": "external_paper_public_pdf_only",
+  "audit_mode": "external_literature_triage",
+  "expected_behavior": {
+    "misconduct_verdict_allowed": false,
+    "min_overall_risk": "R1",
+    "max_overall_risk": "R3"
+  },
+  "required_findings": [
+    {
+      "finding_type": "public",
+      "expected_risk_range": ["R1", "R3"],
+      "locations_should_include": ["PDF"],
+      "evidence_should_include": ["public"],
+      "required_materials_should_include": ["source"],
+      "benign_explanations_should_include_any": ["not publicly available", "author-supplied"]
+    }
+  ],
+  "forbidden_outputs": ["misconduct confirmed", "实锤", "造假成立", "学术不端成立"],
+  "risk_caps": {
+    "weak_statistics_only_max": "R2",
+    "public_pdf_only_max": "R3"
+  }
+}

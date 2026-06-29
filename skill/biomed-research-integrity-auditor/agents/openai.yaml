@@ -1,0 +1,4 @@
+interface:
+  display_name: "Biomed Integrity Auditor"
+  short_description: "Audit biomedical figure-source integrity risks"
+  default_prompt: "Use $biomed-research-integrity-auditor to audit a biomedical manuscript package for figure-source traceability, image integrity, statistical consistency, and reporting gaps."

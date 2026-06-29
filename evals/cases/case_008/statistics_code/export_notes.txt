@@ -1,0 +1,1 @@
+Instrument output rounds to two decimals; exploratory p values are shown as exported.

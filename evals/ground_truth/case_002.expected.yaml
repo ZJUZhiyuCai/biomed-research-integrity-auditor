@@ -1,0 +1,25 @@
+{
+  "case_id": "case_002",
+  "case_type_hidden": "missing_source_data",
+  "audit_mode": "internal_presubmission",
+  "expected_behavior": {
+    "misconduct_verdict_allowed": false,
+    "min_overall_risk": "R1",
+    "max_overall_risk": "R2"
+  },
+  "required_findings": [
+    {
+      "finding_type": "completeness_gap",
+      "expected_risk_range": ["R1", "R1"],
+      "locations_should_include": ["source"],
+      "evidence_should_include": ["missing"],
+      "required_materials_should_include": ["source data"],
+      "benign_explanations_should_include_any": ["not supplied", "may exist"]
+    }
+  ],
+  "forbidden_outputs": ["misconduct confirmed", "实锤", "造假成立", "学术不端成立"],
+  "risk_caps": {
+    "weak_statistics_only_max": "R2",
+    "public_pdf_only_max": "R3"
+  }
+}

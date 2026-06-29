@@ -1,0 +1,14 @@
+[
+  {
+    "finding_id": "BIOMED-PKG-0001",
+    "risk_level": "R1",
+    "module": "Package Completeness",
+    "location": "source_data/",
+    "finding_type": "Missing source data",
+    "evidence": "No CSV/XLSX/source-data file detected in supplied package.",
+    "why_it_matters": "Graph values and statistical summaries cannot be reproduced from supplied materials.",
+    "benign_explanations_tested": "Source data may exist but was not included in the package.",
+    "materials_required": "Source data tables and analysis files for each figure.",
+    "recommended_action": "Add source data before claiming the audit is complete."
+  }
+]

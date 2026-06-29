@@ -1,0 +1,80 @@
+# Biomedical Research Integrity Auditor
+
+An open Codex skill and blind-evaluation harness for biomedical research integrity review.
+
+This is deliberately **not** a "paper fraud detector." It is a risk-auditing workflow for manuscripts, figures, source data, reporting checklists, and public literature-concern triage. The skill is designed to surface evidence-backed integrity risks, benign explanations, missing materials, and next actions without making misconduct verdicts.
+
+中文简介：这是一个面向生物医药论文和研究材料的“研究诚信风险审计器”。它不判定作者造假，也不输出学术不端结论，而是帮助作者、审稿人或机构内部团队做投稿前自查和外部公开材料的风险分级。
+
+## What Is Included
+
+- `skill/biomed-research-integrity-auditor/` - the installable Codex skill.
+- `evals/` - 12 neutral synthetic manuscript packages for blind testing.
+- `evals/run_eval.py` - prompt generation and JSON-summary scoring.
+- `evals/generate_synthetic_cases.py` - deterministic synthetic package generator.
+- `docs/design-notes.md` - design rationale, boundaries, and source anchors.
+
+## Integrity Boundary
+
+The skill must not say that misconduct, fraud, fabrication, or falsification is proven. It uses an `R0` to `R4` research-integrity risk scale:
+
+- `R0`: no material issue found in supplied materials
+- `R1`: completeness or documentation gap
+- `R2`: reviewable inconsistency or weak evidence pattern
+- `R3`: material concern needing source-data or author clarification
+- `R4`: direct contradiction in supplied internal materials
+
+Public-material-only review is capped below `R4` unless direct internal contradiction is available. Weak statistical patterns alone are capped below major concern levels.
+
+## Install The Skill
+
+Clone the repository, then copy or symlink the skill into your Codex skills directory:
+
+```bash
+mkdir -p ~/.codex/skills
+ln -s "$(pwd)/skill/biomed-research-integrity-auditor" ~/.codex/skills/biomed-research-integrity-auditor
+```
+
+If the symlink already exists, remove or update it intentionally.
+
+## Run The Eval Harness
+
+Create prompts for blind testing:
+
+```bash
+python3 evals/run_eval.py generate-prompts
+```
+
+Run each prompt against an agent that has access to the skill and the target `cases/case_XXX` package, then save its report as:
+
+```text
+evals/outputs/case_001.md
+evals/outputs/case_002.md
+...
+```
+
+Each report must end with one fenced JSON block labeled `AUDIT_JSON_SUMMARY`. Score the outputs:
+
+```bash
+python3 evals/run_eval.py score
+```
+
+The scorecard is written to `evals/scorecards/`.
+
+## Regenerate Synthetic Cases
+
+The generated cases are already committed. To regenerate them:
+
+```bash
+python3 -m pip install -r requirements.txt
+python3 evals/generate_synthetic_cases.py
+python3 evals/run_eval.py generate-prompts
+```
+
+## Blind-Testing Note
+
+The `ground_truth/` directory is included so the harness is reproducible. A tested agent should only receive the case package path and must not read `ground_truth/`, `outputs/`, `scorecards/`, or `prompts/`. For stricter evaluation, copy the target case package into an isolated workspace and keep the answer key outside the agent's accessible directory.
+
+## License
+
+MIT. See `LICENSE`.

@@ -1,0 +1,21 @@
+{
+  "audit_mode": "internal_presubmission or external_literature_triage",
+  "case_id": "optional neutral case identifier",
+  "materials_reviewed": ["relative paths or public materials reviewed"],
+  "materials_missing": ["materials needed to resolve completeness or integrity questions"],
+  "overall_risk": "R0, R1, R2, R3, or R4",
+  "misconduct_verdict_present": false,
+  "risk_caps_applied": ["risk caps applied before finalizing the report"],
+  "findings": [
+    {
+      "finding_id": "BIOMED-XXX-0001",
+      "risk_level": "R0, R1, R2, R3, or R4",
+      "finding_type": "neutral finding type",
+      "location": "figure/panel/file/source-data row/raw file",
+      "evidence_type": "completeness_gap, image_similarity_candidate, source_data_mismatch, statistics_consistency, methodology_gap, registry_discrepancy, prompt_injection_material, or other neutral category",
+      "benign_explanations_considered": ["specific benign explanations considered"],
+      "required_materials_to_resolve": ["specific source/raw/protocol materials needed"],
+      "recommended_action": "specific correction or neutral clarification"
+    }
+  ]
+}

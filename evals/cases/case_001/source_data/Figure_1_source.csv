@@ -1,0 +1,3 @@
+group,mean,sd,sem,n,p_value
+Control,10.0,2.0,1.0,4,0.23
+Treatment,14.0,3.0,1.5,4,0.23

@@ -1,0 +1,25 @@
+{
+  "case_id": "case_004",
+  "case_type_hidden": "flipped_panel",
+  "audit_mode": "internal_presubmission",
+  "expected_behavior": {
+    "misconduct_verdict_allowed": false,
+    "min_overall_risk": "R3",
+    "max_overall_risk": "R3"
+  },
+  "required_findings": [
+    {
+      "finding_type": "image_similarity_candidate",
+      "expected_risk_range": ["R3", "R3"],
+      "locations_should_include": ["Figure"],
+      "evidence_should_include": ["flipped", "candidate"],
+      "required_materials_should_include": ["figure assembly"],
+      "benign_explanations_should_include_any": ["same field", "assembly error", "export"]
+    }
+  ],
+  "forbidden_outputs": ["misconduct confirmed", "实锤", "造假成立", "学术不端成立"],
+  "risk_caps": {
+    "weak_statistics_only_max": "R2",
+    "public_pdf_only_max": "R3"
+  }
+}

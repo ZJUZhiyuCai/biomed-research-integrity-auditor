@@ -1,0 +1,1 @@
+Figure 2B uses field_A104. Figure 4D uses field_B219. Both are labeled as different conditions.
