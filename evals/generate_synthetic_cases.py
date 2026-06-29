@@ -60,6 +60,33 @@ def blot_image(seed: int, lanes: int = 4, size: tuple[int, int] = (220, 120)) ->
     return img.convert("RGB")
 
 
+def patch_texture_image(seed: int, size: tuple[int, int] = (256, 256)) -> Image.Image:
+    img = Image.new("RGB", size, (18 + seed % 17, 22, 32))
+    draw = ImageDraw.Draw(img)
+    for idx in range(90):
+        x = (seed * 37 + idx * 31) % size[0]
+        y = (seed * 43 + idx * 29) % size[1]
+        radius = 3 + ((seed + idx) % 11)
+        color = (
+            45 + (seed * 17 + idx * 9) % 180,
+            50 + (seed * 19 + idx * 13) % 170,
+            55 + (seed * 23 + idx * 7) % 160,
+        )
+        draw.ellipse((x - radius, y - radius, x + radius, y + radius), fill=color)
+    for idx in range(24):
+        x0 = (seed * 11 + idx * 41) % size[0]
+        y0 = (seed * 13 + idx * 37) % size[1]
+        draw.line((x0, y0, (x0 + 53) % size[0], (y0 + 79) % size[1]), fill=(180, 180, 210), width=1)
+    return img.filter(ImageFilter.GaussianBlur(0.25))
+
+
+def local_patch_pair(left_seed: int, right_seed: int) -> tuple[Image.Image, Image.Image]:
+    left = patch_texture_image(left_seed)
+    right = patch_texture_image(right_seed)
+    right.paste(left.crop((64, 64, 192, 192)), (64, 64))
+    return left, right
+
+
 def save_png(path: Path, image: Image.Image) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     image.save(path)
@@ -427,6 +454,110 @@ Figure 11 reports integer cell-count outcomes summarized as mean, SD, and n. The
     write(root / "statistics_code/analysis_notes.txt", "Only summary values are supplied; raw integer counts are not included.")
 
 
+def case_020() -> None:
+    root = reset_case("case_020")
+    left, right = local_patch_pair(201, 302)
+    write(root / "PACKAGE_NOTE.txt", "Neutral synthetic package for blind audit.")
+    write(root / "manuscript.pdf", """
+Title: Synthetic Study T
+
+Figure 2B and Figure 4D are described as different experimental conditions and independent representative microscopy panels. The source summary table is supplied.
+""")
+    save_png(root / "figures/Figure_2B.png", left)
+    save_png(root / "figures/Figure_4D.png", right)
+    write_csv(root / "source_data/Figure_2_4_source.csv", [
+        {"figure": "Figure 2B", "condition": "Vehicle", "mean": 8.0, "sd": 1.2, "sem": 0.6, "n": 4, "p_value": 0.09},
+        {"figure": "Figure 4D", "condition": "Drug", "mean": 13.0, "sd": 1.6, "sem": 0.8, "n": 4, "p_value": 0.09},
+    ])
+
+
+def case_021() -> None:
+    root = reset_case("case_021")
+    figure, raw = local_patch_pair(211, 312)
+    write(root / "PACKAGE_NOTE.txt", "Neutral synthetic package for blind audit.")
+    write(root / "manuscript.pdf", """
+Title: Synthetic Study U
+
+Figure 1A is a representative microscopy panel. The assembly manifest declares the corresponding raw acquisition file for this panel.
+""")
+    save_png(root / "figures/Figure_1A.png", figure)
+    save_png(root / "raw_images/acquisition_U001.png", raw)
+    write_csv(root / "source_data/Figure_1_source.csv", [
+        {"group": "Control", "mean": 5.0, "sd": 1.0, "sem": 0.5, "n": 4, "p_value": 0.20},
+    ])
+    write(root / "figure_assembly/assembly_manifest.csv", """
+figure_panel,source_record,relation_type,modality,notes
+figures/Figure_1A.png,raw_images/acquisition_U001.png,declared_derived_from,microscopy,declared figure-to-raw traceability
+""")
+
+
+def case_022() -> None:
+    root = reset_case("case_022")
+    img = Image.new("RGB", (256, 256), (128, 128, 130))
+    draw = ImageDraw.Draw(img)
+    draw.rectangle((96, 96, 160, 160), fill=(136, 136, 138))
+    compressed = Image.new("RGB", (256, 256), (132, 130, 127))
+    draw_compressed = ImageDraw.Draw(compressed)
+    draw_compressed.rectangle((48, 112, 118, 180), fill=(145, 143, 140))
+    write(root / "PACKAGE_NOTE.txt", "Neutral synthetic package for blind audit.")
+    write(root / "manuscript.pdf", """
+Title: Synthetic Study V
+
+Figure 2A and Figure 2B are low-information export panels from the same plotting workflow. The package includes only presentation-layer images and a source summary.
+""")
+    save_png(root / "figures/Figure_2A.png", img)
+    save_png(root / "figures/Figure_2B.png", compressed)
+    write_csv(root / "source_data/Figure_2_source.csv", [
+        {"group": "A", "mean": 1.0, "sd": 0.2, "sem": 0.1, "n": 4, "p_value": 0.40},
+        {"group": "B", "mean": 1.1, "sd": 0.2, "sem": 0.1, "n": 4, "p_value": 0.40},
+    ])
+
+
+def case_023() -> None:
+    root = reset_case("case_023")
+    left, right = local_patch_pair(231, 332)
+    write(root / "PACKAGE_NOTE.txt", "Neutral synthetic package for blind audit.")
+    write(root / "manuscript.pdf", """
+Title: Synthetic Study W
+
+Figure 5A and Figure 5B show the same microscopy field imaged in two declared channels. The figure assembly manifest documents this relationship.
+""")
+    save_png(root / "figures/Figure_5A.png", left)
+    save_png(root / "figures/Figure_5B.png", right)
+    write_csv(root / "source_data/Figure_5_source.csv", [
+        {"channel": "DAPI", "mean": 12.0, "sd": 2.0, "sem": 1.0, "n": 4, "p_value": 0.30},
+        {"channel": "GFP", "mean": 18.0, "sd": 2.4, "sem": 1.2, "n": 4, "p_value": 0.30},
+    ])
+    write(root / "figure_assembly/assembly_manifest.csv", """
+figure_panel,source_record,relation_type,modality,notes
+figures/Figure_5A.png,figures/Figure_5B.png,same_field_different_channel,microscopy,same field declared across channels
+""")
+
+
+def case_024() -> None:
+    root = reset_case("case_024")
+    left, right = local_patch_pair(241, 342)
+    write(root / "PACKAGE_NOTE.txt", "Neutral synthetic package for blind audit.")
+    write(root / "manuscript.pdf", """
+Title: Synthetic Study X
+
+Figure 6B and Figure 7C are described as independent panels from separate biological conditions. The assembly manifest maps them to separate raw acquisitions.
+""")
+    save_png(root / "figures/Figure_6B.png", left)
+    save_png(root / "figures/Figure_7C.png", right)
+    save_png(root / "raw_images/acquisition_X006.png", patch_texture_image(441))
+    save_png(root / "raw_images/acquisition_X007.png", patch_texture_image(442))
+    write_csv(root / "source_data/Figure_6_7_source.csv", [
+        {"figure": "Figure 6B", "condition": "Control", "mean": 7.0, "sd": 1.4, "sem": 0.7, "n": 4, "p_value": 0.06},
+        {"figure": "Figure 7C", "condition": "Treatment", "mean": 15.0, "sd": 1.8, "sem": 0.9, "n": 4, "p_value": 0.06},
+    ])
+    write(root / "figure_assembly/assembly_manifest.csv", """
+figure_panel,source_record,relation_type,modality,notes
+figures/Figure_6B.png,raw_images/acquisition_X006.png,declared_derived_from,microscopy,declared source for Figure 6B
+figures/Figure_7C.png,raw_images/acquisition_X007.png,declared_derived_from,microscopy,declared source for Figure 7C
+""")
+
+
 def main() -> int:
     CASES.mkdir(parents=True, exist_ok=True)
     case_generators = [
@@ -449,6 +580,11 @@ def main() -> int:
         case_017,
         case_018,
         case_019,
+        case_020,
+        case_021,
+        case_022,
+        case_023,
+        case_024,
     ]
     for fn in case_generators:
         fn()

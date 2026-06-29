@@ -20,6 +20,12 @@ IMAGE_OR_DATA_RE = re.compile(
 STRUCTURED_SUFFIXES = {".csv", ".tsv", ".yaml", ".yml"}
 TEXT_SUFFIXES = {".txt", ".md"}
 SOURCE_ROLES = {"raw_image", "source_data"}
+EXPECTED_RELATION_TYPES = {
+    "declared_derived_from",
+    "same_field_different_channel",
+    "same_membrane_reprobe",
+    "declared_same_source",
+}
 
 
 def package_files(package: Path) -> dict[str, list[str]]:
@@ -74,9 +80,12 @@ def structured_link_from_row(
     source = resolve_token(str(row.get("source_record", "") or ""), files)
     if not figure or not source:
         return None
-    if role(figure) != "figure_panel" or role(source) not in SOURCE_ROLES:
-        return None
     relation_type = str(row.get("relation_type", "") or "declared_derived_from").strip() or "declared_derived_from"
+    target_role = role(source)
+    if role(figure) != "figure_panel":
+        return None
+    if target_role not in SOURCE_ROLES and not (target_role == "figure_panel" and relation_type in EXPECTED_RELATION_TYPES):
+        return None
     link = {
         "source_path": figure,
         "target_path": source,

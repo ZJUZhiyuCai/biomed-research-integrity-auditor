@@ -81,10 +81,12 @@ def candidate_tags(candidate: dict[str, Any]) -> set[str]:
     return tags
 
 
-def cap_from_rule(rule: Any) -> str | None:
+def cap_from_rule(rule: Any, has_r4_requirement: bool = False) -> str | None:
     if isinstance(rule, str):
         return rule
     if isinstance(rule, dict):
+        if has_r4_requirement and rule.get("unless_r4_requirement"):
+            return None
         value = rule.get("max") or rule.get("default_max")
         return str(value) if value else None
     return None
@@ -114,20 +116,31 @@ def calibrate_candidate(candidate: dict[str, Any], mode: str, rules: dict[str, A
     starting_risk = suggested_risk(candidate)
     risk = starting_risk
     caps_applied: list[str] = []
+    r4_tags = set(str(tag) for tag in rules.get("r4_requirements", []) or [])
+    has_r4_requirement = bool(tags & r4_tags)
 
     mode_cap = str(rules["mode_caps"][mode]["default_max"])
     risk = apply_cap(risk, mode_cap, "mode_cap", caps_applied)
 
     detector_caps = rules.get("detector_caps", {})
     for tag in sorted(tags):
-        risk = apply_cap(risk, cap_from_rule(detector_caps.get(tag)), f"detector_cap:{tag}", caps_applied)
+        risk = apply_cap(
+            risk,
+            cap_from_rule(detector_caps.get(tag), has_r4_requirement),
+            f"detector_cap:{tag}",
+            caps_applied,
+        )
 
     contextual_caps = rules.get("contextual_caps", {})
     for tag in sorted(tags):
-        risk = apply_cap(risk, cap_from_rule(contextual_caps.get(tag)), f"contextual_cap:{tag}", caps_applied)
+        risk = apply_cap(
+            risk,
+            cap_from_rule(contextual_caps.get(tag), has_r4_requirement),
+            f"contextual_cap:{tag}",
+            caps_applied,
+        )
 
-    r4_tags = set(str(tag) for tag in rules.get("r4_requirements", []) or [])
-    if risk == "R4" and not (tags & r4_tags):
+    if risk == "R4" and not has_r4_requirement:
         caps_applied.append("r4_requires_direct_contradiction:R3")
         risk = "R3"
 

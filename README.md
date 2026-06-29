@@ -58,6 +58,7 @@ The orchestrator inventories the package, runs detector scripts, validates detec
 
 The pipeline is provenance-aware: figure-panel similarity to a declared raw/source image is reported as positive traceability evidence, while unmapped figure-to-raw similarity is capped as an `R1` traceability gap rather than an `R3` image-reuse concern.
 The JSON summary includes both risk findings and machine-readable positive provenance, so clean traceability can be tested separately from unresolved gaps.
+The image pipeline also includes a conservative local patch screen that exports evidence crops for candidate region-level reuse. Patch similarity remains a detector candidate: declared traceability and same-field/channel relationships are excluded before risk calibration, and `R4` still requires a direct contradiction tag.
 
 Structured figure assembly manifests are preferred when available:
 
@@ -95,6 +96,7 @@ Run the non-LLM detector baseline:
 ```bash
 python3 evals/run_script_baseline.py --case case_004
 python3 evals/run_script_baseline.py --case case_010
+python3 evals/run_script_baseline.py --case case_020
 ```
 
 ## Regenerate Synthetic Cases

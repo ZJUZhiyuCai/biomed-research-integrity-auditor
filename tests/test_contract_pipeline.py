@@ -10,6 +10,7 @@ import unittest
 from pathlib import Path
 
 import yaml
+from PIL import Image, ImageDraw, ImageFilter
 
 ROOT = Path(__file__).resolve().parents[1]
 PYTHON = sys.executable
@@ -37,6 +38,60 @@ def load_report_assembler():
 
 def risk_value(risk: str) -> int:
     return RISK_ORDER.get(risk, -1)
+
+
+def textured_image(seed: int, size: tuple[int, int] = (256, 256)) -> Image.Image:
+    img = Image.new("RGB", size, (22 + seed % 20, 24, 31))
+    draw = ImageDraw.Draw(img)
+    for idx in range(90):
+        x = (seed * 37 + idx * 31) % size[0]
+        y = (seed * 43 + idx * 29) % size[1]
+        radius = 3 + ((seed + idx) % 11)
+        color = (
+            45 + (seed * 17 + idx * 9) % 180,
+            50 + (seed * 19 + idx * 13) % 170,
+            55 + (seed * 23 + idx * 7) % 160,
+        )
+        draw.ellipse((x - radius, y - radius, x + radius, y + radius), fill=color)
+    for idx in range(24):
+        x0 = (seed * 11 + idx * 41) % size[0]
+        y0 = (seed * 13 + idx * 37) % size[1]
+        draw.line((x0, y0, (x0 + 53) % size[0], (y0 + 79) % size[1]), fill=(180, 180, 210), width=1)
+    return img.filter(ImageFilter.GaussianBlur(0.25))
+
+
+def write_png(path: Path, image: Image.Image) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    image.save(path)
+
+
+def write_minimal_source(package: Path) -> None:
+    (package / "source_data").mkdir(exist_ok=True)
+    (package / "source_data/Figure_source.csv").write_text(
+        "group,mean,sd,sem,n\ncontrol,1.0,0.2,0.1,4\ntreatment,1.4,0.2,0.1,4\n",
+        encoding="utf-8",
+    )
+
+
+def write_local_patch_package(package: Path, raw_pair: bool = False, manifest: str | None = None) -> None:
+    (package / "figures").mkdir(parents=True)
+    (package / "raw_images").mkdir(exist_ok=True)
+    (package / "figure_assembly").mkdir(exist_ok=True)
+    write_minimal_source(package)
+    left = textured_image(101)
+    right = textured_image(202)
+    patch = left.crop((64, 64, 192, 192))
+    right.paste(patch, (64, 64))
+    write_png(package / "figures/Figure_2B.png", left)
+    target_dir = "raw_images" if raw_pair else "figures"
+    target_name = "raw_patch_source.png" if raw_pair else "Figure_4D.png"
+    write_png(package / target_dir / target_name, right)
+    (package / "manuscript.pdf").write_text(
+        "Figure 2B and Figure 4D are described as distinct experimental conditions.\n",
+        encoding="utf-8",
+    )
+    if manifest:
+        (package / "figure_assembly/assembly_manifest.csv").write_text(manifest, encoding="utf-8")
 
 
 class ContractPipelineTests(unittest.TestCase):
@@ -83,6 +138,100 @@ class ContractPipelineTests(unittest.TestCase):
         report_assembler = load_report_assembler()
         with self.assertRaises(ContractError):
             report_assembler.normalize_findings([{"candidates": [{"candidate_id": "X"}]}])
+
+    def test_local_patch_detector_finds_cross_context_clone_and_exports_crops(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "pkg"
+            write_local_patch_package(package)
+            output = Path(tmp) / "local_patch.json"
+            evidence_dir = Path(tmp) / "evidence"
+            run([
+                PYTHON,
+                "detectors/image/local_patch_reuse.py",
+                str(package),
+                "--tile-size",
+                "64",
+                "--stride",
+                "32",
+                "--evidence-dir",
+                str(evidence_dir),
+                "--output",
+                str(output),
+            ])
+            payload = json.loads(output.read_text(encoding="utf-8"))
+            validate_instance(payload, ROOT / "schemas" / "detector_output.schema.json", "local patch detector")
+            self.assertEqual(len(payload["candidates"]), 1)
+            candidate = payload["candidates"][0]
+            self.assertEqual(candidate["candidate_type"], "local_patch_reuse")
+            edge = candidate["evidence"]["edges"][0]
+            self.assertGreater(edge["tile_hit_count"], 1)
+            self.assertGreaterEqual(edge["score"], 0.985)
+            self.assertTrue(Path(edge["evidence_crops"]["side_by_side"]).exists())
+
+    def test_local_patch_detector_excludes_declared_traceability_pair(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "pkg"
+            (package / "figures").mkdir(parents=True)
+            (package / "raw_images").mkdir()
+            left = textured_image(301)
+            right = textured_image(402)
+            right.paste(left.crop((64, 64, 192, 192)), (64, 64))
+            write_png(package / "figures/Figure_A.png", left)
+            write_png(package / "raw_images/raw_A.png", right)
+            provenance = Path(tmp) / "provenance.json"
+            provenance.write_text(json.dumps({
+                "edges": [
+                    {
+                        "source_path": "figures/Figure_A.png",
+                        "target_path": "raw_images/raw_A.png",
+                        "risk_effect": "expected_traceability",
+                    }
+                ]
+            }), encoding="utf-8")
+            output = Path(tmp) / "local_patch.json"
+            run([
+                PYTHON,
+                "detectors/image/local_patch_reuse.py",
+                str(package),
+                "--provenance",
+                str(provenance),
+                "--tile-size",
+                "64",
+                "--stride",
+                "32",
+                "--output",
+                str(output),
+            ])
+            payload = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual(payload["candidates"], [])
+            self.assertEqual(payload["excluded_expected_traceability_pairs"], 1)
+
+    def test_local_patch_detector_skips_low_information_compression_artifact(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "pkg"
+            (package / "figures").mkdir(parents=True)
+            img = Image.new("RGB", (256, 256), (128, 128, 130))
+            draw = ImageDraw.Draw(img)
+            draw.rectangle((96, 96, 160, 160), fill=(136, 136, 138))
+            jpg = Path(tmp) / "artifact.jpg"
+            img.save(jpg, quality=35)
+            compressed = Image.open(jpg).convert("RGB")
+            write_png(package / "figures/Figure_A.png", img)
+            write_png(package / "figures/Figure_B.png", compressed)
+            output = Path(tmp) / "local_patch.json"
+            run([
+                PYTHON,
+                "detectors/image/local_patch_reuse.py",
+                str(package),
+                "--tile-size",
+                "64",
+                "--stride",
+                "32",
+                "--output",
+                str(output),
+            ])
+            payload = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual(payload["candidates"], [])
 
 
 class RiskCapTests(unittest.TestCase):
@@ -156,6 +305,9 @@ class RiskCapTests(unittest.TestCase):
             "expected_traceability",
             "unresolved_fig_raw_similarity",
             "cross_context_reuse_candidate",
+            "local_patch_cross_context",
+            "local_patch_within_declared_raw_source",
+            "local_patch_direct_source_conflict",
             "manifest_conflict",
             "disclosed_legitimate_reuse",
             "disclosed_unjustified_reuse",
@@ -167,8 +319,30 @@ class RiskCapTests(unittest.TestCase):
         self.assertEqual(missing, [])
         self.assertEqual(detector_caps["expected_traceability"]["report_as"], "positive_evidence")
         self.assertEqual(detector_caps["unresolved_fig_raw_similarity"]["max"], "R1")
+        self.assertEqual(detector_caps["local_patch_reuse"]["max"], "R3")
+        self.assertTrue(detector_caps["local_patch_reuse"]["unless_r4_requirement"])
         self.assertEqual(detector_caps["weak_statistical_signal"]["max"], "R2")
+        self.assertIn("local_patch_direct_source_conflict", rules["r4_requirements"])
         self.assertIn("source_to_figure_conflict", rules["r4_requirements"])
+
+    def test_local_patch_r4_requires_direct_contradiction_tag(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            detector_output = Path(tmp) / "local_patch.json"
+            payload = self.detector_payload("R4_possible")
+            payload["candidates"][0].update({
+                "detector": "image.local_patch_reuse",
+                "candidate_type": "local_patch_reuse",
+                "evidence_strength": "candidate",
+                "risk_cap_tags": ["image_similarity_candidate", "local_patch_reuse"],
+            })
+            detector_output.write_text(json.dumps(payload), encoding="utf-8")
+            result = calibrate_payload([detector_output], "internal_presubmission", ROOT / "schemas" / "risk_rules.yaml")
+            self.assertEqual(result["findings"][0]["calibrated_risk_level"], "R3")
+
+            payload["candidates"][0]["risk_cap_tags"].append("local_patch_direct_source_conflict")
+            detector_output.write_text(json.dumps(payload), encoding="utf-8")
+            direct_result = calibrate_payload([detector_output], "internal_presubmission", ROOT / "schemas" / "risk_rules.yaml")
+            self.assertEqual(direct_result["findings"][0]["calibrated_risk_level"], "R4")
 
 
 class ProvenanceManifestTests(unittest.TestCase):
@@ -227,6 +401,77 @@ class ProvenanceManifestTests(unittest.TestCase):
 
 
 class EndToEndTests(unittest.TestCase):
+    def test_local_patch_cross_context_reuse_reaches_r3_in_pipeline(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "local_patch_case"
+            write_local_patch_package(package)
+            out = Path(tmp) / "out"
+            run([
+                PYTHON,
+                "scripts/audit_package.py",
+                str(package),
+                "--output-dir",
+                str(out),
+                "--case-id",
+                "local_patch_case",
+            ])
+            local_payload = json.loads((out / "local_patch_contextual_candidates.json").read_text(encoding="utf-8"))
+            self.assertTrue(local_payload["candidates"])
+            self.assertEqual(local_payload["candidates"][0]["candidate_type"], "local_patch_reuse")
+            calibrated = json.loads((out / "calibrated_findings.json").read_text(encoding="utf-8"))
+            local_findings = [item for item in calibrated["findings"] if item["finding_type"] == "local_patch_reuse"]
+            self.assertTrue(local_findings)
+            self.assertTrue(any(item["calibrated_risk_level"] == "R3" for item in local_findings))
+            self.assertTrue((out / "evidence" / "local_patch").exists())
+
+    def test_local_patch_unmapped_fig_raw_caps_at_r1_in_pipeline(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "local_patch_raw_case"
+            write_local_patch_package(package, raw_pair=True)
+            out = Path(tmp) / "out"
+            run([
+                PYTHON,
+                "scripts/audit_package.py",
+                str(package),
+                "--output-dir",
+                str(out),
+                "--case-id",
+                "local_patch_raw_case",
+            ])
+            calibrated = json.loads((out / "calibrated_findings.json").read_text(encoding="utf-8"))
+            unresolved = [item for item in calibrated["findings"] if item["finding_type"] == "unresolved_fig_raw_similarity"]
+            self.assertTrue(unresolved)
+            self.assertTrue(all(item["calibrated_risk_level"] == "R1" for item in unresolved))
+
+    def test_local_patch_same_field_manifest_negative_control(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "same_field_case"
+            manifest = (
+                "figure_panel,source_record,relation_type,modality,notes\n"
+                "figures/Figure_2B.png,figures/Figure_4D.png,same_field_different_channel,microscopy,"
+                "same field imaged in separate declared channels\n"
+            )
+            write_local_patch_package(package, manifest=manifest)
+            out = Path(tmp) / "out"
+            run([
+                PYTHON,
+                "scripts/audit_package.py",
+                str(package),
+                "--output-dir",
+                str(out),
+                "--case-id",
+                "same_field_case",
+            ])
+            local_payload = json.loads((out / "local_patch_candidates.json").read_text(encoding="utf-8"))
+            self.assertEqual(local_payload["candidates"], [])
+            self.assertGreaterEqual(local_payload["excluded_expected_traceability_pairs"], 1)
+            calibrated = json.loads((out / "calibrated_findings.json").read_text(encoding="utf-8"))
+            self.assertFalse(any(
+                item["finding_type"] == "local_patch_reuse"
+                and risk_value(item["calibrated_risk_level"]) >= risk_value("R3")
+                for item in calibrated["findings"]
+            ))
+
     def test_case001_clean_expected_traceability_no_r3(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             out = Path(tmp) / "case001"

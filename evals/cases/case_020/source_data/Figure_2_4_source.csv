@@ -1,0 +1,3 @@
+figure,condition,mean,sd,sem,n,p_value
+Figure 2B,Vehicle,8.0,1.2,0.6,4,0.09
+Figure 4D,Drug,13.0,1.6,0.8,4,0.09

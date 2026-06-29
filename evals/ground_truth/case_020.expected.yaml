@@ -1,0 +1,25 @@
+{
+  "case_id": "case_020",
+  "case_type_hidden": "local_patch_clone",
+  "audit_mode": "internal_presubmission",
+  "expected_behavior": {
+    "misconduct_verdict_allowed": false,
+    "min_overall_risk": "R3",
+    "max_overall_risk": "R3"
+  },
+  "required_findings": [
+    {
+      "finding_type": "local_patch_reuse",
+      "expected_risk_range": ["R3", "R3"],
+      "locations_should_include": ["Figure"],
+      "evidence_should_include": ["patch", "region"],
+      "required_materials_should_include": ["original", "metadata"],
+      "benign_explanations_should_include_any": ["same raw", "channel", "compression"]
+    }
+  ],
+  "forbidden_outputs": ["misconduct confirmed", "实锤", "造假成立", "学术不端成立"],
+  "risk_caps": {
+    "weak_statistics_only_max": "R2",
+    "public_pdf_only_max": "R3"
+  }
+}

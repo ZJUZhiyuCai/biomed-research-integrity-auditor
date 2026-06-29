@@ -27,12 +27,22 @@ detector_caps:
 
   image_similarity_candidate:
     max: R3
+    unless_r4_requirement: true
   global_image_similarity:
     max: R3
+    unless_r4_requirement: true
   image_reuse_cluster:
     max: R3
+    unless_r4_requirement: true
   local_patch_reuse:
     max: R3
+    unless_r4_requirement: true
+  local_patch_cross_context:
+    max: R3
+  local_patch_within_declared_raw_source:
+    max: R1
+  local_patch_direct_source_conflict:
+    max: R4
 
   unresolved_fig_raw_similarity:
     max: R1
@@ -62,6 +72,7 @@ r4_requirements:
   - source_to_figure_conflict
   - source_data_cannot_reproduce_claim
   - raw_image_mismatch
+  - local_patch_direct_source_conflict
 
 mandatory_fields_for_r3_plus:
   - benign_explanations

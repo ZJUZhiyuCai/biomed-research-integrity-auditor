@@ -133,7 +133,7 @@ def undirected_pair(left: str, right: str) -> tuple[str, str]:
 def declared_traceability_pairs(provenance: dict[str, Any]) -> set[tuple[str, str]]:
     pairs = set()
     for edge in provenance.get("edges", []) or []:
-        if edge.get("relation_type") == "declared_derived_from" and edge.get("risk_effect") == "expected_traceability":
+        if edge.get("risk_effect") == "expected_traceability":
             pairs.add(undirected_pair(str(edge.get("source_path", "")), str(edge.get("target_path", ""))))
     return pairs
 
@@ -162,6 +162,7 @@ def classify_similarity_edge(
     classified = dict(edge)
     classified["left_role"] = left_role
     classified["right_role"] = right_role
+    is_local_patch = edge.get("similarity_scope") == "local_patch"
 
     if undirected_pair(left, right) in declared_pairs:
         classified.update({
@@ -196,7 +197,7 @@ def classify_similarity_edge(
             tag = "disclosed_unjustified_reuse"
             suggestion = "R3_possible"
         else:
-            tag = "cross_context_reuse_candidate"
+            tag = "local_patch_cross_context" if is_local_patch else "cross_context_reuse_candidate"
             suggestion = "R3_possible"
         classified.update({
             "contextual_tag": tag,
@@ -216,7 +217,13 @@ def classify_similarity_edge(
 
 
 def risk_edges_for_cluster(classified_edges: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    reuse_tags = {"cross_context_reuse_candidate", "disclosed_legitimate_reuse", "disclosed_unjustified_reuse", "manifest_conflict"}
+    reuse_tags = {
+        "cross_context_reuse_candidate",
+        "local_patch_cross_context",
+        "disclosed_legitimate_reuse",
+        "disclosed_unjustified_reuse",
+        "manifest_conflict",
+    }
     reuse_edges = [edge for edge in classified_edges if edge.get("contextual_tag") in reuse_tags]
     if reuse_edges:
         return reuse_edges
@@ -229,17 +236,22 @@ def candidate_from_edges(candidate: dict[str, Any], risk_edges: list[dict[str, A
     tags = {str(edge.get("contextual_tag", "")) for edge in risk_edges if edge.get("contextual_tag")}
     original_tags = set(str(tag) for tag in candidate.get("risk_cap_tags", []) or [])
     locations = sorted({path for edge in risk_edges for path in edge_paths(edge) if path})
+    source_candidate_type = str(candidate.get("candidate_type", ""))
 
-    if "cross_context_reuse_candidate" in tags:
-        candidate_type = "image_reuse_cluster"
+    if "local_patch_cross_context" in tags:
+        candidate_type = "local_patch_reuse"
+        risk_suggestion = "R3_possible"
+        evidence_strength = "candidate"
+    elif "cross_context_reuse_candidate" in tags:
+        candidate_type = "local_patch_reuse" if source_candidate_type == "local_patch_reuse" else "image_reuse_cluster"
         risk_suggestion = "R3_possible"
         evidence_strength = "candidate"
     elif "disclosed_unjustified_reuse" in tags:
-        candidate_type = "image_reuse_cluster"
+        candidate_type = "local_patch_reuse" if source_candidate_type == "local_patch_reuse" else "image_reuse_cluster"
         risk_suggestion = "R3_possible"
         evidence_strength = "candidate"
     elif "disclosed_legitimate_reuse" in tags:
-        candidate_type = "image_reuse_cluster"
+        candidate_type = "local_patch_reuse" if source_candidate_type == "local_patch_reuse" else "image_reuse_cluster"
         risk_suggestion = "R3_possible_pending_context"
         evidence_strength = "candidate"
     elif "unresolved_fig_raw_similarity" in tags:

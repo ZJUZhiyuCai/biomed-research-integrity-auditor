@@ -63,9 +63,11 @@ Use when the user is responding to reviewer, journal, or PubPeer-style concerns.
    - Manually check the mappings; filename similarity is only a starting point.
 
 4. Screen image-integrity candidates.
-   - The orchestrator runs `detectors/image/global_near_duplicate.py` and `calibrators/contextual_joiner.py` when raw or exported images are available.
+   - The orchestrator runs `detectors/image/global_near_duplicate.py`, `detectors/image/local_patch_reuse.py`, and `calibrators/contextual_joiner.py` when raw or exported images are available.
    - Figure-panel similarity to a declared raw/source image is positive traceability evidence, not an image-reuse concern.
    - Figure-panel similarity to a raw/source image without a machine-readable provenance link is an R1 traceability gap, not R3.
+   - Local patch similarity is a region-level candidate only. Declared traceability, same-field different-channel relationships, and same-membrane/reprobe relationships must be checked through provenance before treating patch similarity as a risk.
+   - Evidence crops from local patch screening are written under `audit_outputs/<case>/evidence/local_patch/`.
    - `scripts/image_similarity_screen.py` is a deprecated compatibility wrapper only; it delegates to the global near-duplicate detector and should not be the recommended workflow.
    - Inspect candidate repeats across main figures, supplementary figures, source images, and raw images.
    - Prioritize Western blot/gel, microscopy, histology/IHC/IF, wound healing, colony formation, animal images, and flow plots.
@@ -147,6 +149,7 @@ Rank evidence by strength:
 
 - Direct contradiction: figure cannot be reproduced from source data; raw image does not match panel; same image region is used for different conditions.
 - Strong candidate: repeated image after rotation/flip/scale; undisclosed non-adjacent lane splice; same loading control used across unrelated experiments.
+- Local patch candidate: region-level repeated texture or structure across panels. This is capped at R3 unless source/raw records create a direct contradiction.
 - Weak triage signal: p-value clustering, terminal-digit pattern, preserved paired digits, abnormal rounding, precision mixing, repeated means/SDs, whole-column or time-stratified linear transforms, identical ranks, repeated residual/noise patterns, cross-table sequence reuse, unusually small SD, over-smooth longitudinal trajectories, baseline balance, citation mismatch.
 
 Do not let weak triage signals drive the conclusion.
@@ -173,6 +176,7 @@ Scripts are screening aids. Read or patch them before relying on them in unfamil
 - `scripts/stats_consistency_check.py`: check CSV/XLSX numerical summaries for SEM/SD/n consistency and weak anomalies.
 - `scripts/report_assembler.py`: assemble a Markdown audit report from manifest and findings JSON.
 - `../../detectors/image/global_near_duplicate.py`: multi-hash plus D4 transform global image candidate detector.
+- `../../detectors/image/local_patch_reuse.py`: overlapping-tile local patch candidate detector with evidence crop export.
 - `../../detectors/stats/pseudoreplication_screen.py`: unit-of-analysis mismatch candidate detector.
 - `../../calibrators/contextual_joiner.py`: enrich detector candidates with disclosed-reuse and source-availability context before calibration.
 - `../../calibrators/risk_cap_engine.py`: convert detector candidates into capped findings.

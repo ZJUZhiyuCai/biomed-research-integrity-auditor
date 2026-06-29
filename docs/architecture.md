@@ -43,6 +43,7 @@ The image contextual joiner classifies each similarity edge before calibration:
 - `expected_traceability`: a declared figure-panel to raw/source relationship. This is positive provenance evidence and is not sent to the risk calibrator.
 - `unresolved_fig_raw_similarity`: a figure-panel to raw/source similarity without a machine-readable provenance link. This is an R1 traceability gap.
 - `cross_context_reuse_candidate`: a figure-panel to figure-panel similarity across presented panels without a disclosed/justified reuse context. This can remain R3.
+- `local_patch_cross_context`: a region-level patch similarity across figure panels. This can remain R3, but it is still a candidate requiring raw/source review.
 - disclosed loading-control reuse is capped according to the contextual tags in `schemas/risk_rules.yaml`.
 
 This layer is designed to reduce high-risk false positives in clean-control and prompt-injection packages.
@@ -100,11 +101,13 @@ Positive provenance is not proof of authenticity; it only records traceability w
 - external public-material triage maxes out at R3;
 - disclosed legitimate loading-control reuse with same-membrane/source context caps at R2;
 - R4 requires a direct contradiction tag such as `source_to_figure_conflict` or `raw_record_conflict`;
+- local patch similarity alone is capped at R3; `local_patch_direct_source_conflict` is required before a local patch path can reach R4;
 - R3/R4 findings must include benign explanations, required materials, and a recommended action.
 
 ## P0 Detectors
 
 - `detectors/image/global_near_duplicate.py`: global image near-duplicate clusters using average hash, dHash, pHash-style DCT, and D4 transforms.
+- `detectors/image/local_patch_reuse.py`: conservative overlapping-tile local patch reuse candidates with D4 confirmation, normalized cross-correlation, and evidence crop export.
 - `detectors/stats/pseudoreplication_screen.py`: possible unit-of-analysis mismatch candidates from biological and technical replicate columns.
 - `skill/.../stats_consistency_check.py`: direct summary consistency plus weak forensic statistical screens.
 - `provenance/parse_assembly_manifest.py`: declared figure-to-raw/source links from assembly manifests.

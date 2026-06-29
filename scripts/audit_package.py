@@ -146,6 +146,7 @@ def run_image_detector(package: Path, output_dir: Path, provenance_graph: Path) 
     if not has_files(package, IMAGE_EXTS):
         return []
 
+    outputs: list[Path] = []
     image_output = output_dir / "global_image_candidates.json"
     run([
         PYTHON,
@@ -170,7 +171,38 @@ def run_image_detector(package: Path, output_dir: Path, provenance_graph: Path) 
         str(contextual_output),
     ])
     validate_detector(contextual_output)
-    return [contextual_output]
+    outputs.append(contextual_output)
+
+    local_patch_output = output_dir / "local_patch_candidates.json"
+    run([
+        PYTHON,
+        "detectors/image/local_patch_reuse.py",
+        str(package),
+        "--provenance",
+        str(provenance_graph),
+        "--evidence-dir",
+        str(output_dir / "evidence" / "local_patch"),
+        "--output",
+        str(local_patch_output),
+    ])
+    validate_detector(local_patch_output)
+
+    local_patch_contextual_output = output_dir / "local_patch_contextual_candidates.json"
+    run([
+        PYTHON,
+        "calibrators/contextual_joiner.py",
+        "--input",
+        str(local_patch_output),
+        "--package",
+        str(package),
+        "--provenance",
+        str(provenance_graph),
+        "--output",
+        str(local_patch_contextual_output),
+    ])
+    validate_detector(local_patch_contextual_output)
+    outputs.append(local_patch_contextual_output)
+    return outputs
 
 
 def write_empty_calibrated(mode: str, output: Path) -> None:

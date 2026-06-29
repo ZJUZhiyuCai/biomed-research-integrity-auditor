@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- Provenance-aware local patch image reuse detector with evidence crop export.
+- Local patch contextual calibration for cross-context figure reuse, declared traceability exclusions, and R1 unmapped figure-to-raw gaps.
+- Synthetic cases `case_020` through `case_024` for local patch clone and negative-calibration scenarios.
+
 ## v0.3.2 - Release Hardening and Provenance Summaries
 
 ### Added
@@ -30,7 +37,6 @@
 - Prompt-injection package image false positive caused by ordinary figure-to-raw similarity.
 
 ### Known Limitations
-- No local patch or clone-reuse detector yet.
 - No text overlap, self-overlap, or plagiarism-style detector yet.
 - No cross-paper image-reuse search.
 - Synthetic eval packages still simplify image generation, PDF realism, and lab-record complexity.
