@@ -113,6 +113,13 @@ python3 evals/run_eval.py generate-prompts
 
 The `ground_truth/` directory is included so the harness is reproducible. A tested agent should only receive the case package path and must not read `ground_truth/`, `outputs/`, `scorecards/`, or `prompts/`. For stricter evaluation, copy the target case package into an isolated workspace and keep the answer key outside the agent's accessible directory.
 
+## Current Limitations
+
+- Local patch detection is single-package only; it does not search across papers or external image corpora.
+- Text overlap, self-overlap, and duplicate-publication screening are not implemented yet.
+- True PDF figure/caption extraction is still limited; synthetic evals use simplified manuscript text and generated assets.
+- Public-material review remains capped by missing source/raw records and must not be treated as a misconduct verdict.
+
 ## License
 
 MIT. See `LICENSE`.

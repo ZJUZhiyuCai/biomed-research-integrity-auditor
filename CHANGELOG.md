@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.4.0 - Provenance-aware Local Patch Reuse Detection
 
 ### Added
 - Provenance-aware local patch image reuse detector with evidence crop export.
@@ -37,6 +37,7 @@
 - Prompt-injection package image false positive caused by ordinary figure-to-raw similarity.
 
 ### Known Limitations
+- Local patch single-package detection is not included in v0.3.2; it was added in v0.4.0.
 - No text overlap, self-overlap, or plagiarism-style detector yet.
 - No cross-paper image-reuse search.
 - Synthetic eval packages still simplify image generation, PDF realism, and lab-record complexity.
