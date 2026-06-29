@@ -24,7 +24,7 @@ DETECTOR_SCHEMA = ROOT / "schemas" / "detector_output.schema.json"
 CALIBRATED_SCHEMA = ROOT / "schemas" / "calibrated_findings.schema.json"
 SUMMARY_SCHEMA = ROOT / "schemas" / "audit_summary.schema.json"
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp"}
-SOURCE_EXTS = {".csv", ".tsv"}
+SOURCE_EXTS = {".csv", ".tsv", ".xlsx"}
 TEXT_EXTS = {".txt", ".md", ".pdf"}
 MODES = ("internal_presubmission", "external_public_material", "response_to_concern")
 

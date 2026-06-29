@@ -63,6 +63,7 @@ Risk-rule keys are validated, including mode-specific `missing_source_data_max` 
 The pipeline is provenance-aware: figure-panel similarity to a declared raw/source image is reported as positive traceability evidence, while unmapped figure-to-raw similarity is capped as an `R1` traceability gap rather than an `R3` image-reuse concern.
 The JSON summary includes both risk findings and machine-readable positive provenance, so clean traceability can be tested separately from unresolved gaps.
 The image pipeline also includes a conservative local patch screen that exports evidence crops for candidate region-level reuse. Patch similarity remains a detector candidate: declared traceability and same-field/channel relationships are excluded before risk calibration, and `R4` still requires a direct contradiction tag.
+The statistics pipeline screens CSV, TSV, and XLSX source-data tables. Legacy `.xls` files may be inventoried as source material, but they are not treated as supported detector input.
 The text pipeline includes a package-internal overlap screen for supplied manuscript, supplementary, draft, thesis, preprint, and lab-prior-paper text. It is not a web-scale plagiarism search; findings remain section-aware overlap candidates and must be calibrated against disclosure, citation, and journal-policy context.
 
 Structured figure assembly manifests are preferred when available:

@@ -74,6 +74,19 @@ def write_minimal_source(package: Path) -> None:
     )
 
 
+def write_xlsx(path: Path, rows: list[list[object]], sheet_name: str = "Summary") -> None:
+    from openpyxl import Workbook
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = sheet_name
+    for row in rows:
+        sheet.append(row)
+    workbook.save(path)
+    workbook.close()
+
+
 def write_local_patch_package(package: Path, raw_pair: bool = False, manifest: str | None = None) -> None:
     (package / "figures").mkdir(parents=True)
     (package / "raw_images").mkdir(exist_ok=True)
@@ -226,6 +239,54 @@ class ContractPipelineTests(unittest.TestCase):
             self.assertTrue(all(item["evidence_strength"] == "weak_signal" for item in weak))
             self.assertTrue(all(item["risk_suggestion"] == "R2_max" for item in weak))
             self.assertTrue(any(item["evidence"].get("effective_min_count") == 3 for item in weak))
+
+    def test_stats_detector_reads_xlsx_source_tables(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            source_dir = Path(tmp) / "source_data"
+            write_xlsx(source_dir / "Figure_summary.xlsx", [
+                ["group", "mean", "sd", "sem", "n"],
+                ["control", 1.0, 0.2, 0.1, 4],
+                ["treated", 1.5, 0.5, 0.1, 4],
+            ])
+            output = Path(tmp) / "stats.json"
+            run([
+                PYTHON,
+                "skill/biomed-research-integrity-auditor/scripts/stats_consistency_check.py",
+                str(source_dir),
+                "--output",
+                str(output),
+            ])
+            payload = json.loads(output.read_text(encoding="utf-8"))
+            validate_instance(payload, ROOT / "schemas" / "detector_output.schema.json", "xlsx stats detector")
+            self.assertTrue(any(path.endswith("Figure_summary.xlsx") for path in payload["files_screened"]))
+            self.assertTrue(any(
+                "Figure_summary.xlsx#Summary" in item["locations"][0]
+                and item["finding_type"] == "SD is not consistent with SEM * sqrt(n)"
+                for item in payload["candidates"]
+            ))
+
+    def test_pseudoreplication_detector_reads_xlsx_source_tables(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            source_dir = Path(tmp) / "source_data"
+            write_xlsx(source_dir / "Figure_fields.xlsx", [
+                ["group", "animal_id", "field_id", "value", "reported_n_basis"],
+                ["control", "m1", "f1", 1.0, "field"],
+                ["control", "m1", "f2", 1.1, "field"],
+                ["control", "m2", "f1", 0.9, "field"],
+                ["control", "m2", "f2", 1.2, "field"],
+            ], sheet_name="Fields")
+            output = Path(tmp) / "pseudo.json"
+            run([
+                PYTHON,
+                "detectors/stats/pseudoreplication_screen.py",
+                str(source_dir),
+                "--output",
+                str(output),
+            ])
+            payload = json.loads(output.read_text(encoding="utf-8"))
+            validate_instance(payload, ROOT / "schemas" / "detector_output.schema.json", "xlsx pseudoreplication detector")
+            self.assertEqual(len(payload["candidates"]), 1)
+            self.assertIn("Figure_fields.xlsx#Fields", payload["candidates"][0]["locations"][0])
 
     def test_reporter_rejects_uncalibrated_candidates(self) -> None:
         report_assembler = load_report_assembler()
@@ -673,6 +734,30 @@ class ProvenanceManifestTests(unittest.TestCase):
 
 
 class EndToEndTests(unittest.TestCase):
+    def test_xlsx_source_data_runs_source_detectors_without_coverage_gap(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "xlsx_source_case"
+            write_xlsx(package / "source_data" / "Figure_summary.xlsx", [
+                ["group", "mean", "sd", "sem", "n"],
+                ["control", 1.0, 0.2, 0.1, 4],
+                ["treated", 1.5, 0.5, 0.1, 4],
+            ])
+            out = Path(tmp) / "out"
+            run([
+                PYTHON,
+                "scripts/audit_package.py",
+                str(package),
+                "--output-dir",
+                str(out),
+                "--case-id",
+                "xlsx_source_case",
+            ])
+            summary = json.loads((out / "pipeline_summary.json").read_text(encoding="utf-8"))
+            self.assertTrue(any(path.endswith("stats_consistency_candidates.json") for path in summary["detector_outputs"]))
+            self.assertFalse(any(path.endswith("audit_coverage_candidates.json") for path in summary["detector_outputs"]))
+            calibrated = json.loads((out / "calibrated_findings.json").read_text(encoding="utf-8"))
+            self.assertTrue(any(item["finding_type"] == "SD is not consistent with SEM * sqrt(n)" for item in calibrated["findings"]))
+
     def test_unsupported_package_emits_audit_coverage_gap(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             package = Path(tmp) / "unsupported_case"

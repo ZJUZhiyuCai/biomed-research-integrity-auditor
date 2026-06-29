@@ -9,6 +9,7 @@
 - Synthetic text-overlap eval cases `case_025` through `case_030`, including methods boilerplate, disclosed thesis reuse, clean text, and prompt-injection controls.
 - Script-baseline audit-output assertions for CI risk ranges and required finding tags.
 - Explicit `audit_coverage_gap` R1 finding when no detector can run on a supplied package.
+- XLSX source-data intake for statistical consistency and pseudoreplication screening.
 
 ### Changed
 - Figure-to-figure `declared_derived_from` manifest rows no longer clear image-reuse findings as positive traceability.
@@ -18,6 +19,7 @@
 - R3/R4 candidates missing benign explanations, resolving materials, or recommended actions are capped to R2 instead of having generic text auto-filled.
 - Risk-rule configuration now rejects unsupported safety keys, applies external `missing_source_data_max`, and honors R0 `report_as: positive_evidence` routing without hiding mixed risk candidates.
 - The risk calibrator now rejects legacy hand-written findings payloads; inputs must satisfy the detector-output contract.
+- Source-data availability gates are aligned to supported detector inputs: CSV, TSV, and XLSX.
 - CI key audit regressions now include local patch cases `case_020` through `case_024` and text-overlap cases `case_025` through `case_030`.
 
 ## v0.4.0 - Provenance-aware Local Patch Reuse Detection

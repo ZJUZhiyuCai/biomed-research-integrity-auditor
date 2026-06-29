@@ -87,7 +87,8 @@ Use when the user is responding to reviewer, journal, or PubPeer-style concerns.
    - For every text-overlap finding, request prior drafts/source documents, disclosure or citation trail, and relevant journal policy before escalation.
 
 6. Check numerical and statistical consistency.
-   - Run `scripts/stats_consistency_check.py <csv-or-folder>` on source-data tables or exported numerical summaries.
+   - Run `scripts/stats_consistency_check.py <csv-tsv-xlsx-or-folder>` on source-data tables or exported numerical summaries.
+   - CSV, TSV, and XLSX are supported detector inputs; legacy `.xls` may be inventoried but is not treated as analyzed source data.
    - Prefer direct reproducibility checks over weak distributional tests.
    - Screen for terminal-digit preference, preserved last/ones/tenths digits across paired groups, abnormal rounding, precision mixing, repeated mean/SD pairs, whole-column add/subtract shifts, time-stratified shifts, whole-column multiply/divide scaling, identical rank order, highly correlated residual/noise patterns, adjacent-timepoint linear shifts, over-smooth longitudinal trajectories, repeated per-animal increment patterns, cross-table/cross-figure numeric-sequence reuse, and integer-count mean/SD/n feasibility.
    - Treat terminal-digit, Benford-style, p-value clustering, repeated-noise, linear-transform, over-smoothing, implausible-correlation, precision-mixing, and sequence-reuse patterns as weak triage signals unless they directly conflict with supplied raw/source records.

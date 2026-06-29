@@ -12,6 +12,8 @@ from typing import Any
 
 
 CSV_EXTS = {".csv", ".tsv"}
+XLSX_EXTS = {".xlsx"}
+TABLE_EXTS = CSV_EXTS | XLSX_EXTS
 BIOLOGICAL_ID_COLUMNS = ("animal_id", "mouse_id", "rat_id", "subject_id", "patient_id", "donor_id")
 TECHNICAL_ID_COLUMNS = ("field_id", "section_id", "well_id", "technical_replicate", "cell_id", "lesion_id", "image_id")
 
@@ -20,17 +22,63 @@ def normalize_header(header: str) -> str:
     return header.strip().lower().replace(" ", "_").replace("-", "_")
 
 
-def read_table(path: Path) -> list[dict[str, str]]:
+def cell_to_text(value: Any) -> str:
+    if value is None:
+        return ""
+    return str(value)
+
+
+def read_delimited_table(path: Path) -> list[dict[str, str]]:
     delimiter = "\t" if path.suffix.lower() == ".tsv" else ","
     with path.open(newline="", encoding="utf-8-sig") as fh:
         reader = csv.DictReader(fh, delimiter=delimiter)
         return [{normalize_header(k): v for k, v in row.items() if k is not None} for row in reader]
 
 
+def read_xlsx_tables(path: Path) -> list[tuple[Path, list[dict[str, str]]]]:
+    try:
+        from openpyxl import load_workbook  # type: ignore
+    except Exception as exc:  # noqa: BLE001 - xlsx support is an explicit dependency.
+        raise RuntimeError("XLSX pseudoreplication screening requires openpyxl") from exc
+
+    workbook = load_workbook(path, read_only=True, data_only=True)
+    tables: list[tuple[Path, list[dict[str, str]]]] = []
+    for sheet in workbook.worksheets:
+        headers: list[str] | None = None
+        rows: list[dict[str, str]] = []
+        for values in sheet.iter_rows(values_only=True):
+            values = list(values)
+            if headers is None:
+                if not any(cell_to_text(value).strip() for value in values):
+                    continue
+                headers = [
+                    normalize_header(cell_to_text(value)) if cell_to_text(value).strip() else f"column_{idx + 1}"
+                    for idx, value in enumerate(values)
+                ]
+                continue
+            if not any(cell_to_text(value).strip() for value in values):
+                continue
+            rows.append({
+                header: cell_to_text(value)
+                for header, value in zip(headers, values)
+                if header
+            })
+        if rows:
+            tables.append((Path(f"{path.name}#{sheet.title}"), rows))
+    workbook.close()
+    return tables
+
+
+def read_tables(path: Path) -> list[tuple[Path, list[dict[str, str]]]]:
+    if path.suffix.lower() in XLSX_EXTS:
+        return read_xlsx_tables(path)
+    return [(path, read_delimited_table(path))]
+
+
 def collect_files(path: Path) -> list[Path]:
     if path.is_file():
-        return [path] if path.suffix.lower() in CSV_EXTS else []
-    return [p for p in sorted(path.rglob("*")) if p.is_file() and p.suffix.lower() in CSV_EXTS]
+        return [path] if path.suffix.lower() in TABLE_EXTS else []
+    return [p for p in sorted(path.rglob("*")) if p.is_file() and p.suffix.lower() in TABLE_EXTS]
 
 
 def present_column(rows: list[dict[str, str]], candidates: tuple[str, ...]) -> str | None:
@@ -114,7 +162,8 @@ def scan(root: Path) -> dict[str, Any]:
     errors = []
     for file_path in files:
         try:
-            candidates.extend(screen_table(file_path, read_table(file_path)))
+            for table_path, rows in read_tables(file_path):
+                candidates.extend(screen_table(table_path, rows))
         except Exception as exc:  # noqa: BLE001
             errors.append({"path": str(file_path), "error": str(exc)})
     for idx, candidate in enumerate(candidates, start=1):

@@ -19,7 +19,7 @@ from calibrators.contract_validation import validate_instance  # noqa: E402
 
 DETECTOR_SCHEMA = ROOT / "schemas" / "detector_output.schema.json"
 TEXT_EXTS = {".txt", ".md", ".pdf", ".csv", ".tsv", ".json", ".yaml", ".yml"}
-SOURCE_EXTS = {".csv", ".tsv", ".xlsx", ".xls"}
+SOURCE_EXTS = {".csv", ".tsv", ".xlsx"}
 RAW_IMAGE_EXTS = {".czi", ".nd2", ".lif", ".oib", ".oir", ".svs", ".vsi", ".tif", ".tiff", ".png", ".jpg", ".jpeg"}
 FIGURE_SOURCE_TRACEABILITY_RELATIONS = {
     "declared_derived_from",

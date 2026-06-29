@@ -14,6 +14,8 @@ from typing import Any
 
 
 CSV_EXTS = {".csv", ".tsv"}
+XLSX_EXTS = {".xlsx"}
+TABLE_EXTS = CSV_EXTS | XLSX_EXTS
 NUMERIC_HINTS = ("mean", "sd", "sem", "se", "n", "p", "p_value", "pvalue")
 TIME_HINT_RE = re.compile(r"(^|[_\-\s])(t\d+|day\d+|d\d+|week\d+|w\d+|hour\d+|h\d+|baseline|endpoint)($|[_\-\s])", re.I)
 TIME_TOKEN_RE = re.compile(r"(t\d+|day\d+|d\d+|week\d+|w\d+|hour\d+|h\d+|baseline|endpoint)", re.I)
@@ -54,7 +56,13 @@ def normalize_header(header: str) -> str:
     return header.strip().lower().replace(" ", "_").replace("-", "_")
 
 
-def read_table(path: Path) -> list[dict[str, str]]:
+def cell_to_text(value: Any) -> str:
+    if value is None:
+        return ""
+    return str(value)
+
+
+def read_delimited_table(path: Path) -> list[dict[str, str]]:
     delimiter = "\t" if path.suffix.lower() == ".tsv" else ","
     with path.open(newline="", encoding="utf-8-sig") as fh:
         reader = csv.DictReader(fh, delimiter=delimiter)
@@ -62,6 +70,46 @@ def read_table(path: Path) -> list[dict[str, str]]:
         for row in reader:
             rows.append({normalize_header(k): v for k, v in row.items() if k is not None})
         return rows
+
+
+def read_xlsx_tables(path: Path) -> list[tuple[Path, list[dict[str, str]]]]:
+    try:
+        from openpyxl import load_workbook  # type: ignore
+    except Exception as exc:  # noqa: BLE001 - xlsx support is an explicit dependency.
+        raise RuntimeError("XLSX source-data screening requires openpyxl") from exc
+
+    workbook = load_workbook(path, read_only=True, data_only=True)
+    tables: list[tuple[Path, list[dict[str, str]]]] = []
+    for sheet in workbook.worksheets:
+        headers: list[str] | None = None
+        rows: list[dict[str, str]] = []
+        for values in sheet.iter_rows(values_only=True):
+            values = list(values)
+            if headers is None:
+                if not any(cell_to_text(value).strip() for value in values):
+                    continue
+                headers = [
+                    normalize_header(cell_to_text(value)) if cell_to_text(value).strip() else f"column_{idx + 1}"
+                    for idx, value in enumerate(values)
+                ]
+                continue
+            if not any(cell_to_text(value).strip() for value in values):
+                continue
+            rows.append({
+                header: cell_to_text(value)
+                for header, value in zip(headers, values)
+                if header
+            })
+        if rows:
+            tables.append((Path(f"{path.name}#{sheet.title}"), rows))
+    workbook.close()
+    return tables
+
+
+def read_tables(path: Path) -> list[tuple[Path, list[dict[str, str]]]]:
+    if path.suffix.lower() in XLSX_EXTS:
+        return read_xlsx_tables(path)
+    return [(path, read_delimited_table(path))]
 
 
 def row_label(path: Path, idx: int, row: dict[str, str]) -> str:
@@ -764,8 +812,8 @@ def check_cross_file_sequence_reuse(tables: list[tuple[Path, list[dict[str, str]
 
 def collect_files(path: Path) -> list[Path]:
     if path.is_file():
-        return [path] if path.suffix.lower() in CSV_EXTS else []
-    return [p for p in sorted(path.rglob("*")) if p.is_file() and p.suffix.lower() in CSV_EXTS]
+        return [path] if path.suffix.lower() in TABLE_EXTS else []
+    return [p for p in sorted(path.rglob("*")) if p.is_file() and p.suffix.lower() in TABLE_EXTS]
 
 
 def main() -> int:
@@ -787,19 +835,19 @@ def main() -> int:
     tables = []
     for file_path in files:
         try:
-            rows = read_table(file_path)
-            columns = numeric_columns(rows)
-            tables.append((file_path, rows, columns))
-            candidates.extend(check_rows(file_path, rows, args.sem_tolerance))
-            candidates.extend(check_table_forensics(
-                file_path,
-                rows,
-                args.min_pairs,
-                args.min_digit_count,
-                args.digit_dominance,
-                args.rounding_share,
-                args.residual_tolerance,
-            ))
+            for table_path, rows in read_tables(file_path):
+                columns = numeric_columns(rows)
+                tables.append((table_path, rows, columns))
+                candidates.extend(check_rows(table_path, rows, args.sem_tolerance))
+                candidates.extend(check_table_forensics(
+                    table_path,
+                    rows,
+                    args.min_pairs,
+                    args.min_digit_count,
+                    args.digit_dominance,
+                    args.rounding_share,
+                    args.residual_tolerance,
+                ))
         except Exception as exc:  # noqa: BLE001 - report unreadable data without aborting.
             errors.append({"path": str(file_path), "error": str(exc)})
     candidates.extend(check_cross_file_sequence_reuse(tables, args.min_pairs))
