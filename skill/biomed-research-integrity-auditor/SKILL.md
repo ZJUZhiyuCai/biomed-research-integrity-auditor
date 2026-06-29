@@ -10,7 +10,7 @@ Use this skill to audit biomedical manuscript packages for research integrity ri
 This skill is part of a small audit pipeline:
 
 ```text
-material intake -> structured extraction -> detector candidates -> risk calibration -> evidence ledger -> human-reviewable report
+material intake -> structured extraction -> provenance graph -> detector candidates -> provenance-aware contextual join -> risk calibration -> evidence ledger -> human-reviewable report
 ```
 
 Detectors emit candidates only. Final report risk levels must pass through source-strength review, material-completeness review, benign-explanation testing, and the risk caps below.
@@ -47,7 +47,7 @@ Use when the user is responding to reviewer, journal, or PubPeer-style concerns.
 
 1. Run the contract-first package audit entrypoint.
    - Run `scripts/audit_package.py <package_dir> --mode internal_presubmission --output-dir audit_outputs/<case_or_package_id>`.
-   - This is the default path: it inventories the package, runs detectors, validates detector schemas, joins context, applies `schemas/risk_rules.yaml`, validates calibrated findings, and assembles the report.
+   - This is the default path: it inventories the package, builds a provenance graph, runs detectors, validates detector schemas, joins context, applies `schemas/risk_rules.yaml`, validates calibrated findings, and assembles the report.
    - Do not bypass this orchestrator for routine audits. Use individual detector scripts only for debugging or focused unit checks.
    - If files are missing, keep them as R1 completeness gaps before doing deeper analysis.
    - Never imply that an audit is complete when source data or raw records are unavailable.
@@ -62,6 +62,8 @@ Use when the user is responding to reviewer, journal, or PubPeer-style concerns.
 
 4. Screen image-integrity candidates.
    - The orchestrator runs `detectors/image/global_near_duplicate.py` and `calibrators/contextual_joiner.py` when raw or exported images are available.
+   - Figure-panel similarity to a declared raw/source image is positive traceability evidence, not an image-reuse concern.
+   - Figure-panel similarity to a raw/source image without a machine-readable provenance link is an R1 traceability gap, not R3.
    - `scripts/image_similarity_screen.py` is a deprecated compatibility wrapper only; it delegates to the global near-duplicate detector and should not be the recommended workflow.
    - Inspect candidate repeats across main figures, supplementary figures, source images, and raw images.
    - Prioritize Western blot/gel, microscopy, histology/IHC/IF, wound healing, colony formation, animal images, and flow plots.
@@ -162,6 +164,8 @@ Scripts are screening aids. Read or patch them before relying on them in unfamil
 
 - `scripts/build_package_manifest.py`: inventory files, classify materials, compute hashes, and create a missing-materials matrix.
 - `../../scripts/audit_package.py`: default orchestrator for package audits; validates detector, calibrated-finding, and summary contracts.
+- `../../provenance/build_resource_graph.py`: build file/resource nodes and provenance edges used for negative calibration.
+- `../../provenance/parse_assembly_manifest.py`: extract declared figure-to-raw/source links from assembly manifests without executing manifest text.
 - `scripts/figure_source_map.py`: propose filename-based figure-source relationships.
 - `scripts/image_similarity_screen.py`: deprecated compatibility wrapper; delegates to `../../detectors/image/global_near_duplicate.py`.
 - `scripts/stats_consistency_check.py`: check CSV/XLSX numerical summaries for SEM/SD/n consistency and weak anomalies.

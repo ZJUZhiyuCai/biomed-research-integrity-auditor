@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.org/biomed-research-integrity-auditor/provenance_graph.schema.json",
+  "title": "Provenance Graph",
+  "type": "object",
+  "required": ["graph_version", "package_root", "nodes", "edges", "warnings"],
+  "properties": {
+    "graph_version": {"type": "string"},
+    "package_root": {"type": "string"},
+    "nodes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["resource_id", "path", "role"],
+        "properties": {
+          "resource_id": {"type": "string"},
+          "path": {"type": "string"},
+          "role": {"type": "string"},
+          "category": {"type": "string"},
+          "extension": {"type": "string"},
+          "sha256": {"type": "string"},
+          "size_bytes": {"type": "integer"}
+        }
+      }
+    },
+    "edges": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "edge_id",
+          "source",
+          "target",
+          "source_path",
+          "target_path",
+          "relation_type",
+          "evidence_source",
+          "confidence",
+          "risk_effect"
+        ],
+        "properties": {
+          "edge_id": {"type": "string"},
+          "source": {"type": "string"},
+          "target": {"type": "string"},
+          "source_path": {"type": "string"},
+          "target_path": {"type": "string"},
+          "relation_type": {"type": "string"},
+          "evidence_source": {"type": "string"},
+          "confidence": {"type": "number"},
+          "risk_effect": {"type": "string"}
+        }
+      }
+    },
+    "warnings": {
+      "type": "array",
+      "items": {"type": "string"}
+    }
+  }
+}

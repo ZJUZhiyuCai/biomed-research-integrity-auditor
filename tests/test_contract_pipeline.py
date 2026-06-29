@@ -13,6 +13,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 PYTHON = sys.executable
+RISK_ORDER = {"R0": 0, "R1": 1, "R2": 2, "R3": 3, "R4": 4}
 
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -32,6 +33,10 @@ def load_report_assembler():
     assert spec and spec.loader
     spec.loader.exec_module(module)
     return module
+
+
+def risk_value(risk: str) -> int:
+    return RISK_ORDER.get(risk, -1)
 
 
 class ContractPipelineTests(unittest.TestCase):
@@ -138,6 +143,118 @@ class RiskCapTests(unittest.TestCase):
 
 
 class EndToEndTests(unittest.TestCase):
+    def test_case001_clean_expected_traceability_no_r3(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "case001"
+            run([
+                PYTHON,
+                "scripts/audit_package.py",
+                "evals/cases/case_001",
+                "--output-dir",
+                str(out),
+                "--case-id",
+                "case_001",
+            ])
+            summary = json.loads((out / "AUDIT_JSON_SUMMARY.json").read_text(encoding="utf-8"))
+            self.assertLessEqual(risk_value(summary["overall_risk"]), risk_value("R2"))
+            calibrated = json.loads((out / "calibrated_findings.json").read_text(encoding="utf-8"))
+            self.assertFalse(any(risk_value(item["calibrated_risk_level"]) >= risk_value("R3") for item in calibrated["findings"]))
+            contextual = json.loads((out / "contextual_image_candidates.json").read_text(encoding="utf-8"))
+            self.assertEqual(contextual["candidates"], [])
+            self.assertGreaterEqual(len(contextual.get("positive_evidence", [])), 3)
+            edges = [
+                edge
+                for item in contextual.get("positive_evidence", [])
+                for edge in item.get("edges", [])
+            ]
+            self.assertTrue(any(
+                edge["left"] == "figures/Figure_1A_control.png"
+                and edge["right"] == "raw_images/acquisition_A001.png"
+                and edge["contextual_tag"] == "expected_traceability"
+                for edge in edges
+            ))
+            report = (out / "audit-report.md").read_text(encoding="utf-8")
+            self.assertIn("Verified Traceability Evidence", report)
+            self.assertIn("positive provenance evidence", report)
+
+    def test_case012_prompt_injection_no_image_false_positive(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "case012"
+            run([
+                PYTHON,
+                "scripts/audit_package.py",
+                "evals/cases/case_012",
+                "--output-dir",
+                str(out),
+                "--case-id",
+                "case_012",
+            ])
+            summary = json.loads((out / "AUDIT_JSON_SUMMARY.json").read_text(encoding="utf-8"))
+            self.assertLessEqual(risk_value(summary["overall_risk"]), risk_value("R2"))
+            calibrated = json.loads((out / "calibrated_findings.json").read_text(encoding="utf-8"))
+            self.assertTrue(calibrated["findings"])
+            self.assertTrue(all(risk_value(item["calibrated_risk_level"]) <= risk_value("R1") for item in calibrated["findings"]))
+            self.assertTrue(any(item["finding_type"] == "unresolved_fig_raw_similarity" for item in calibrated["findings"]))
+
+    def test_unmapped_fig_raw_similarity_caps_at_r1(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "unmapped"
+            run([
+                PYTHON,
+                "scripts/audit_package.py",
+                "evals/cases/case_012",
+                "--output-dir",
+                str(out),
+                "--case-id",
+                "unmapped",
+            ])
+            calibrated = json.loads((out / "calibrated_findings.json").read_text(encoding="utf-8"))
+            unresolved = [item for item in calibrated["findings"] if item["finding_type"] == "unresolved_fig_raw_similarity"]
+            self.assertTrue(unresolved)
+            self.assertTrue(all(item["calibrated_risk_level"] == "R1" for item in unresolved))
+            self.assertTrue(all("unresolved_fig_raw_similarity" in item.get("source_candidate_tags", []) for item in unresolved))
+
+    def test_traceability_does_not_hide_cross_context_reuse(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "mixed_case"
+            (package / "figures").mkdir(parents=True)
+            (package / "raw_images").mkdir()
+            (package / "figure_assembly").mkdir()
+            (package / "source_data").mkdir()
+            shutil.copy(ROOT / "evals/cases/case_001/figures/Figure_1A_control.png", package / "figures/Figure_1A.png")
+            shutil.copy(ROOT / "evals/cases/case_001/figures/Figure_1A_control.png", package / "figures/Figure_4D.png")
+            shutil.copy(ROOT / "evals/cases/case_001/figures/Figure_1A_control.png", package / "raw_images/acquisition_A001.png")
+            (package / "figure_assembly/assembly_manifest.txt").write_text(
+                "figures/Figure_1A.png derives from raw_images/acquisition_A001.png.\n",
+                encoding="utf-8",
+            )
+            (package / "manuscript.pdf").write_text(
+                "Figure 1A is control. Figure 4D is a different treatment condition.\n",
+                encoding="utf-8",
+            )
+            (package / "source_data/Figure_1_source.csv").write_text("group,mean,sd,sem,n\ncontrol,1,0.1,0.05,4\n", encoding="utf-8")
+            out = Path(tmp) / "mixed_out"
+            run([
+                PYTHON,
+                "scripts/audit_package.py",
+                str(package),
+                "--output-dir",
+                str(out),
+                "--case-id",
+                "mixed_case",
+            ])
+            contextual = json.loads((out / "contextual_image_candidates.json").read_text(encoding="utf-8"))
+            positive_edges = [
+                edge
+                for item in contextual.get("positive_evidence", [])
+                for edge in item.get("edges", [])
+            ]
+            self.assertTrue(any(edge["contextual_tag"] == "expected_traceability" for edge in positive_edges))
+            calibrated = json.loads((out / "calibrated_findings.json").read_text(encoding="utf-8"))
+            tags = [tag for item in calibrated["findings"] for tag in item.get("source_candidate_tags", [])]
+            self.assertIn("cross_context_reuse_candidate", tags)
+            self.assertTrue(any(item["calibrated_risk_level"] == "R3" for item in calibrated["findings"]))
+
     def test_case005_disclosed_legitimate_reuse_caps_at_r2(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             out = Path(tmp) / "case005"

@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.org/biomed-research-integrity-auditor/resource_node.schema.json",
+  "title": "Resource Node",
+  "type": "object",
+  "required": ["resource_id", "path", "role"],
+  "properties": {
+    "resource_id": {"type": "string"},
+    "path": {"type": "string"},
+    "role": {"type": "string"},
+    "category": {"type": "string"},
+    "extension": {"type": "string"},
+    "sha256": {"type": "string"},
+    "size_bytes": {"type": "integer"}
+  }
+}

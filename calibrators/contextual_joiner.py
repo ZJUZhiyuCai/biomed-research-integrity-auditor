@@ -107,32 +107,225 @@ def is_image_candidate(candidate: dict[str, Any]) -> bool:
     return "image" in joined
 
 
-def enrich_candidates(payload: dict[str, Any], package: Path) -> dict[str, Any]:
+def load_provenance(path: Path | None) -> dict[str, Any]:
+    if path is None:
+        return {"nodes": [], "edges": []}
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def role_from_path(path: str, provenance: dict[str, Any]) -> str:
+    for node in provenance.get("nodes", []) or []:
+        if node.get("path") == path:
+            return str(node.get("role", "resource"))
+    if path.startswith("figures/"):
+        return "figure_panel"
+    if path.startswith("raw_images/"):
+        return "raw_image"
+    if path.startswith("source_data/"):
+        return "source_data"
+    return "resource"
+
+
+def undirected_pair(left: str, right: str) -> tuple[str, str]:
+    return tuple(sorted((left, right)))
+
+
+def declared_traceability_pairs(provenance: dict[str, Any]) -> set[tuple[str, str]]:
+    pairs = set()
+    for edge in provenance.get("edges", []) or []:
+        if edge.get("relation_type") == "declared_derived_from" and edge.get("risk_effect") == "expected_traceability":
+            pairs.add(undirected_pair(str(edge.get("source_path", "")), str(edge.get("target_path", ""))))
+    return pairs
+
+
+def provenance_edge_for_pair(left: str, right: str, provenance: dict[str, Any]) -> dict[str, Any] | None:
+    pair = undirected_pair(left, right)
+    for edge in provenance.get("edges", []) or []:
+        if undirected_pair(str(edge.get("source_path", "")), str(edge.get("target_path", ""))) == pair:
+            return edge
+    return None
+
+
+def edge_paths(edge: dict[str, Any]) -> tuple[str, str]:
+    return str(edge.get("left", "")), str(edge.get("right", ""))
+
+
+def classify_similarity_edge(
+    edge: dict[str, Any],
+    context: dict[str, Any],
+    provenance: dict[str, Any],
+    declared_pairs: set[tuple[str, str]],
+) -> dict[str, Any]:
+    left, right = edge_paths(edge)
+    left_role = role_from_path(left, provenance)
+    right_role = role_from_path(right, provenance)
+    classified = dict(edge)
+    classified["left_role"] = left_role
+    classified["right_role"] = right_role
+
+    if undirected_pair(left, right) in declared_pairs:
+        classified.update({
+            "contextual_tag": "expected_traceability",
+            "reportable_as_risk": False,
+            "positive_evidence": True,
+            "risk_suggestion": "R0_positive_traceability",
+            "provenance_edge": provenance_edge_for_pair(left, right, provenance),
+        })
+        return classified
+
+    roles = {left_role, right_role}
+    if roles == {"figure_panel", "raw_image"}:
+        classified.update({
+            "contextual_tag": "unresolved_fig_raw_similarity",
+            "reportable_as_risk": True,
+            "positive_evidence": False,
+            "risk_suggestion": "R1_max",
+            "required_materials_to_resolve": [
+                "figure-source map",
+                "assembly manifest",
+                "raw image metadata",
+            ],
+        })
+        return classified
+
+    if left_role == "figure_panel" and right_role == "figure_panel":
+        if "disclosed_legitimate_reuse" in context.get("risk_cap_tags", []):
+            tag = "disclosed_legitimate_reuse"
+            suggestion = "R2_max"
+        elif "disclosed_unjustified_reuse" in context.get("risk_cap_tags", []):
+            tag = "disclosed_unjustified_reuse"
+            suggestion = "R3_possible"
+        else:
+            tag = "cross_context_reuse_candidate"
+            suggestion = "R3_possible"
+        classified.update({
+            "contextual_tag": tag,
+            "reportable_as_risk": True,
+            "positive_evidence": False,
+            "risk_suggestion": suggestion,
+        })
+        return classified
+
+    classified.update({
+        "contextual_tag": "unresolved_similarity",
+        "reportable_as_risk": True,
+        "positive_evidence": False,
+        "risk_suggestion": "R2_or_R3_pending_context",
+    })
+    return classified
+
+
+def risk_edges_for_cluster(classified_edges: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    reuse_tags = {"cross_context_reuse_candidate", "disclosed_legitimate_reuse", "disclosed_unjustified_reuse", "manifest_conflict"}
+    reuse_edges = [edge for edge in classified_edges if edge.get("contextual_tag") in reuse_tags]
+    if reuse_edges:
+        return reuse_edges
+    return [edge for edge in classified_edges if edge.get("reportable_as_risk")]
+
+
+def candidate_from_edges(candidate: dict[str, Any], risk_edges: list[dict[str, Any]], positive_edges: list[dict[str, Any]], context: dict[str, Any], provenance_path: str | None) -> dict[str, Any] | None:
+    if not risk_edges:
+        return None
+    tags = {str(edge.get("contextual_tag", "")) for edge in risk_edges if edge.get("contextual_tag")}
+    original_tags = set(str(tag) for tag in candidate.get("risk_cap_tags", []) or [])
+    locations = sorted({path for edge in risk_edges for path in edge_paths(edge) if path})
+
+    if "cross_context_reuse_candidate" in tags:
+        candidate_type = "image_reuse_cluster"
+        risk_suggestion = "R3_possible"
+        evidence_strength = "candidate"
+    elif "disclosed_unjustified_reuse" in tags:
+        candidate_type = "image_reuse_cluster"
+        risk_suggestion = "R3_possible"
+        evidence_strength = "candidate"
+    elif "disclosed_legitimate_reuse" in tags:
+        candidate_type = "image_reuse_cluster"
+        risk_suggestion = "R3_possible_pending_context"
+        evidence_strength = "candidate"
+    elif "unresolved_fig_raw_similarity" in tags:
+        candidate_type = "unresolved_fig_raw_similarity"
+        risk_suggestion = "R1_max"
+        evidence_strength = "candidate"
+    else:
+        candidate_type = candidate.get("candidate_type", "image_similarity_candidate")
+        risk_suggestion = candidate.get("risk_suggestion", "R2_or_R3_pending_context")
+        evidence_strength = candidate.get("evidence_strength", "candidate")
+
+    evidence = dict(candidate.get("evidence", {}))
+    evidence["context"] = context
+    evidence["contextual_edges"] = risk_edges
+    evidence["positive_traceability_edges"] = positive_edges
+    if provenance_path:
+        evidence["provenance_graph"] = provenance_path
+    item = dict(candidate)
+    item.update({
+        "candidate_type": candidate_type,
+        "locations": locations or candidate.get("locations", []),
+        "evidence": evidence,
+        "context": context,
+        "evidence_strength": evidence_strength,
+        "risk_suggestion": risk_suggestion,
+        "risk_cap_tags": sorted(original_tags | tags),
+    })
+    if candidate_type == "unresolved_fig_raw_similarity":
+        item["benign_explanations"] = [
+            "figure panel may be a direct export or crop from the raw/source image",
+            "source relationship may exist but was not supplied in a machine-readable manifest",
+        ]
+        item["required_materials"] = [
+            "figure-source map",
+            "assembly manifest",
+            "raw image metadata",
+        ]
+        item["recommended_action"] = "Document the figure-to-raw/source relationship before treating the image similarity as a reuse concern."
+    return item
+
+
+def enrich_candidates(payload: dict[str, Any], package: Path, provenance_path: Path | None = None) -> dict[str, Any]:
     validate_instance(payload, DETECTOR_SCHEMA, "detector output before contextual join")
     context = package_context(package)
+    provenance = load_provenance(provenance_path)
+    declared_pairs = declared_traceability_pairs(provenance)
     enriched = []
+    positive_evidence = []
     for candidate in payload.get("candidates", []):
         item = dict(candidate)
         if is_image_candidate(item):
-            evidence = dict(item.get("evidence", {}))
-            evidence["context"] = context
-            item["evidence"] = evidence
-            item["context"] = context
-            tags = list(item.get("risk_cap_tags", []) or [])
-            for tag in context["risk_cap_tags"]:
-                if tag not in tags:
-                    tags.append(tag)
-            item["risk_cap_tags"] = tags
+            raw_edges = item.get("evidence", {}).get("edges", [])
+            classified_edges = [
+                classify_similarity_edge(edge, context, provenance, declared_pairs)
+                for edge in raw_edges
+            ]
+            positive_edges = [edge for edge in classified_edges if edge.get("positive_evidence")]
+            if positive_edges:
+                positive_evidence.append({
+                    "candidate_id": item.get("candidate_id", ""),
+                    "candidate_type": "expected_traceability",
+                    "edges": positive_edges,
+                    "members": sorted({path for edge in positive_edges for path in edge_paths(edge) if path}),
+                })
+            reportable_edges = risk_edges_for_cluster(classified_edges)
+            item = candidate_from_edges(
+                item,
+                reportable_edges,
+                positive_edges,
+                context,
+                str(provenance_path) if provenance_path else None,
+            )
+            if item is None:
+                continue
         enriched.append(item)
 
     result = {
         "detector_name": "contextual_joiner",
-        "detector_version": "0.3.0",
+        "detector_version": "0.3.1",
         "input": {
             "source_detector": payload.get("detector_name", ""),
             "package": str(package),
+            "provenance_graph": str(provenance_path) if provenance_path else None,
         },
         "candidates": enriched,
+        "positive_evidence": positive_evidence,
         "errors": [],
     }
     validate_instance(result, DETECTOR_SCHEMA, "contextually enriched candidates")
@@ -143,11 +336,16 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input", type=Path, required=True)
     parser.add_argument("--package", type=Path, required=True)
+    parser.add_argument("--provenance", type=Path)
     parser.add_argument("--output", type=Path, default=Path("contextual_candidates.json"))
     args = parser.parse_args()
 
     payload = json.loads(args.input.expanduser().resolve().read_text(encoding="utf-8"))
-    result = enrich_candidates(payload, args.package.expanduser().resolve())
+    result = enrich_candidates(
+        payload,
+        args.package.expanduser().resolve(),
+        args.provenance.expanduser().resolve() if args.provenance else None,
+    )
     args.output.write_text(json.dumps(result, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     print(json.dumps({"output": str(args.output), "candidates": len(result["candidates"])}, indent=2))
     return 0

@@ -17,7 +17,7 @@ biomed-pseudoreplication-screen = "detectors.stats.pseudoreplication_screen:main
 biomed-risk-cap-engine = "calibrators.risk_cap_engine:main"
 
 [tool.setuptools]
-packages = ["calibrators", "detectors", "detectors.image", "detectors.stats"]
+packages = ["calibrators", "detectors", "detectors.image", "detectors.stats", "provenance"]
 
 [build-system]
 requires = ["setuptools>=68"]

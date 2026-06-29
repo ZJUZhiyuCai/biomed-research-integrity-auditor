@@ -12,6 +12,7 @@ This is deliberately **not** a "paper fraud detector." It is a risk-auditing wor
 - `detectors/` - scriptable candidate detectors that emit evidence but not final verdicts.
 - `calibrators/` - risk-cap and evidence-strength calibration.
 - `scripts/audit_package.py` - the default contract-first orchestrator for package audits.
+- `provenance/` - resource graph builders that distinguish expected traceability from reuse risk.
 - `schemas/` - shared JSON/YAML contracts for detector output, paper objects, and source-data expectations.
 - `evals/` - neutral synthetic manuscript packages for blind testing.
 - `evals/run_eval.py` - prompt generation and JSON-summary scoring.
@@ -54,6 +55,8 @@ python3 scripts/audit_package.py evals/cases/case_004 --output-dir audit_outputs
 ```
 
 The orchestrator inventories the package, runs detector scripts, validates detector JSON with `schemas/detector_output.schema.json`, joins context for disclosed reuse, applies `schemas/risk_rules.yaml`, validates calibrated findings, and writes an audit report plus `AUDIT_JSON_SUMMARY.json`.
+
+The pipeline is provenance-aware: figure-panel similarity to a declared raw/source image is reported as positive traceability evidence, while unmapped figure-to-raw similarity is capped as an `R1` traceability gap rather than an `R3` image-reuse concern.
 
 Create prompts for blind testing:
 

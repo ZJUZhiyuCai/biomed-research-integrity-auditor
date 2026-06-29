@@ -30,6 +30,14 @@ detector_caps:
     max: R3
   image_reuse_cluster:
     max: R3
+  unresolved_fig_raw_similarity:
+    max: R1
+  cross_context_reuse_candidate:
+    max: R3
+  manifest_conflict:
+    max: R3
+  expected_traceability:
+    report_as: positive_evidence
   local_patch_reuse:
     max: R3
   pseudoreplication_candidate:

@@ -81,6 +81,14 @@ def normalize_findings(payloads: list[Any]) -> list[dict[str, Any]]:
     return findings
 
 
+def normalize_positive_evidence(payloads: list[Any]) -> list[dict[str, Any]]:
+    positive = []
+    for payload in payloads:
+        if isinstance(payload, dict):
+            positive.extend(payload.get("positive_evidence", []) or [])
+    return positive
+
+
 def table(rows: list[list[str]]) -> str:
     if not rows:
         return ""
@@ -147,7 +155,13 @@ def build_summary(mode: str, case_id: str | None, manifest: dict[str, Any], find
     }
 
 
-def render_report(mode: str, manifest: dict[str, Any], findings: list[dict[str, Any]], case_id: str | None) -> str:
+def render_report(
+    mode: str,
+    manifest: dict[str, Any],
+    findings: list[dict[str, Any]],
+    case_id: str | None,
+    positive_evidence: list[dict[str, Any]] | None = None,
+) -> str:
     normalized = normalized_mode(mode)
     title = "Biomedical Research Integrity Pre-submission Audit" if normalized == "internal_presubmission" else "Biomedical Literature Concern Triage"
     summary = build_summary(mode, case_id, manifest, findings)
@@ -161,6 +175,22 @@ def render_report(mode: str, manifest: dict[str, Any], findings: list[dict[str, 
     for item in manifest.get("missing_materials", []):
         missing_rows.append([item.get("category", ""), item.get("risk_level", "R1"), item.get("reason", "")])
     lines += [table(missing_rows) if len(missing_rows) > 1 else "No missing expected material categories were reported.\n"]
+
+    positive_evidence = positive_evidence or []
+    if positive_evidence:
+        lines += ["## Verified Traceability Evidence", ""]
+        for item in positive_evidence:
+            for edge in item.get("edges", []):
+                lines.append(
+                    "- "
+                    f"{edge.get('left', '')} is traceable to {edge.get('right', '')} "
+                    f"via {edge.get('provenance_edge', {}).get('evidence_source', 'provenance graph')}."
+                )
+        lines += [
+            "",
+            "These links are positive provenance evidence, not image-reuse concerns.",
+            "",
+        ]
 
     lines += ["## Risk Register", ""]
     risk_rows = [["Finding ID", "Risk", "Module", "Location", "Finding"]]
@@ -215,14 +245,17 @@ def main() -> int:
     )
     parser.add_argument("--manifest", type=Path)
     parser.add_argument("--findings", type=Path, action="append", default=[])
+    parser.add_argument("--positive-evidence", type=Path, action="append", default=[])
     parser.add_argument("--case-id")
     parser.add_argument("--output", type=Path, default=Path("audit-report.md"))
     args = parser.parse_args()
 
     manifest = load_json(args.manifest, {})
     finding_payloads = [load_json(path, {}) for path in args.findings]
+    positive_payloads = [load_json(path, {}) for path in args.positive_evidence]
     findings = normalize_findings(finding_payloads)
-    args.output.write_text(render_report(args.mode, manifest, findings, args.case_id), encoding="utf-8")
+    positive_evidence = normalize_positive_evidence(positive_payloads)
+    args.output.write_text(render_report(args.mode, manifest, findings, args.case_id, positive_evidence), encoding="utf-8")
     print(json.dumps({"output": str(args.output), "findings": len(findings)}, indent=2))
     return 0
 

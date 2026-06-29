@@ -64,6 +64,50 @@ def build_manifest(package: Path, mode: str, domains: str, output_dir: Path) -> 
     return manifest
 
 
+def build_provenance(package: Path, manifest: Path, output_dir: Path) -> Path:
+    figure_source_map = output_dir / "figure_source_map.json"
+    run([
+        PYTHON,
+        "skill/biomed-research-integrity-auditor/scripts/figure_source_map.py",
+        str(manifest),
+        "--output",
+        str(figure_source_map),
+    ])
+
+    figure_source_links = output_dir / "figure_source_links.json"
+    run([
+        PYTHON,
+        "provenance/parse_figure_source_map.py",
+        str(figure_source_map),
+        "--output",
+        str(figure_source_links),
+    ])
+
+    assembly_links = output_dir / "assembly_links.json"
+    run([
+        PYTHON,
+        "provenance/parse_assembly_manifest.py",
+        str(package),
+        "--output",
+        str(assembly_links),
+    ])
+
+    provenance_graph = output_dir / "provenance_graph.json"
+    run([
+        PYTHON,
+        "provenance/build_resource_graph.py",
+        "--manifest",
+        str(manifest),
+        "--links",
+        str(assembly_links),
+        "--links",
+        str(figure_source_links),
+        "--output",
+        str(provenance_graph),
+    ])
+    return provenance_graph
+
+
 def validate_detector(path: Path) -> None:
     validate_instance(read_json(path), DETECTOR_SCHEMA, f"detector output {path}")
 
@@ -98,7 +142,7 @@ def run_source_detectors(package: Path, output_dir: Path) -> list[Path]:
     return outputs
 
 
-def run_image_detector(package: Path, output_dir: Path) -> list[Path]:
+def run_image_detector(package: Path, output_dir: Path, provenance_graph: Path) -> list[Path]:
     if not has_files(package, IMAGE_EXTS):
         return []
 
@@ -120,6 +164,8 @@ def run_image_detector(package: Path, output_dir: Path) -> list[Path]:
         str(image_output),
         "--package",
         str(package),
+        "--provenance",
+        str(provenance_graph),
         "--output",
         str(contextual_output),
     ])
@@ -161,7 +207,7 @@ def run_calibrator(detector_outputs: list[Path], mode: str, output_dir: Path) ->
     return calibrated
 
 
-def run_report(manifest: Path, calibrated: Path, mode: str, case_id: str | None, output_dir: Path) -> Path:
+def run_report(manifest: Path, calibrated: Path, positive_sources: list[Path], mode: str, case_id: str | None, output_dir: Path) -> Path:
     report = output_dir / "audit-report.md"
     cmd = [
         PYTHON,
@@ -175,6 +221,8 @@ def run_report(manifest: Path, calibrated: Path, mode: str, case_id: str | None,
         "--output",
         str(report),
     ]
+    for path in positive_sources:
+        cmd.extend(["--positive-evidence", str(path)])
     if case_id:
         cmd.extend(["--case-id", case_id])
     run(cmd)
@@ -194,11 +242,12 @@ def extract_audit_summary(report: Path) -> dict[str, Any]:
 def run_pipeline(package: Path, mode: str, output_dir: Path, domains: str, case_id: str | None) -> dict[str, Any]:
     output_dir.mkdir(parents=True, exist_ok=True)
     manifest = build_manifest(package, mode, domains, output_dir)
+    provenance_graph = build_provenance(package, manifest, output_dir)
     detector_outputs = []
     detector_outputs.extend(run_source_detectors(package, output_dir))
-    detector_outputs.extend(run_image_detector(package, output_dir))
+    detector_outputs.extend(run_image_detector(package, output_dir, provenance_graph))
     calibrated = run_calibrator(detector_outputs, mode, output_dir)
-    report = run_report(manifest, calibrated, mode, case_id, output_dir)
+    report = run_report(manifest, calibrated, detector_outputs, mode, case_id, output_dir)
     audit_summary = extract_audit_summary(report)
     audit_summary_path = output_dir / "AUDIT_JSON_SUMMARY.json"
     write_json(audit_summary_path, audit_summary)
@@ -208,6 +257,7 @@ def run_pipeline(package: Path, mode: str, output_dir: Path, domains: str, case_
         "mode": mode,
         "output_dir": str(output_dir),
         "manifest": str(manifest),
+        "provenance_graph": str(provenance_graph),
         "detector_outputs": [str(path) for path in detector_outputs],
         "calibrated_findings": str(calibrated),
         "report": str(report),
@@ -216,6 +266,11 @@ def run_pipeline(package: Path, mode: str, output_dir: Path, domains: str, case_
         "finding_count": len(read_json(calibrated).get("findings", [])),
         "overall_risk": audit_summary.get("overall_risk"),
     }
+    positive_count = 0
+    for path in detector_outputs:
+        payload = read_json(path)
+        positive_count += len(payload.get("positive_evidence", []) or [])
+    result["positive_provenance_count"] = positive_count
     write_json(output_dir / "pipeline_summary.json", result)
     return result
 

@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.org/biomed-research-integrity-auditor/provenance_edge.schema.json",
+  "title": "Provenance Edge",
+  "type": "object",
+  "required": [
+    "edge_id",
+    "source",
+    "target",
+    "source_path",
+    "target_path",
+    "relation_type",
+    "evidence_source",
+    "confidence",
+    "risk_effect"
+  ],
+  "properties": {
+    "edge_id": {"type": "string"},
+    "source": {"type": "string"},
+    "target": {"type": "string"},
+    "source_path": {"type": "string"},
+    "target_path": {"type": "string"},
+    "relation_type": {"type": "string"},
+    "evidence_source": {"type": "string"},
+    "confidence": {"type": "number"},
+    "risk_effect": {"type": "string"}
+  }
+}

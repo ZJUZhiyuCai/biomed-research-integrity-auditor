@@ -5,6 +5,7 @@ This project is moving from a single Codex skill into a small research-integrity
 ```text
 material intake
 -> structured extraction
+-> provenance graph
 -> detectors
 -> contextual join
 -> risk calibration
@@ -15,7 +16,8 @@ material intake
 The central rule is separation of duties:
 
 - **Detectors** emit candidates with evidence and locations. They do not decide final risk.
-- **Context joiners** add disclosed-reuse and source-availability context before calibration.
+- **Provenance graph builders** model files as resources and declared figure/source relationships as edges.
+- **Context joiners** add disclosed-reuse, source-availability, and provenance context before calibration.
 - **Calibrators** apply `schemas/risk_rules.yaml`, mode-specific caps, source-strength rules, benign-explanation requirements, and R4 requirements.
 - **Reporters** express calibrated findings in neutral audit language and reject uncalibrated detector candidates.
 - **Evals** test both recall and restraint.
@@ -28,7 +30,20 @@ Use `scripts/audit_package.py` for routine package audits. It is the only recomm
 python3 scripts/audit_package.py <package_dir> --mode internal_presubmission --output-dir audit_outputs/<case_id>
 ```
 
-The orchestrator runs package inventory, source-data detectors, image detectors, contextual joining, risk calibration, calibrated-finding validation, report assembly, and audit-summary validation. Individual detector scripts remain useful for debugging and unit tests, but should not be the default workflow.
+The orchestrator runs package inventory, provenance graph construction, source-data detectors, image detectors, contextual joining, risk calibration, calibrated-finding validation, report assembly, and audit-summary validation. Individual detector scripts remain useful for debugging and unit tests, but should not be the default workflow.
+
+## Provenance-First Negative Calibration
+
+Similarity is not risk by itself. `provenance/build_resource_graph.py` creates resource nodes and declared provenance edges from `package_manifest.json`, `figure_source_map.json`, and `figure_assembly/assembly_manifest.txt`.
+
+The image contextual joiner classifies each similarity edge before calibration:
+
+- `expected_traceability`: a declared figure-panel to raw/source relationship. This is positive provenance evidence and is not sent to the risk calibrator.
+- `unresolved_fig_raw_similarity`: a figure-panel to raw/source similarity without a machine-readable provenance link. This is an R1 traceability gap.
+- `cross_context_reuse_candidate`: a figure-panel to figure-panel similarity across presented panels without a disclosed/justified reuse context. This can remain R3.
+- disclosed loading-control reuse is capped according to the contextual tags in `schemas/risk_rules.yaml`.
+
+This layer is designed to reduce high-risk false positives in clean-control and prompt-injection packages.
 
 ## Run Modes
 
@@ -81,6 +96,8 @@ Detector candidates must not include `risk_level` or `calibrated_risk_level`.
 - `detectors/image/global_near_duplicate.py`: global image near-duplicate clusters using average hash, dHash, pHash-style DCT, and D4 transforms.
 - `detectors/stats/pseudoreplication_screen.py`: possible unit-of-analysis mismatch candidates from biological and technical replicate columns.
 - `skill/.../stats_consistency_check.py`: direct summary consistency plus weak forensic statistical screens.
+- `provenance/parse_assembly_manifest.py`: declared figure-to-raw/source links from assembly manifests.
+- `provenance/build_resource_graph.py`: package-level resource graph for provenance-aware calibration.
 
 ## Baseline Runner
 
