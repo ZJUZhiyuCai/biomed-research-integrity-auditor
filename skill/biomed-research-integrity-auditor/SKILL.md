@@ -54,8 +54,8 @@ Use for published papers, PubPeer-like questions, peer-review concerns, or publi
 5. Check numerical and statistical consistency.
    - Run `scripts/stats_consistency_check.py <csv-or-folder>` on source-data tables or exported numerical summaries.
    - Prefer direct reproducibility checks over weak distributional tests.
-   - Screen for terminal-digit preference, abnormal rounding, repeated mean/SD pairs, whole-column add/subtract shifts, whole-column multiply/divide scaling, identical rank order, adjacent-timepoint linear shifts, over-smooth longitudinal trajectories, and repeated per-animal increment patterns.
-   - Treat terminal-digit, Benford-style, p-value clustering, repeated-noise, linear-transform, over-smoothing, and implausible-correlation patterns as weak triage signals unless they directly conflict with supplied raw/source records.
+   - Screen for terminal-digit preference, preserved last/ones/tenths digits across paired groups, abnormal rounding, precision mixing, repeated mean/SD pairs, whole-column add/subtract shifts, time-stratified shifts, whole-column multiply/divide scaling, identical rank order, highly correlated residual/noise patterns, adjacent-timepoint linear shifts, over-smooth longitudinal trajectories, repeated per-animal increment patterns, cross-table/cross-figure numeric-sequence reuse, and integer-count mean/SD/n feasibility.
+   - Treat terminal-digit, Benford-style, p-value clustering, repeated-noise, linear-transform, over-smoothing, implausible-correlation, precision-mixing, and sequence-reuse patterns as weak triage signals unless they directly conflict with supplied raw/source records.
 
 6. Audit methodology and compliance gaps.
    - Read `references/biomed-module-checklists.md` for domain-specific checks.
@@ -96,7 +96,7 @@ Apply these caps before finalizing the report:
 
 - Public materials only: in external mode with only a public PDF or public figures, do not assign R4 unless the public materials contain a direct internal contradiction. Most public-only concerns are capped at R3 candidate concern.
 - Weak statistics only: terminal-digit anomalies, p-value clustering, unusually small variance, or baseline balance concerns alone cannot exceed R2.
-- Statistical forensic screens: preserved terminal digits, whole-group constant offsets, whole-group scaling, identical rank order, abnormal rounding, repeated mean/SD pairs, linear timepoint shifts, or overly mechanical animal/sample trajectories are R1/R2 triage signals unless tied to a direct source-to-figure or raw-to-source contradiction.
+- Statistical forensic screens: preserved terminal/ones/tenths digits, whole-group constant offsets, time-stratified offsets, whole-group scaling, identical rank order, repeated residual/noise pattern, abnormal rounding, precision mixing, repeated mean/SD pairs, cross-table sequence reuse, linear timepoint shifts, or overly mechanical animal/sample trajectories are R1/R2 triage signals unless tied to a direct source-to-figure or raw-to-source contradiction.
 - Missing data: absent source data, raw images, FCS files, accession metadata, or protocols are R1 completeness gaps unless supplied materials directly contradict each other.
 - R4 requires direct conflict: source data cannot generate the published figure, raw image does not match the panel, figure assembly conflicts with raw records, statistical code outputs conflict with paper values, or raw records contradict reported n/group identity.
 - Disclosure is not automatic clearance: disclosed reuse may still be R2/R3 if the scientific justification is insufficient.
@@ -125,7 +125,7 @@ Rank evidence by strength:
 
 - Direct contradiction: figure cannot be reproduced from source data; raw image does not match panel; same image region is used for different conditions.
 - Strong candidate: repeated image after rotation/flip/scale; undisclosed non-adjacent lane splice; same loading control used across unrelated experiments.
-- Weak triage signal: p-value clustering, terminal-digit pattern, abnormal rounding, repeated means/SDs, whole-column linear transforms, identical ranks, unusually small SD, over-smooth longitudinal trajectories, baseline balance, citation mismatch.
+- Weak triage signal: p-value clustering, terminal-digit pattern, preserved paired digits, abnormal rounding, precision mixing, repeated means/SDs, whole-column or time-stratified linear transforms, identical ranks, repeated residual/noise patterns, cross-table sequence reuse, unusually small SD, over-smooth longitudinal trajectories, baseline balance, citation mismatch.
 
 Do not let weak triage signals drive the conclusion.
 

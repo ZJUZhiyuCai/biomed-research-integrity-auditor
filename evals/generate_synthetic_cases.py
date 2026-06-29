@@ -346,6 +346,87 @@ Figure 9 reports longitudinal tumor-volume trajectories for six animals measured
     write(root / "protocols/animal_measurement_log.txt", "Animal-level table is supplied, but timestamped raw caliper records and interpolation/smoothing notes are not included.")
 
 
+def case_016() -> None:
+    root = reset_case("case_016")
+    write(root / "PACKAGE_NOTE.txt", "Neutral synthetic package for blind audit.")
+    write(root / "manuscript.pdf", """
+Title: Synthetic Study P
+
+Figure 3c and Figure 3d report animal-level longitudinal measurements for control and treatment groups. The manuscript describes treatment animals as independently measured at day 0, day 2, day 4, and day 7.
+""")
+    base_values = [12.3, 14.7, 16.2, 18.8, 21.4, 23.9, 25.6, 27.1]
+    rows = []
+    for idx, base in enumerate(base_values, start=1):
+        rows.append({
+            "animal_id": f"A{idx:02d}",
+            "control_day0": f"{base:.1f}",
+            "treatment_day0": f"{base + 10:.1f}",
+            "control_day2": f"{base + 1.4:.1f}",
+            "treatment_day2": f"{base + 21.4:.1f}",
+            "control_day4": f"{base + 3.1:.1f}",
+            "treatment_day4": f"{base + 33.1:.1f}",
+            "control_day7": f"{base + 5.8:.1f}",
+            "treatment_day7": f"{base + 45.8:.1f}",
+        })
+    write_csv(root / "source_data/Figure_3c_3d_animals.csv", rows)
+    write(root / "statistics_code/analysis_notes.txt", "Animal-level source table is supplied, but raw acquisition exports and spreadsheet formula history are not included.")
+
+
+def case_017() -> None:
+    root = reset_case("case_017")
+    write(root / "PACKAGE_NOTE.txt", "Neutral synthetic package for blind audit.")
+    write(root / "manuscript.pdf", """
+Title: Synthetic Study Q
+
+Figure 10 reports endpoint measurements from three groups. The manuscript states that all values came from the same instrument export and were processed in one analysis sheet.
+""")
+    rows = []
+    for idx, base in enumerate([1.2, 1.4, 1.8, 2.1, 2.5, 2.7, 3.0, 3.4], start=1):
+        rows.append({
+            "sample_id": f"Q{idx:02d}",
+            "control": f"{base:.1f}",
+            "treatment_a": f"{base + 0.137:.3f}",
+            "treatment_b": f"{base + 0.4:.1f}" if idx % 2 else f"{base + 0.400:.3f}",
+        })
+    write_csv(root / "source_data/Figure_10_precision_export.csv", rows)
+    write(root / "statistics_code/export_notes.txt", "The package does not include the raw instrument export or spreadsheet formula audit trail.")
+
+
+def case_018() -> None:
+    root = reset_case("case_018")
+    write(root / "PACKAGE_NOTE.txt", "Neutral synthetic package for blind audit.")
+    write(root / "manuscript.pdf", """
+Title: Synthetic Study R
+
+Figure 2 and Figure 5 report different biological assays. Source tables for both figures are supplied separately.
+""")
+    sequence = [3.14, 4.22, 5.09, 6.31, 7.18, 8.44, 9.02, 10.67]
+    write_csv(root / "source_data/Figure_2_assay_a.csv", [
+        {"sample_id": f"R{idx:02d}", "assay_a_value": f"{value:.2f}"}
+        for idx, value in enumerate(sequence, start=1)
+    ])
+    write_csv(root / "source_data/Figure_5_assay_b.csv", [
+        {"sample_id": f"R{idx:02d}", "assay_b_value": f"{value:.2f}"}
+        for idx, value in enumerate(sequence, start=1)
+    ])
+    write(root / "statistics_code/analysis_notes.txt", "The assays are described as different readouts; no source workbook history is supplied.")
+
+
+def case_019() -> None:
+    root = reset_case("case_019")
+    write(root / "PACKAGE_NOTE.txt", "Neutral synthetic package for blind audit.")
+    write(root / "manuscript.pdf", """
+Title: Synthetic Study S
+
+Figure 11 reports integer cell-count outcomes summarized as mean, SD, and n. The manuscript states that each row summarizes integer counts from individual fields.
+""")
+    write_csv(root / "source_data/Figure_11_integer_count_summary.csv", [
+        {"outcome": "cell_count", "group": "Control", "mean": 2.5, "sd": 1.0, "n": 5},
+        {"outcome": "cell_count", "group": "Treatment", "mean": 4.0, "sd": 1.3, "n": 4},
+    ])
+    write(root / "statistics_code/analysis_notes.txt", "Only summary values are supplied; raw integer counts are not included.")
+
+
 def main() -> int:
     CASES.mkdir(parents=True, exist_ok=True)
     case_generators = [
@@ -364,6 +445,10 @@ def main() -> int:
         case_013,
         case_014,
         case_015,
+        case_016,
+        case_017,
+        case_018,
+        case_019,
     ]
     for fn in case_generators:
         fn()

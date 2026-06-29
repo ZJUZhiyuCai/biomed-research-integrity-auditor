@@ -1,0 +1,1 @@
+Animal-level source table is supplied, but raw acquisition exports and spreadsheet formula history are not included.

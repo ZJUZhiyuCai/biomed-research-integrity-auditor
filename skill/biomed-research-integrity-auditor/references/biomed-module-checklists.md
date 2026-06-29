@@ -72,12 +72,18 @@ Weak triage checks:
 - Terminal-digit patterns.
 - Repeated decimals.
 - Abnormal rounding or terminal 0/5 preference.
+- Preserved terminal, ones, or first-decimal digits when paired treatment groups are compared row-by-row.
+- Precision mixing: one group/time point has one decimal precision while another has three, or precision changes only in a subset.
 - Repeated means, SDs, SEMs, or repeated mean/SD pairs.
 - Mechanical differences, preserved last digits, or constant offsets across a whole group.
+- Time-stratified offsets where day 0, day 2, day 4, and day 7 each use a different additive constant.
 - Whole-group multiply/divide relationships or normalization-like scaling.
 - Identical rank ordering across groups, conditions, or time points.
+- Repeated residual/noise shapes after subtracting group means.
 - Adjacent time points that are linear shifts of prior values.
 - Longitudinal animal/sample trajectories with nearly identical increments, over-smoothing, or repeated increment patterns.
+- Identical numeric sequences reused across different source tables, figures, groups, or time points.
+- Integer count summaries where reported mean, SD, and n cannot arise from integer raw values.
 - Very small variance.
 - P value clustering near thresholds.
 - Implausibly high correlations between supposedly independent conditions.

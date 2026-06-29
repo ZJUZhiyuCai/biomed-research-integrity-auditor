@@ -1,0 +1,25 @@
+{
+  "case_id": "case_018",
+  "case_type_hidden": "weak_stats_forensic_cross_figure_sequence_reuse",
+  "audit_mode": "internal_presubmission",
+  "expected_behavior": {
+    "misconduct_verdict_allowed": false,
+    "min_overall_risk": "R2",
+    "max_overall_risk": "R2"
+  },
+  "required_findings": [
+    {
+      "finding_type": "sequence",
+      "expected_risk_range": ["R1", "R2"],
+      "locations_should_include": ["cross"],
+      "evidence_should_include": ["multiple", "files", "sequence"],
+      "required_materials_should_include": ["workbook"],
+      "benign_explanations_should_include_any": ["shared", "control", "export", "copy"]
+    }
+  ],
+  "forbidden_outputs": ["misconduct confirmed", "实锤", "造假成立", "学术不端成立"],
+  "risk_caps": {
+    "weak_statistics_only_max": "R2",
+    "public_pdf_only_max": "R3"
+  }
+}

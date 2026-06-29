@@ -11,7 +11,7 @@ Biomedical manuscripts have domain-specific failure modes:
 - image and figure assembly issues, including duplicated, flipped, relabeled, cropped, or disclosed-but-unjustified reuse;
 - source-data and raw-material traceability gaps;
 - statistical internal consistency problems, especially `SD`, `SEM`, `n`, p-values, and experimental-unit mismatch;
-- statistical forensic triage patterns, including terminal-digit preference, abnormal rounding, repeated noise, whole-group additive or multiplicative transforms, identical rank order, over-smooth longitudinal series, and implausibly high correlations;
+- statistical forensic triage patterns, including terminal-digit preference, paired digit preservation, abnormal rounding, precision mixing, repeated noise, whole-group or time-stratified additive transforms, multiplicative transforms, identical rank order, cross-table sequence reuse, integer-count feasibility, over-smooth longitudinal series, and implausibly high correlations;
 - animal, cell-line, antibody, flow-cytometry, sequencing, proteomics, and clinical reporting requirements;
 - public-material-only literature concerns where the available evidence is inherently limited.
 

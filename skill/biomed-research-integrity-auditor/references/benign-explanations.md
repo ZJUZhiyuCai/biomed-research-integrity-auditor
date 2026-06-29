@@ -53,7 +53,10 @@ Possible benign explanations:
 - Plate-layout or batch correction applies the same additive or multiplicative adjustment to many values.
 - Longitudinal measurements are interpolated, smoothed, or model-derived rather than raw observations.
 - Rounding to reporting precision creates terminal-digit or 0/5 enrichment.
+- Column formatting in spreadsheets creates mixed displayed precision without changing underlying values.
 - Repeated mean/SD values result from shared controls, pooled controls, or duplicated table references that are disclosed elsewhere.
+- A numeric sequence repeats because the same control group is intentionally reused and clearly disclosed.
+- Integer-count summaries were transformed, averaged across technical replicates first, or rounded from unreported raw values.
 - QC filtering truncates distribution.
 - Small n makes patterns unstable.
 - Baseline balancing due to randomization stratification.
@@ -67,6 +70,8 @@ Materials that resolve:
 - Batch logs and sample map.
 - Longitudinal raw measurements by animal/sample and timestamp.
 - Documentation of interpolation, smoothing, normalization, and control reuse.
+- Original workbook with formulas, formatting, and edit history.
+- Raw integer observations for count outcomes.
 
 ## Methodology Gap
 
