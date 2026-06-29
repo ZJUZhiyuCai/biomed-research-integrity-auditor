@@ -57,6 +57,20 @@ detector_caps:
     max: R3
   completeness_gap:
     max: R1
+  text_overlap_candidate:
+    max: R3
+  self_overlap_candidate:
+    max: R3
+  duplicate_publication_candidate:
+    max: R3
+  methods_boilerplate_overlap:
+    max: R2
+  disclosed_prior_text_overlap:
+    max: R2
+  results_text_overlap:
+    max: R3
+  abstract_conclusion_overlap:
+    max: R3
 
 contextual_caps:
   disclosed_legitimate_reuse:

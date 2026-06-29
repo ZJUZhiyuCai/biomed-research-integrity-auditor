@@ -59,6 +59,7 @@ The orchestrator inventories the package, runs detector scripts, validates detec
 The pipeline is provenance-aware: figure-panel similarity to a declared raw/source image is reported as positive traceability evidence, while unmapped figure-to-raw similarity is capped as an `R1` traceability gap rather than an `R3` image-reuse concern.
 The JSON summary includes both risk findings and machine-readable positive provenance, so clean traceability can be tested separately from unresolved gaps.
 The image pipeline also includes a conservative local patch screen that exports evidence crops for candidate region-level reuse. Patch similarity remains a detector candidate: declared traceability and same-field/channel relationships are excluded before risk calibration, and `R4` still requires a direct contradiction tag.
+The text pipeline includes a package-internal overlap screen for supplied manuscript, supplementary, draft, thesis, preprint, and lab-prior-paper text. It is not a web-scale plagiarism search; findings remain section-aware overlap candidates and must be calibrated against disclosure, citation, and journal-policy context.
 
 Structured figure assembly manifests are preferred when available:
 
@@ -97,6 +98,7 @@ Run the non-LLM detector baseline:
 python3 evals/run_script_baseline.py --case case_004
 python3 evals/run_script_baseline.py --case case_010
 python3 evals/run_script_baseline.py --case case_020
+python3 evals/run_script_baseline.py --case case_026
 ```
 
 ## Regenerate Synthetic Cases
@@ -116,7 +118,7 @@ The `ground_truth/` directory is included so the harness is reproducible. A test
 ## Current Limitations
 
 - Local patch detection is single-package only; it does not search across papers or external image corpora.
-- Text overlap, self-overlap, and duplicate-publication screening are not implemented yet.
+- Text overlap screening is package-internal only; it does not perform web-scale plagiarism search, cross-paper corpus search, or a plagiarism verdict.
 - True PDF figure/caption extraction is still limited; synthetic evals use simplified manuscript text and generated assets.
 - Public-material review remains capped by missing source/raw records and must not be treated as a misconduct verdict.
 

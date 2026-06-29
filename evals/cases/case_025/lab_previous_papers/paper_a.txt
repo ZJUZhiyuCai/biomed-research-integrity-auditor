@@ -1,0 +1,3 @@
+Methods
+
+Cells were seeded in six well plates and maintained in dulbecco modified eagle medium with ten percent fetal bovine serum. After overnight attachment, cultures were treated with vehicle or compound for twenty four hours, washed with phosphate buffered saline, fixed with paraformaldehyde, stained according to the standard antibody protocol, and imaged using identical microscope exposure settings.

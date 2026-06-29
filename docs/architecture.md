@@ -48,6 +48,19 @@ The image contextual joiner classifies each similarity edge before calibration:
 
 This layer is designed to reduce high-risk false positives in clean-control and prompt-injection packages.
 
+## Package-Internal Text Overlap
+
+`detectors/text/text_overlap_screen.py` screens only text supplied inside the audit package: manuscript, supplement, prior drafts, thesis chapters, preprints, and lab previous papers. It does not query the web, publisher corpora, Crossref, PubMed, Google Scholar, or external plagiarism databases.
+
+The detector normalizes paragraph text, assigns coarse sections, builds word n-gram shingles, and emits paragraph-pair candidates with overlap examples. Candidate types are calibrated by section and disclosure context:
+
+- methods/protocol boilerplate is capped at R2;
+- disclosed thesis or preprint-derived overlap is capped at R2 unless other supplied materials contradict the disclosure;
+- undisclosed results overlap can remain R3;
+- abstract or conclusion overlap can remain R2/R3 depending on supplied disclosure and journal-policy context.
+
+Text overlap candidates are never plagiarism findings. Human review must check citation, prior-publication policy, thesis/preprint disclosure, journal requirements, and whether the overlap is standard methods language.
+
 ## Run Modes
 
 ### Presubmission Internal Audit
@@ -102,12 +115,14 @@ Positive provenance is not proof of authenticity; it only records traceability w
 - disclosed legitimate loading-control reuse with same-membrane/source context caps at R2;
 - R4 requires a direct contradiction tag such as `source_to_figure_conflict` or `raw_record_conflict`;
 - local patch similarity alone is capped at R3; `local_patch_direct_source_conflict` is required before a local patch path can reach R4;
+- package-internal text overlap is capped at R3; methods boilerplate and disclosed thesis/preprint overlap are capped at R2;
 - R3/R4 findings must include benign explanations, required materials, and a recommended action.
 
 ## P0 Detectors
 
 - `detectors/image/global_near_duplicate.py`: global image near-duplicate clusters using average hash, dHash, pHash-style DCT, and D4 transforms.
 - `detectors/image/local_patch_reuse.py`: conservative overlapping-tile local patch reuse candidates with D4 confirmation, normalized cross-correlation, and evidence crop export.
+- `detectors/text/text_overlap_screen.py`: package-internal paragraph overlap candidates using section-aware n-gram similarity.
 - `detectors/stats/pseudoreplication_screen.py`: possible unit-of-analysis mismatch candidates from biological and technical replicate columns.
 - `skill/.../stats_consistency_check.py`: direct summary consistency plus weak forensic statistical screens.
 - `provenance/parse_assembly_manifest.py`: declared figure-to-raw/source links from assembly manifests.

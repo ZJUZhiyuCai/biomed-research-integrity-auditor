@@ -72,14 +72,22 @@ Use when the user is responding to reviewer, journal, or PubPeer-style concerns.
    - Inspect candidate repeats across main figures, supplementary figures, source images, and raw images.
    - Prioritize Western blot/gel, microscopy, histology/IHC/IF, wound healing, colony formation, animal images, and flow plots.
 
-5. Check numerical and statistical consistency.
+5. Screen package-internal text overlap.
+   - The orchestrator runs `detectors/text/text_overlap_screen.py` when supplied manuscript, supplement, prior draft, thesis, preprint, or lab-previous-paper text is present.
+   - Treat text overlap as a paragraph-level candidate, not plagiarism proof.
+   - The detector does not search the web, external publisher corpora, PubMed, Google Scholar, Crossref, or plagiarism databases.
+   - Methods/protocol boilerplate is capped at R2; disclosed thesis/preprint-derived text is capped at R2 unless supplied materials create a direct contradiction.
+   - Undisclosed results, abstract, or conclusion overlap may justify R2/R3 review depending on section, score, disclosure, and journal-policy context.
+   - For every text-overlap finding, request prior drafts/source documents, disclosure or citation trail, and relevant journal policy before escalation.
+
+6. Check numerical and statistical consistency.
    - Run `scripts/stats_consistency_check.py <csv-or-folder>` on source-data tables or exported numerical summaries.
    - Prefer direct reproducibility checks over weak distributional tests.
    - Screen for terminal-digit preference, preserved last/ones/tenths digits across paired groups, abnormal rounding, precision mixing, repeated mean/SD pairs, whole-column add/subtract shifts, time-stratified shifts, whole-column multiply/divide scaling, identical rank order, highly correlated residual/noise patterns, adjacent-timepoint linear shifts, over-smooth longitudinal trajectories, repeated per-animal increment patterns, cross-table/cross-figure numeric-sequence reuse, and integer-count mean/SD/n feasibility.
    - Treat terminal-digit, Benford-style, p-value clustering, repeated-noise, linear-transform, over-smoothing, implausible-correlation, precision-mixing, and sequence-reuse patterns as weak triage signals unless they directly conflict with supplied raw/source records.
    - Run `detectors/stats/pseudoreplication_screen.py <source_data_dir>` when source tables include animal, patient, field, well, section, cell, or technical-replicate IDs.
 
-6. Audit methodology and compliance gaps.
+7. Audit methodology and compliance gaps.
    - Read `references/biomed-module-checklists.md` for domain-specific checks.
    - Animal: ARRIVE-style study design, sample size, randomization, blinding, exclusion, outcomes, statistics, sex/age/strain, humane endpoints, ethics.
    - Clinical: registration, protocol, SAP, CONSORT flow, outcomes, IRB, consent, adverse events, data sharing.
@@ -87,11 +95,11 @@ Use when the user is responding to reviewer, journal, or PubPeer-style concerns.
    - Flow: FCS files, gating hierarchy, compensation, FMO/isotype controls, denominator, instrument/software.
    - Omics: accession, raw counts, metadata, batch, normalization, differential-analysis code, multiple-testing correction.
 
-7. Test benign explanations.
+8. Test benign explanations.
    - Read `references/benign-explanations.md`.
    - For every R3/R4 finding, list plausible non-misconduct explanations and what materials would resolve them.
 
-8. Assemble the report.
+9. Assemble the report.
    - Use only calibrated findings from `calibrators/risk_cap_engine.py` or `scripts/audit_package.py`.
    - Reporter input must contain `calibrated_risk_level`; detector candidates with only `risk_suggestion` must not be sent directly to the report assembler.
    - Use `templates/internal-audit-report.md` for internal mode.
@@ -121,6 +129,7 @@ Apply these caps before finalizing the report:
 - Public materials only: in external mode with only a public PDF or public figures, do not assign R4 unless the public materials contain a direct internal contradiction. Most public-only concerns are capped at R3 candidate concern.
 - Weak statistics only: terminal-digit anomalies, p-value clustering, unusually small variance, or baseline balance concerns alone cannot exceed R2.
 - Statistical forensic screens: preserved terminal/ones/tenths digits, whole-group constant offsets, time-stratified offsets, whole-group scaling, identical rank order, repeated residual/noise pattern, abnormal rounding, precision mixing, repeated mean/SD pairs, cross-table sequence reuse, linear timepoint shifts, or overly mechanical animal/sample trajectories are R1/R2 triage signals unless tied to a direct source-to-figure or raw-to-source contradiction.
+- Text overlap: package-internal overlap without a direct contradiction cannot exceed R3. Methods/protocol boilerplate and disclosed thesis/preprint-derived overlap are capped at R2, subject to citation, disclosure, and journal-policy review.
 - Missing data: absent source data, raw images, FCS files, accession metadata, or protocols are R1 completeness gaps unless supplied materials directly contradict each other.
 - R4 requires direct conflict: source data cannot generate the published figure, raw image does not match the panel, figure assembly conflicts with raw records, statistical code outputs conflict with paper values, or raw records contradict reported n/group identity.
 - Disclosure is not automatic clearance: disclosed reuse may still be R2/R3 if the scientific justification is insufficient.
@@ -150,6 +159,7 @@ Rank evidence by strength:
 - Direct contradiction: figure cannot be reproduced from source data; raw image does not match panel; same image region is used for different conditions.
 - Strong candidate: repeated image after rotation/flip/scale; undisclosed non-adjacent lane splice; same loading control used across unrelated experiments.
 - Local patch candidate: region-level repeated texture or structure across panels. This is capped at R3 unless source/raw records create a direct contradiction.
+- Text overlap candidate: package-internal paragraph overlap in supplied manuscript, supplement, prior drafts, thesis, preprints, or lab-prior-paper text. Methods boilerplate and disclosed thesis/preprint overlap are capped at R2; undisclosed results/abstract/conclusion overlap can remain R3 but is not plagiarism proof.
 - Weak triage signal: p-value clustering, terminal-digit pattern, preserved paired digits, abnormal rounding, precision mixing, repeated means/SDs, whole-column or time-stratified linear transforms, identical ranks, repeated residual/noise patterns, cross-table sequence reuse, unusually small SD, over-smooth longitudinal trajectories, baseline balance, citation mismatch.
 
 Do not let weak triage signals drive the conclusion.
@@ -177,6 +187,7 @@ Scripts are screening aids. Read or patch them before relying on them in unfamil
 - `scripts/report_assembler.py`: assemble a Markdown audit report from manifest and findings JSON.
 - `../../detectors/image/global_near_duplicate.py`: multi-hash plus D4 transform global image candidate detector.
 - `../../detectors/image/local_patch_reuse.py`: overlapping-tile local patch candidate detector with evidence crop export.
+- `../../detectors/text/text_overlap_screen.py`: package-internal paragraph overlap candidate detector; no web-scale plagiarism search.
 - `../../detectors/stats/pseudoreplication_screen.py`: unit-of-analysis mismatch candidate detector.
 - `../../calibrators/contextual_joiner.py`: enrich detector candidates with disclosed-reuse and source-availability context before calibration.
 - `../../calibrators/risk_cap_engine.py`: convert detector candidates into capped findings.

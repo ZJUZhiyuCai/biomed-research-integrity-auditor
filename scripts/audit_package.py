@@ -25,6 +25,7 @@ CALIBRATED_SCHEMA = ROOT / "schemas" / "calibrated_findings.schema.json"
 SUMMARY_SCHEMA = ROOT / "schemas" / "audit_summary.schema.json"
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp"}
 SOURCE_EXTS = {".csv", ".tsv"}
+TEXT_EXTS = {".txt", ".md", ".pdf"}
 MODES = ("internal_presubmission", "external_public_material", "response_to_concern")
 
 
@@ -205,6 +206,21 @@ def run_image_detector(package: Path, output_dir: Path, provenance_graph: Path) 
     return outputs
 
 
+def run_text_detectors(package: Path, output_dir: Path) -> list[Path]:
+    if not has_files(package, TEXT_EXTS):
+        return []
+    text_output = output_dir / "text_overlap_candidates.json"
+    run([
+        PYTHON,
+        "detectors/text/text_overlap_screen.py",
+        str(package),
+        "--output",
+        str(text_output),
+    ])
+    validate_detector(text_output)
+    return [text_output]
+
+
 def write_empty_calibrated(mode: str, output: Path) -> None:
     payload = {
         "mode": mode,
@@ -278,6 +294,7 @@ def run_pipeline(package: Path, mode: str, output_dir: Path, domains: str, case_
     detector_outputs = []
     detector_outputs.extend(run_source_detectors(package, output_dir))
     detector_outputs.extend(run_image_detector(package, output_dir, provenance_graph))
+    detector_outputs.extend(run_text_detectors(package, output_dir))
     calibrated = run_calibrator(detector_outputs, mode, output_dir)
     report = run_report(manifest, calibrated, detector_outputs, mode, case_id, output_dir)
     audit_summary = extract_audit_summary(report)

@@ -1,0 +1,3 @@
+Discussion
+
+A different project focused on unrelated pharmacokinetic measurements, dosing feasibility, animal welfare monitoring, tissue distribution, and formulation stability. Its language concerns dosing logistics and husbandry observations rather than cellular imaging, blinded scoring, plate-reader normalization, or endpoint selection.

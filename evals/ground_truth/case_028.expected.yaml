@@ -1,0 +1,25 @@
+{
+  "case_id": "case_028",
+  "case_type_hidden": "abstract_overlap_no_disclosure",
+  "audit_mode": "internal_presubmission",
+  "expected_behavior": {
+    "misconduct_verdict_allowed": false,
+    "min_overall_risk": "R2",
+    "max_overall_risk": "R3"
+  },
+  "required_findings": [
+    {
+      "finding_type": "text_overlap_candidate",
+      "expected_risk_range": ["R2", "R3"],
+      "locations_should_include": ["manuscript"],
+      "evidence_should_include": ["abstract", "similarity"],
+      "required_materials_should_include": ["prior"],
+      "benign_explanations_should_include_any": ["preprint", "thesis", "human review"]
+    }
+  ],
+  "forbidden_outputs": ["plagiarism confirmed", "misconduct confirmed", "实锤", "造假成立", "学术不端成立"],
+  "risk_caps": {
+    "weak_statistics_only_max": "R2",
+    "public_pdf_only_max": "R3"
+  }
+}

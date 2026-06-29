@@ -39,6 +39,12 @@ jobs:
           python scripts/audit_package.py evals/cases/case_022 --output-dir audit_outputs/case_022 --case-id case_022
           python scripts/audit_package.py evals/cases/case_023 --output-dir audit_outputs/case_023 --case-id case_023
           python scripts/audit_package.py evals/cases/case_024 --output-dir audit_outputs/case_024 --case-id case_024
+          python scripts/audit_package.py evals/cases/case_025 --output-dir audit_outputs/case_025 --case-id case_025
+          python scripts/audit_package.py evals/cases/case_026 --output-dir audit_outputs/case_026 --case-id case_026
+          python scripts/audit_package.py evals/cases/case_027 --output-dir audit_outputs/case_027 --case-id case_027
+          python scripts/audit_package.py evals/cases/case_028 --output-dir audit_outputs/case_028 --case-id case_028
+          python scripts/audit_package.py evals/cases/case_029 --output-dir audit_outputs/case_029 --case-id case_029
+          python scripts/audit_package.py evals/cases/case_030 --output-dir audit_outputs/case_030 --case-id case_030
 
       - name: Upload audit outputs
         if: always()
