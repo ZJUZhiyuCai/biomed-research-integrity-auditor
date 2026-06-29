@@ -1,0 +1,28 @@
+mode_caps:
+  internal_presubmission:
+    default_max: R4
+  external_public_material:
+    default_max: R3
+    missing_source_data_max: R1
+  response_to_concern:
+    default_max: R4
+
+detector_caps:
+  weak_forensic_triage_signal: R2
+  weak_signal: R2
+  terminal_digit: R2
+  p_value_clustering: R2
+  benford_style: R2
+  precision_mixing: R2
+  cross_file_sequence_reuse: R2
+  image_similarity_candidate: R3
+  global_image_similarity: R3
+  local_patch_reuse: R3
+  pseudoreplication_candidate: R3
+  completeness_gap: R1
+
+r4_requirements:
+  - direct_contradiction
+  - raw_record_conflict
+  - source_to_figure_conflict
+  - source_data_cannot_reproduce_claim

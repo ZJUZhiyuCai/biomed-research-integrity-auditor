@@ -1,0 +1,17 @@
+schema_name: western_blot_densitometry
+required_columns:
+  - lane_id
+  - sample_id
+  - target
+  - normalized_intensity
+recommended_columns:
+  - membrane_id
+  - loading_control
+  - exposure_id
+  - raw_blot_file
+checks:
+  - membrane_id_required_for_loading_control_reuse: true
+  - lane_id_unique_within_membrane: true
+risk_rules:
+  missing_membrane_id_with_reused_control: R2
+  inconsistent_lane_map: R3

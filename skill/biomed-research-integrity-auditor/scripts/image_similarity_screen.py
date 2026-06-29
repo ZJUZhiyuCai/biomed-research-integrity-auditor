@@ -30,7 +30,7 @@ def average_hash(path: Path, hash_size: int = 8) -> int:
 
 
 def hamming(a: int, b: int) -> int:
-    return (a ^ b).bit_count()
+    return bin(a ^ b).count("1")
 
 
 def scan(root: Path, threshold: int, hash_size: int) -> dict[str, Any]:
@@ -52,8 +52,11 @@ def scan(root: Path, threshold: int, hash_size: int) -> dict[str, Any]:
                     "left": left["path"],
                     "right": right["path"],
                     "hamming_distance": distance,
-                    "risk_level": "R3",
-                    "note": "Perceptual-hash candidate only; inspect source images and benign explanations.",
+                    "candidate_type": "image_similarity_candidate",
+                    "evidence_strength": "candidate",
+                    "risk_suggestion": "R2_or_R3_pending_context",
+                    "requires_contextual_calibration": True,
+                    "note": "Perceptual-hash candidate only; inspect source images and benign explanations. Detector output is not a final risk level.",
                 })
     return {
         "root": str(root),

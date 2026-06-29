@@ -61,11 +61,11 @@ def normalize_findings(payloads: list[Any]) -> list[dict[str, Any]]:
                 for idx, item in enumerate(payload["candidates"], start=1):
                     findings.append({
                         "finding_id": f"BIOMED-IMG-{idx:04d}",
-                        "risk_level": item.get("risk_level", "R3"),
+                        "risk_level": item.get("calibrated_risk_level", item.get("risk_level", "R2")),
                         "module": "Image Integrity",
-                        "location": f"{item.get('left')} / {item.get('right')}",
-                        "finding_type": "Perceptual-hash image similarity candidate",
-                        "evidence_type": "image_similarity_candidate",
+                        "location": " / ".join(item.get("locations", []) or [f"{item.get('left')} / {item.get('right')}"]),
+                        "finding_type": item.get("candidate_type", "Perceptual-hash image similarity candidate"),
+                        "evidence_type": item.get("candidate_type", "image_similarity_candidate"),
                         "evidence": item,
                         "benign_explanations_considered": [
                             "same field intentionally reused",
@@ -77,8 +77,8 @@ def normalize_findings(payloads: list[Any]) -> list[dict[str, Any]]:
                             "acquisition metadata",
                             "figure assembly file",
                         ],
-                        "recommended_action": "Inspect the candidate pair against original images and sample identity before escalating.",
-                        "note": item.get("note", "Candidate only; manually verify."),
+                        "recommended_action": item.get("recommended_action", "Inspect the candidate pair against original images and sample identity before escalating."),
+                        "note": item.get("note", "Detector candidate only; calibrate before using R3/R4 language."),
                     })
             elif payload.get("missing_materials"):
                 for idx, item in enumerate(payload["missing_materials"], start=1):

@@ -1,0 +1,18 @@
+schema_name: flow_percentages
+required_columns:
+  - sample_id
+  - gate
+  - denominator
+  - percent
+recommended_columns:
+  - fcs_file
+  - workspace_file
+  - compensation_matrix
+  - fmo_control
+checks:
+  - percent_between_0_and_100: true
+  - denominator_present: true
+  - fcs_file_required_for_raw_audit: true
+risk_rules:
+  missing_fcs_file: R1
+  missing_denominator: R2

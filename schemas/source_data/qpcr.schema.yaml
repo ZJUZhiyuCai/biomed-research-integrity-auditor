@@ -1,0 +1,18 @@
+schema_name: qpcr
+required_columns:
+  - sample_id
+  - biological_replicate_id
+  - target
+  - ct
+recommended_columns:
+  - housekeeping_gene
+  - plate_id
+  - technical_replicate_id
+  - melt_curve_pass
+checks:
+  - ct_numeric: true
+  - biological_replicate_column_required: biological_replicate_id
+  - technical_replicates_not_counted_as_biological_n: true
+risk_rules:
+  missing_biological_replicate_id: R2
+  technical_replicate_count_reported_as_n: R2

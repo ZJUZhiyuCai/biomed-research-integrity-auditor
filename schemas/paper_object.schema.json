@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.org/biomed-research-integrity-auditor/paper_object.schema.json",
+  "title": "Paper Object",
+  "type": "object",
+  "required": ["paper_id", "sections", "figures", "tables", "references"],
+  "properties": {
+    "paper_id": {
+      "type": "string"
+    },
+    "source_file": {
+      "type": "string"
+    },
+    "sections": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["section_type", "title", "text"],
+        "properties": {
+          "section_type": {"type": "string"},
+          "title": {"type": "string"},
+          "text": {"type": "string"},
+          "page_range": {
+            "type": "array",
+            "items": {"type": "integer"}
+          }
+        }
+      }
+    },
+    "figures": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["figure_id"],
+        "properties": {
+          "figure_id": {"type": "string"},
+          "panels": {
+            "type": "array",
+            "items": {"type": "string"}
+          },
+          "caption": {"type": "string"},
+          "page": {"type": "integer"},
+          "extracted_image_file": {"type": "string"}
+        }
+      }
+    },
+    "tables": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["table_id"],
+        "properties": {
+          "table_id": {"type": "string"},
+          "page": {"type": "integer"},
+          "csv_file": {"type": "string"}
+        }
+      }
+    },
+    "references": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "raw": {"type": "string"},
+          "doi": {"type": "string"}
+        }
+      }
+    }
+  }
+}

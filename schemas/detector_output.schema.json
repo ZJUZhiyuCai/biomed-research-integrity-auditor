@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.org/biomed-research-integrity-auditor/detector_output.schema.json",
+  "title": "Biomedical Integrity Detector Output",
+  "type": "object",
+  "required": ["detector_name", "detector_version", "input", "candidates", "errors"],
+  "properties": {
+    "detector_name": {
+      "type": "string"
+    },
+    "detector_version": {
+      "type": "string"
+    },
+    "input": {
+      "type": "object"
+    },
+    "candidates": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/candidate"
+      }
+    },
+    "errors": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    }
+  },
+  "$defs": {
+    "candidate": {
+      "type": "object",
+      "required": [
+        "candidate_id",
+        "detector",
+        "candidate_type",
+        "locations",
+        "evidence",
+        "evidence_strength",
+        "risk_suggestion",
+        "requires_contextual_calibration"
+      ],
+      "properties": {
+        "candidate_id": {
+          "type": "string"
+        },
+        "detector": {
+          "type": "string"
+        },
+        "candidate_type": {
+          "type": "string"
+        },
+        "locations": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "evidence": {
+          "type": "object"
+        },
+        "evidence_strength": {
+          "enum": ["weak_signal", "candidate", "strong_candidate", "direct_contradiction"]
+        },
+        "risk_suggestion": {
+          "type": "string"
+        },
+        "risk_cap_tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "benign_explanations": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "required_materials": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "recommended_action": {
+          "type": "string",
+          "default": ""
+        },
+        "requires_contextual_calibration": {
+          "type": "boolean"
+        }
+      }
+    }
+  }
+}

@@ -1,6 +1,6 @@
 # Biomedical Research Integrity Auditor
 
-An open Codex skill and blind-evaluation harness for biomedical research integrity review.
+An open Codex skill, detector pipeline, and blind-evaluation harness for biomedical research integrity review.
 
 This is deliberately **not** a "paper fraud detector." It is a risk-auditing workflow for manuscripts, figures, source data, reporting checklists, and public literature-concern triage. The skill is designed to surface evidence-backed integrity risks, benign explanations, missing materials, and next actions without making misconduct verdicts.
 
@@ -9,9 +9,14 @@ This is deliberately **not** a "paper fraud detector." It is a risk-auditing wor
 ## What Is Included
 
 - `skill/biomed-research-integrity-auditor/` - the installable Codex skill.
+- `detectors/` - scriptable candidate detectors that emit evidence but not final verdicts.
+- `calibrators/` - risk-cap and evidence-strength calibration.
+- `schemas/` - shared JSON/YAML contracts for detector output, paper objects, and source-data expectations.
 - `evals/` - neutral synthetic manuscript packages for blind testing.
 - `evals/run_eval.py` - prompt generation and JSON-summary scoring.
+- `evals/run_script_baseline.py` - non-LLM detector baseline runner.
 - `evals/generate_synthetic_cases.py` - deterministic synthetic package generator.
+- `docs/architecture.md` - audit pipeline architecture.
 - `docs/design-notes.md` - design rationale, boundaries, and source anchors.
 
 ## Integrity Boundary
@@ -25,6 +30,8 @@ The skill must not say that misconduct, fraud, fabrication, or falsification is 
 - `R4`: direct contradiction in supplied internal materials
 
 Public-material-only review is capped below `R4` unless direct internal contradiction is available. Weak statistical patterns alone are capped below major concern levels.
+
+Detectors only emit candidates. Final risk levels are assigned after calibration by source strength, material completeness, disclosure context, benign explanations, and mode-specific risk caps.
 
 ## Install The Skill
 
@@ -60,6 +67,13 @@ python3 evals/run_eval.py score
 ```
 
 The scorecard is written to `evals/scorecards/`.
+
+Run the non-LLM detector baseline:
+
+```bash
+python3 evals/run_script_baseline.py --case case_004
+python3 evals/run_script_baseline.py --case case_010
+```
 
 ## Regenerate Synthetic Cases
 

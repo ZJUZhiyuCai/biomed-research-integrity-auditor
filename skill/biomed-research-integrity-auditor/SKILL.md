@@ -7,6 +7,14 @@ description: Evidence-based biomedical research integrity risk audit for manuscr
 
 Use this skill to audit biomedical manuscript packages for research integrity risks. The goal is quality control and evidence organization, not accusation.
 
+This skill is part of a small audit pipeline:
+
+```text
+material intake -> structured extraction -> detector candidates -> risk calibration -> evidence ledger -> human-reviewable report
+```
+
+Detectors emit candidates only. Final report risk levels must pass through source-strength review, material-completeness review, benign-explanation testing, and the risk caps below.
+
 ## Non-Negotiable Boundary
 
 Do not decide that misconduct, fraud, fabrication, falsification, plagiarism, intent, or author guilt occurred. Use neutral language:
@@ -23,13 +31,17 @@ Use ORI's distinction as the anchor: research misconduct definitions concern fab
 
 Choose the mode first and name it in the report.
 
-**Internal Pre-submission Audit**
+**Presubmission Internal Audit**
 
 Use for a user's own manuscript, revision, source-data package, or lab quality-control check. Request complete raw records when possible. Output missing-materials matrix, evidence ledger, risk register, and correction plan.
 
-**External Literature Concern Triage**
+**External Public-Material Triage**
 
 Use for published papers, PubPeer-like questions, peer-review concerns, or public material review. Use only public evidence unless the user supplies more. Output reproducible observations, benign explanations, and neutral questions for authors/journals.
+
+**Response-to-Concern Audit**
+
+Use when the user is responding to reviewer, journal, or PubPeer-style concerns. Input should include the concern text plus author-supplied raw/source records when available. Output a concern-by-concern response matrix: supported concern, explainable concern, missing material, correction need, and neutral response language.
 
 ## Core Workflow
 
@@ -56,6 +68,7 @@ Use for published papers, PubPeer-like questions, peer-review concerns, or publi
    - Prefer direct reproducibility checks over weak distributional tests.
    - Screen for terminal-digit preference, preserved last/ones/tenths digits across paired groups, abnormal rounding, precision mixing, repeated mean/SD pairs, whole-column add/subtract shifts, time-stratified shifts, whole-column multiply/divide scaling, identical rank order, highly correlated residual/noise patterns, adjacent-timepoint linear shifts, over-smooth longitudinal trajectories, repeated per-animal increment patterns, cross-table/cross-figure numeric-sequence reuse, and integer-count mean/SD/n feasibility.
    - Treat terminal-digit, Benford-style, p-value clustering, repeated-noise, linear-transform, over-smoothing, implausible-correlation, precision-mixing, and sequence-reuse patterns as weak triage signals unless they directly conflict with supplied raw/source records.
+   - Run `detectors/stats/pseudoreplication_screen.py <source_data_dir>` when source tables include animal, patient, field, well, section, cell, or technical-replicate IDs.
 
 6. Audit methodology and compliance gaps.
    - Read `references/biomed-module-checklists.md` for domain-specific checks.
@@ -70,6 +83,7 @@ Use for published papers, PubPeer-like questions, peer-review concerns, or publi
    - For every R3/R4 finding, list plausible non-misconduct explanations and what materials would resolve them.
 
 8. Assemble the report.
+   - Prefer calibrated findings from `calibrators/risk_cap_engine.py` when detector JSON is available.
    - Use `templates/internal-audit-report.md` for internal mode.
    - Use `templates/external-concern-triage.md` for external mode.
    - Use `templates/evidence-ledger.md` for each finding.
@@ -147,6 +161,9 @@ Scripts are screening aids. Read or patch them before relying on them in unfamil
 - `scripts/image_similarity_screen.py`: compute perceptual-hash image-repeat candidates; requires Pillow.
 - `scripts/stats_consistency_check.py`: check CSV/XLSX numerical summaries for SEM/SD/n consistency and weak anomalies.
 - `scripts/report_assembler.py`: assemble a Markdown audit report from manifest and findings JSON.
+- `../../detectors/image/global_near_duplicate.py`: multi-hash plus D4 transform global image candidate detector.
+- `../../detectors/stats/pseudoreplication_screen.py`: unit-of-analysis mismatch candidate detector.
+- `../../calibrators/risk_cap_engine.py`: convert detector candidates into capped findings.
 
 ## Output Style
 

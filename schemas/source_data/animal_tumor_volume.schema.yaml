@@ -1,0 +1,16 @@
+schema_name: animal_tumor_volume
+required_columns:
+  - animal_id
+  - group
+  - day
+  - tumor_volume
+checks:
+  - column_unique_within: [animal_id, day]
+  - tumor_volume_nonnegative: true
+  - group_has_min_animals: 3
+  - no_missing_primary_outcome: true
+  - biological_replicate_column_required: animal_id
+risk_rules:
+  missing_animal_id: R2
+  duplicated_animal_day: R2
+  source_vs_reported_n_mismatch: R3
