@@ -511,6 +511,51 @@ class ContractPipelineTests(unittest.TestCase):
             }
             self.assertEqual(recovered_markers, set(expected["expected_markers"]))
 
+    def test_external_literature_fixture_search_emits_calibrated_candidate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "pkg"
+            write_text_package(package, "results")
+            fixture = Path(tmp) / "external_fixture.json"
+            fixture.write_text(json.dumps({
+                "queries": {
+                    "the treatment group showed a sustained increase in nuclear signal intensity across all": [
+                        {
+                            "title": "External fixture article with overlapping results language",
+                            "doi": "10.5555/fixture.001",
+                            "year": 2024,
+                            "source": "fixture",
+                            "url": "https://example.org/fixture.001",
+                        }
+                    ]
+                }
+            }), encoding="utf-8")
+            output = Path(tmp) / "external.json"
+            run([
+                PYTHON,
+                "detectors/text/external_literature_search.py",
+                str(package),
+                "--provider",
+                "fixture",
+                "--fixture",
+                str(fixture),
+                "--max-queries",
+                "1",
+                "--output",
+                str(output),
+            ])
+            payload = json.loads(output.read_text(encoding="utf-8"))
+            validate_instance(payload, ROOT / "schemas" / "detector_output.schema.json", "external literature detector")
+            self.assertEqual(payload["detector_name"], "text.external_literature_search")
+            self.assertEqual(len(payload["candidates"]), 1)
+            candidate = payload["candidates"][0]
+            self.assertEqual(candidate["candidate_type"], "external_text_match_candidate")
+            self.assertIn("external_text_search_candidate", candidate["risk_cap_tags"])
+            self.assertNotIn("risk_level", candidate)
+
+            calibrated = calibrate_payload([output], "external_public_material", ROOT / "schemas" / "risk_rules.yaml")
+            self.assertTrue(calibrated["findings"])
+            self.assertLessEqual(risk_value(calibrated["findings"][0]["calibrated_risk_level"]), risk_value("R3"))
+
 
 class RiskCapTests(unittest.TestCase):
     def detector_payload(self, risk_suggestion: str = "R4_possible") -> dict:
@@ -688,6 +733,8 @@ class RiskCapTests(unittest.TestCase):
             "disclosed_prior_text_overlap",
             "results_text_overlap",
             "abstract_conclusion_overlap",
+            "external_text_search_candidate",
+            "external_text_match_candidate",
             "manifest_conflict",
             "disclosed_legitimate_reuse",
             "disclosed_unjustified_reuse",

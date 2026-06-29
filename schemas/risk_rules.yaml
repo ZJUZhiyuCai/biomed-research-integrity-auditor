@@ -75,6 +75,10 @@ detector_caps:
     max: R3
   abstract_conclusion_overlap:
     max: R3
+  external_text_search_candidate:
+    max: R3
+  external_text_match_candidate:
+    max: R3
 
 contextual_caps:
   disclosed_legitimate_reuse:

@@ -63,6 +63,12 @@ The detector normalizes paragraph text, assigns coarse sections, builds word n-g
 
 Text overlap candidates are never plagiarism findings. Human review must check citation, prior-publication policy, thesis/preprint disclosure, journal requirements, and whether the overlap is standard methods language.
 
+## Explicit External Literature Search
+
+`detectors/text/external_literature_search.py` is an opt-in detector for external phrase-search triage. It can query Europe PMC or Crossref, or use a fixture file for deterministic tests. It is deliberately not part of the default package audit pipeline because routine audits must not depend on live network availability or external search-engine behavior.
+
+External search candidates are capped and reported as `external_text_match_candidate` observations. They are not plagiarism findings; they require manual comparison, disclosure/citation review, and journal-policy context.
+
 ## True-PDF Benchmark
 
 Most synthetic eval packages still use text files with a `.pdf` suffix. `benchmarks/true_pdf/` creates a tiny valid PDF with compressed text streams so the pipeline can test true binary-PDF behavior without external corpora.
@@ -76,6 +82,18 @@ Current expected behavior:
 - keep screening supplied non-PDF text in the same package.
 
 Scanned or image-only PDFs still require OCR. Figure and caption extraction are outside this benchmark.
+
+## Scanned-PDF OCR Benchmark
+
+`benchmarks/scanned_pdf/` creates an image-only PDF whose text is not recoverable from raw PDF bytes or pypdf machine-text extraction. When PyMuPDF, pytesseract, and the `tesseract` binary are available, the text detector renders the PDF page and OCRs it before overlap screening.
+
+Local validation skips this benchmark if the OCR runtime is unavailable. Running `benchmarks/scanned_pdf/run_scanned_pdf_benchmark.py` without `--skip-if-unavailable` makes the OCR runtime a hard requirement.
+
+## Real-Image Benchmark
+
+`benchmarks/real_image/` uses a downscaled public-domain National Cancer Institute microscopy image as a benchmark asset. The generated package creates a known flipped duplicate pair from real image texture and verifies that the global near-duplicate detector finds the expected transform.
+
+This benchmark improves realism compared with hand-drawn synthetic ellipses, but it is still a small controlled regression. It is not a substitute for broad validation on real microscopy, gel/blot, histology, and figure-assembly corpora.
 
 ## Run Modes
 

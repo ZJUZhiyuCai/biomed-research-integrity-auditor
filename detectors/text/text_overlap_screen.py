@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -91,7 +92,7 @@ def is_true_pdf(path: Path) -> bool:
         return False
 
 
-def extract_pdf_text(path: Path) -> str:
+def extract_pdf_machine_text(path: Path) -> str:
     try:
         from pypdf import PdfReader  # type: ignore
     except Exception as exc:  # noqa: BLE001 - dependency errors should be visible in detector output.
@@ -108,9 +109,43 @@ def extract_pdf_text(path: Path) -> str:
         raise ValueError(f"PDF text extraction failed: {exc}") from exc
 
     text = "\n\n".join(pages).strip()
-    if not text:
-        raise ValueError("PDF text extraction returned no machine-readable text; OCR may be required")
     return text
+
+
+def extract_pdf_ocr_text(path: Path, dpi: int = 220, max_pages: int = 12) -> str:
+    if shutil.which("tesseract") is None:
+        raise ValueError("PDF OCR requires the tesseract binary; install tesseract or supply OCR text")
+    try:
+        import fitz  # type: ignore
+        import pytesseract  # type: ignore
+        from PIL import Image  # type: ignore
+    except Exception as exc:  # noqa: BLE001 - optional OCR dependencies should be explicit.
+        raise ValueError("PDF OCR requires PyMuPDF, pytesseract, and Pillow") from exc
+
+    scale = dpi / 72
+    pages: list[str] = []
+    try:
+        with fitz.open(str(path)) as doc:
+            for page in doc[:max_pages]:
+                pixmap = page.get_pixmap(matrix=fitz.Matrix(scale, scale), colorspace=fitz.csGRAY, alpha=False)
+                image = Image.frombytes("L", (pixmap.width, pixmap.height), pixmap.samples)
+                page_text = pytesseract.image_to_string(image, config="--psm 6") or ""
+                if page_text.strip():
+                    pages.append(page_text.strip())
+    except Exception as exc:  # noqa: BLE001 - OCR failures should become detector errors.
+        raise ValueError(f"PDF OCR failed: {exc}") from exc
+
+    text = "\n\n".join(pages).strip()
+    if not text:
+        raise ValueError("PDF OCR returned no text; provide extracted text or a higher-quality scan")
+    return text
+
+
+def extract_pdf_text(path: Path) -> str:
+    machine_text = extract_pdf_machine_text(path)
+    if machine_text:
+        return machine_text
+    return extract_pdf_ocr_text(path)
 
 
 def read_text(path: Path) -> str:
@@ -301,7 +336,7 @@ def scan(root: Path, ngram: int, threshold: float, min_tokens: int) -> dict[str,
 
     return {
         "detector_name": "text.text_overlap_screen",
-        "detector_version": "0.4.3",
+        "detector_version": "0.4.4",
         "input": {
             "root": str(root),
             "ngram": ngram,

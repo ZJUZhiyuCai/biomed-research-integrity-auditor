@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+## v0.4.2 - OCR, Real-Image, and External-Search Benchmarks
+
+### Added
+- OCR fallback for image-only/scanned PDFs when PyMuPDF, pytesseract, and the tesseract binary are available.
+- Scanned-PDF benchmark package and runner, with CI enforcing the OCR path.
+- Real-microscopy-image benchmark based on a public-domain National Cancer Institute image, replacing one purely toy benchmark path with a real image asset.
+- External literature/library phrase-search detector with Europe PMC, Crossref, and fixture-backed CI modes.
+
+### Changed
+- Validation now runs the real-image benchmark and locally skips the scanned-PDF benchmark only when OCR runtime dependencies are unavailable.
+- The scanned-PDF benchmark can be run in required mode by omitting `--skip-if-unavailable`.
+
 ## v0.4.1 - Intake and Reliability Hardening
 
 ### Added

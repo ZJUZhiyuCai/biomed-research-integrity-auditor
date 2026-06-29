@@ -115,6 +115,30 @@ python3 benchmarks/true_pdf/run_true_pdf_benchmark.py
 
 This benchmark verifies that a true binary PDF with compressed machine-readable text is extracted before package-internal text-overlap screening, while still confirming the expected text is not visible as raw PDF bytes.
 
+Run the scanned-PDF OCR benchmark when OCR runtime dependencies are available:
+
+```bash
+python3 benchmarks/scanned_pdf/run_scanned_pdf_benchmark.py
+```
+
+This benchmark creates an image-only PDF and verifies that OCR text can feed the package-internal text-overlap detector. Local `make validate` skips it if `tesseract`, PyMuPDF, or pytesseract are unavailable; run the command above without `--skip-if-unavailable` to require OCR explicitly.
+
+Run the real-image benchmark:
+
+```bash
+python3 benchmarks/real_image/run_real_image_benchmark.py
+```
+
+This benchmark uses a downscaled public-domain National Cancer Institute microscopy image to test duplicate detection on real image texture rather than hand-drawn synthetic shapes.
+
+Run an explicit external literature/library phrase search:
+
+```bash
+python3 detectors/text/external_literature_search.py <package_dir> --provider europepmc --output external_literature_candidates.json
+```
+
+External search is not run by the default audit pipeline. It is a candidate-finding aid against Europe PMC, Crossref, or a fixture file, not a plagiarism database or verdict.
+
 CI also asserts key script-baseline audit outputs against `evals/ground_truth/` with:
 
 ```bash
@@ -138,8 +162,8 @@ The `ground_truth/` directory is included so the harness is reproducible. A test
 ## Current Limitations
 
 - Local patch detection is single-package only; it does not search across papers or external image corpora.
-- Text overlap screening is package-internal only; it does not perform web-scale plagiarism search, cross-paper corpus search, or a plagiarism verdict.
-- True PDF intake is limited to machine-readable text extraction for package-internal screening; scanned/image-only PDFs still need OCR, and figure/caption extraction remains limited.
+- Default text overlap screening is package-internal only; explicit external phrase search is available but does not perform exhaustive plagiarism-database coverage or a plagiarism verdict.
+- True PDF intake supports machine-readable text and OCR-capable scanned PDFs when OCR runtime dependencies are available; figure/caption extraction remains limited.
 - Public-material review remains capped by missing source/raw records and must not be treated as a misconduct verdict.
 
 ## License

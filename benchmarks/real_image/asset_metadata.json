@@ -1,0 +1,9 @@
+{
+  "asset": "assets/nci_cancer_cells_public_domain_640.jpg",
+  "source_title": "Cancer Cells",
+  "source_url": "https://commons.wikimedia.org/wiki/File:Cancer_cells.jpg",
+  "original_file_url": "https://upload.wikimedia.org/wikipedia/commons/1/10/Cancer_cells.jpg",
+  "source_institution": "National Cancer Institute",
+  "license": "Public domain / NIH work",
+  "derivation": "Downscaled to 640 px width for repository-size benchmark use."
+}

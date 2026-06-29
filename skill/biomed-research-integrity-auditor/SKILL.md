@@ -82,10 +82,11 @@ Use when the user is responding to reviewer, journal, or PubPeer-style concerns.
    - The orchestrator runs `detectors/text/text_overlap_screen.py` when supplied manuscript, supplement, prior draft, thesis, preprint, or lab-previous-paper text is present.
    - Treat text overlap as a paragraph-level candidate, not plagiarism proof.
    - The detector does not search the web, external publisher corpora, PubMed, Google Scholar, Crossref, or plagiarism databases.
-   - True binary PDFs are decoded with machine-text PDF extraction when possible. Scanned/image-only or unreadable PDFs are recorded as extraction gaps unless OCR or extracted text is supplied separately.
+   - True binary PDFs are decoded with machine-text PDF extraction when possible. Scanned/image-only PDFs are OCRed when PyMuPDF, pytesseract, and the `tesseract` binary are available; otherwise they are recorded as extraction gaps unless OCR or extracted text is supplied separately.
    - Methods/protocol boilerplate is capped at R2; disclosed thesis/preprint-derived text is capped at R2 unless supplied materials create a direct contradiction.
    - Undisclosed results, abstract, or conclusion overlap may justify R2/R3 review depending on section, score, disclosure, and journal-policy context.
    - For every text-overlap finding, request prior drafts/source documents, disclosure or citation trail, and relevant journal policy before escalation.
+   - Run `detectors/text/external_literature_search.py <package_dir> --provider europepmc|crossref` only when explicit external phrase-search triage is needed. Treat results as candidates, not plagiarism-database matches or misconduct evidence.
 
 6. Check numerical and statistical consistency.
    - Run `scripts/stats_consistency_check.py <csv-tsv-xlsx-or-folder>` on source-data tables or exported numerical summaries.
@@ -199,7 +200,10 @@ Scripts are screening aids. Read or patch them before relying on them in unfamil
 - `../../detectors/image/global_near_duplicate.py`: multi-hash plus D4 transform global image candidate detector.
 - `../../detectors/image/local_patch_reuse.py`: overlapping-tile local patch candidate detector with evidence crop export.
 - `../../detectors/text/text_overlap_screen.py`: package-internal paragraph overlap candidate detector; no web-scale plagiarism search.
+- `../../detectors/text/external_literature_search.py`: opt-in external phrase-search triage against Europe PMC, Crossref, or a deterministic fixture.
 - `../../benchmarks/true_pdf/run_true_pdf_benchmark.py`: true binary-PDF benchmark that verifies compressed machine text can be extracted for package-internal overlap screening.
+- `../../benchmarks/scanned_pdf/run_scanned_pdf_benchmark.py`: image-only PDF OCR benchmark; requires OCR runtime unless run with skip mode.
+- `../../benchmarks/real_image/run_real_image_benchmark.py`: real public-domain microscopy-image duplicate benchmark.
 - `../../detectors/stats/pseudoreplication_screen.py`: unit-of-analysis mismatch candidate detector.
 - `../../calibrators/contextual_joiner.py`: enrich detector candidates with disclosed-reuse and source-availability context before calibration.
 - `../../calibrators/risk_cap_engine.py`: convert detector candidates into capped findings.

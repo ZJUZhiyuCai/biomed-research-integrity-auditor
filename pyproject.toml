@@ -1,6 +1,6 @@
 [project]
 name = "biomed-research-integrity-auditor"
-version = "0.4.1"
+version = "0.4.2"
 description = "Codex skill and detector pipeline for biomedical research integrity risk auditing"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -10,7 +10,10 @@ dependencies = [
   "PyYAML>=6.0",
   "jsonschema>=4.0",
   "openpyxl>=3.1",
-  "pypdf>=4.0"
+  "pypdf>=4.0",
+  "PyMuPDF>=1.24",
+  "pytesseract>=0.3",
+  "requests>=2.31"
 ]
 
 [project.scripts]
