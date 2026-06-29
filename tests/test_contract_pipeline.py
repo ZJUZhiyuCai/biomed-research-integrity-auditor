@@ -3,6 +3,7 @@ from __future__ import annotations
 import builtins
 import importlib.util
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -31,6 +32,15 @@ def run(cmd: list[str]) -> None:
 def load_report_assembler():
     path = ROOT / "skill" / "biomed-research-integrity-auditor" / "scripts" / "report_assembler.py"
     spec = importlib.util.spec_from_file_location("report_assembler", path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec and spec.loader
+    spec.loader.exec_module(module)
+    return module
+
+
+def load_stats_consistency_check():
+    path = ROOT / "skill" / "biomed-research-integrity-auditor" / "scripts" / "stats_consistency_check.py"
+    spec = importlib.util.spec_from_file_location("stats_consistency_check", path)
     module = importlib.util.module_from_spec(spec)
     assert spec and spec.loader
     spec.loader.exec_module(module)
@@ -189,6 +199,14 @@ def write_text_package(package: Path, scenario: str) -> None:
 
 
 class ContractPipelineTests(unittest.TestCase):
+    def test_project_version_has_changelog_entry(self) -> None:
+        pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+        match = re.search(r'^version\s*=\s*"([^"]+)"', pyproject, flags=re.M)
+        self.assertIsNotNone(match)
+        assert match is not None
+        changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+        self.assertIn(f"## v{match.group(1)}", changelog)
+
     def test_contract_validation_fails_closed_without_jsonschema(self) -> None:
         original_import = builtins.__import__
 
@@ -274,6 +292,37 @@ class ContractPipelineTests(unittest.TestCase):
                 and item["finding_type"] == "SD is not consistent with SEM * sqrt(n)"
                 for item in payload["candidates"]
             ))
+
+    def test_stats_detector_ignores_censored_numeric_bounds(self) -> None:
+        stats = load_stats_consistency_check()
+        self.assertIsNone(stats.parse_float("<5"))
+        self.assertIsNone(stats.parse_float(">10"))
+        self.assertIsNone(stats.terminal_digit("<5"))
+        self.assertIsNone(stats.decimal_places(">10.00"))
+        self.assertEqual(stats.parse_float("5"), 5.0)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            source_dir = Path(tmp) / "source_data"
+            source_dir.mkdir()
+            (source_dir / "censored.csv").write_text(
+                "group,response,p_value\n"
+                "control,<5,<0.001\n"
+                "treated,>6,>0.05\n"
+                "low,<=7,<0.01\n"
+                "high,>=8,>0.2\n",
+                encoding="utf-8",
+            )
+            output = Path(tmp) / "stats.json"
+            run([
+                PYTHON,
+                "skill/biomed-research-integrity-auditor/scripts/stats_consistency_check.py",
+                str(source_dir),
+                "--output",
+                str(output),
+            ])
+            payload = json.loads(output.read_text(encoding="utf-8"))
+            validate_instance(payload, ROOT / "schemas" / "detector_output.schema.json", "censored stats detector")
+            self.assertEqual(payload["candidates"], [])
 
     def test_pseudoreplication_detector_reads_xlsx_source_tables(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -416,7 +465,7 @@ class ContractPipelineTests(unittest.TestCase):
             self.assertEqual(payload["candidates"][0]["candidate_type"], "methods_boilerplate_overlap")
             self.assertEqual(payload["candidates"][0]["risk_suggestion"], "R2_max")
 
-    def test_true_pdf_text_extraction_gap_is_explicit(self) -> None:
+    def test_true_pdf_text_extraction_recovers_overlap_candidate(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             cases_dir = Path(tmp) / "cases"
             run([
@@ -442,13 +491,25 @@ class ContractPipelineTests(unittest.TestCase):
             ])
             payload = json.loads(output.read_text(encoding="utf-8"))
             validate_instance(payload, ROOT / "schemas" / "detector_output.schema.json", "true pdf text detector")
-            self.assertEqual(payload["candidates"], [])
-            self.assertGreaterEqual(payload["paragraphs_screened"], 1)
-            self.assertTrue(any(
-                item.get("path") == expected["pdf"]
-                and "PDF text extraction is not implemented" in item.get("error", "")
-                for item in payload["errors"]
-            ))
+            self.assertFalse([item for item in payload["errors"] if item.get("path") == expected["pdf"]])
+            self.assertGreaterEqual(payload["paragraphs_screened"], 2)
+            pdf_candidates = [
+                item for item in payload["candidates"]
+                if expected["pdf"] in {
+                    item.get("evidence", {}).get("document_a"),
+                    item.get("evidence", {}).get("document_b"),
+                }
+            ]
+            self.assertTrue(pdf_candidates)
+            recovered_markers = {
+                marker for marker in expected["expected_markers"]
+                if any(
+                    marker in candidate.get("evidence", {}).get("text_snippet_a", "")
+                    or marker in candidate.get("evidence", {}).get("text_snippet_b", "")
+                    for candidate in pdf_candidates
+                )
+            }
+            self.assertEqual(recovered_markers, set(expected["expected_markers"]))
 
 
 class RiskCapTests(unittest.TestCase):

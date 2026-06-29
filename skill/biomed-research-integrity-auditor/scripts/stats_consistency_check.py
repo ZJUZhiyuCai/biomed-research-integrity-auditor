@@ -21,6 +21,7 @@ TIME_HINT_RE = re.compile(r"(^|[_\-\s])(t\d+|day\d+|d\d+|week\d+|w\d+|hour\d+|h\
 TIME_TOKEN_RE = re.compile(r"(t\d+|day\d+|d\d+|week\d+|w\d+|hour\d+|h\d+|baseline|endpoint)", re.I)
 SUMMARY_COLUMNS = {"mean", "sd", "sem", "se", "n", "p", "p_value", "pvalue"}
 TERMINAL_DIGIT_SKIP_COLUMNS = {"n"}
+MISSING_NUMERIC_TEXT = {"na", "n/a", "nan", "null", "-"}
 COUNT_HINTS = (
     "count",
     "counts",
@@ -38,14 +39,21 @@ COUNT_HINTS = (
 )
 
 
-def parse_float(value: Any) -> float | None:
+def normalized_numeric_text(value: Any) -> str | None:
     if value is None:
         return None
     text = str(value).strip().replace(",", "")
-    if not text or text.lower() in {"na", "n/a", "nan", "null", "-"}:
+    if not text or text.lower() in MISSING_NUMERIC_TEXT:
         return None
-    if text.startswith("<"):
-        text = text[1:]
+    if text.startswith(("<", ">")):
+        return None
+    return text
+
+
+def parse_float(value: Any) -> float | None:
+    text = normalized_numeric_text(value)
+    if text is None:
+        return None
     try:
         return float(text)
     except ValueError:
@@ -271,12 +279,10 @@ def numeric_columns(rows: list[dict[str, str]]) -> dict[str, list[tuple[int, str
 
 
 def terminal_digit(raw: str) -> str | None:
-    text = raw.strip().lower()
-    if not text or text in {"na", "n/a", "nan", "null", "-"}:
+    text = normalized_numeric_text(raw)
+    if text is None:
         return None
-    text = text.replace(",", "")
-    if text.startswith("<"):
-        text = text[1:]
+    text = text.lower()
     if "e" in text:
         return None
     digits = re.sub(r"[^0-9]", "", text)
@@ -284,8 +290,11 @@ def terminal_digit(raw: str) -> str | None:
 
 
 def decimal_places(raw: str) -> int | None:
-    text = raw.strip().lower().replace(",", "")
-    if "e" in text or not text:
+    text = normalized_numeric_text(raw)
+    if text is None:
+        return None
+    text = text.lower()
+    if "e" in text:
         return None
     if "." not in text:
         return 0
@@ -293,8 +302,11 @@ def decimal_places(raw: str) -> int | None:
 
 
 def ones_digit(raw: str) -> str | None:
-    text = raw.strip().lower().replace(",", "")
-    if "e" in text or not text:
+    text = normalized_numeric_text(raw)
+    if text is None:
+        return None
+    text = text.lower()
+    if "e" in text:
         return None
     before_decimal = text.split(".", 1)[0]
     digits = re.sub(r"[^0-9]", "", before_decimal)
@@ -302,7 +314,10 @@ def ones_digit(raw: str) -> str | None:
 
 
 def first_decimal_digit(raw: str) -> str | None:
-    text = raw.strip().lower().replace(",", "")
+    text = normalized_numeric_text(raw)
+    if text is None:
+        return None
+    text = text.lower()
     if "e" in text or "." not in text:
         return None
     after_decimal = text.split(".", 1)[1]

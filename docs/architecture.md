@@ -63,18 +63,19 @@ The detector normalizes paragraph text, assigns coarse sections, builds word n-g
 
 Text overlap candidates are never plagiarism findings. Human review must check citation, prior-publication policy, thesis/preprint disclosure, journal requirements, and whether the overlap is standard methods language.
 
-## True-PDF Benchmark Starter
+## True-PDF Benchmark
 
 Most synthetic eval packages still use text files with a `.pdf` suffix. `benchmarks/true_pdf/` creates a tiny valid PDF with compressed text streams so the pipeline can test true binary-PDF behavior without external corpora.
 
-Current expected behavior is conservative:
+Current expected behavior:
 
 - detect `%PDF-` binary PDFs;
 - do not parse raw PDF bytes as manuscript text;
-- record an explicit PDF text-extraction gap in detector errors;
+- extract machine-readable text from compressed PDF streams;
+- create package-internal text-overlap candidates against supplied prior/lab text when thresholds are met;
 - keep screening supplied non-PDF text in the same package.
 
-This benchmark is a guardrail for a future PDF text/figure/caption extraction stage. It is not itself a PDF extraction implementation.
+Scanned or image-only PDFs still require OCR. Figure and caption extraction are outside this benchmark.
 
 ## Run Modes
 

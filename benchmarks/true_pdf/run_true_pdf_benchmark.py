@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the true-PDF intake benchmark and assert the current known gap is explicit."""
+"""Run the true-PDF intake benchmark and assert machine-readable PDF text is extracted."""
 
 from __future__ import annotations
 
@@ -58,30 +58,47 @@ def main() -> int:
     detector = load_json(detector_output)
     pdf_errors = [
         item for item in detector.get("errors", [])
-        if item.get("path") == expected["pdf"] and "PDF text extraction is not implemented" in item.get("error", "")
+        if item.get("path") == expected["pdf"]
+    ]
+    pdf_candidates = [
+        item for item in detector.get("candidates", [])
+        if expected["pdf"] in {
+            item.get("evidence", {}).get("document_a"),
+            item.get("evidence", {}).get("document_b"),
+        }
+    ]
+    recovered_markers = [
+        marker for marker in expected["expected_markers"]
+        if any(
+            marker in candidate.get("evidence", {}).get("text_snippet_a", "")
+            or marker in candidate.get("evidence", {}).get("text_snippet_b", "")
+            for candidate in pdf_candidates
+        )
     ]
 
     checks = {
         "true_pdf_header_detected": pdf_bytes.startswith(b"%PDF-"),
         "compressed_markers_not_visible_in_raw_bytes": not raw_markers_visible,
-        "pdf_extraction_gap_recorded": bool(pdf_errors),
-        "no_text_overlap_candidate_from_unparsed_pdf": not detector.get("candidates"),
+        "pdf_text_extraction_succeeded": not pdf_errors,
+        "expected_markers_recovered_from_pdf_text": set(recovered_markers) == set(expected["expected_markers"]),
+        "text_overlap_candidate_from_extracted_pdf": bool(pdf_candidates),
         "non_pdf_prior_text_still_screened": detector.get("paragraphs_screened", 0) >= 1,
     }
-    status = "known_gap_documented" if all(checks.values()) else "failed"
+    status = "passed" if all(checks.values()) else "failed"
     report = {
         "benchmark_id": expected["benchmark_id"],
         "status": status,
         "checks": checks,
         "raw_markers_visible": raw_markers_visible,
+        "recovered_markers": recovered_markers,
         "detector_output": str(detector_output),
-        "current_expected_status": expected["current_expected_status"],
-        "future_success_condition": expected["future_success_condition"],
+        "expected_status": expected["expected_status"],
+        "success_condition": expected["success_condition"],
     }
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     print(json.dumps(report, indent=2, ensure_ascii=False))
-    return 0 if status == "known_gap_documented" else 1
+    return 0 if status == "passed" else 1
 
 
 if __name__ == "__main__":

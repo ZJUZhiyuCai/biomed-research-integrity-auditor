@@ -12,8 +12,8 @@ from pathlib import Path
 PDF_LINES = [
     "Synthetic True PDF Benchmark",
     "Results",
-    "The benchmark treatment group showed a compressed pdf only nuclear signal increase after twenty four hours.",
-    "Quantification from independent biological replicates showed the same direction of effect in all fields.",
+    "The benchmark treatment group showed a compressed pdf only nuclear signal increase after twenty four hours with matched replicate annotations and stable exposure metadata across every quantified field.",
+    "Quantification from independent biological replicates showed the same direction of effect in all fields after source records were matched to sample maps, acquisition dates, and blinded scoring sheets.",
     "Figure 1. Representative microscopy field and matched source-data summary are described in the caption.",
 ]
 
@@ -82,9 +82,8 @@ def write_package(root: Path) -> dict:
     )
     prior_text = (
         "Results\n\n"
-        "The benchmark treatment group showed a compressed pdf only nuclear signal increase after twenty four hours. "
-        "Quantification from independent biological replicates showed the same direction of effect in all fields. "
-        "This lab previous paper is supplied so a future PDF text extractor can create a text-overlap candidate.\n"
+        + " ".join(PDF_LINES[2:4])
+        + "\n"
     )
     (package / "lab_previous_papers").mkdir(exist_ok=True)
     (package / "lab_previous_papers/prior_text.txt").write_text(prior_text, encoding="utf-8")
@@ -94,10 +93,10 @@ def write_package(root: Path) -> dict:
         "package": str(package),
         "pdf": "manuscript.pdf",
         "expected_markers": PDF_LINES[2:4],
-        "current_expected_status": "known_gap_pdf_text_extraction_unavailable",
-        "future_success_condition": (
-            "A PDF extraction stage should recover the expected markers from manuscript.pdf "
-            "and enable comparison against lab_previous_papers/prior_text.txt."
+        "expected_status": "pdf_text_extraction_available",
+        "success_condition": (
+            "The text detector should recover the expected markers from manuscript.pdf "
+            "and create a package-internal text-overlap candidate against lab_previous_papers/prior_text.txt."
         ),
     }
     (package / "expected_pdf_intake.json").write_text(

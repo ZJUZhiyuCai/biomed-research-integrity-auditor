@@ -1,6 +1,6 @@
 [project]
 name = "biomed-research-integrity-auditor"
-version = "0.2.0"
+version = "0.4.1"
 description = "Codex skill and detector pipeline for biomedical research integrity risk auditing"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -9,7 +9,8 @@ dependencies = [
   "Pillow>=10.0",
   "PyYAML>=6.0",
   "jsonschema>=4.0",
-  "openpyxl>=3.1"
+  "openpyxl>=3.1",
+  "pypdf>=4.0"
 ]
 
 [project.scripts]
@@ -18,7 +19,7 @@ biomed-pseudoreplication-screen = "detectors.stats.pseudoreplication_screen:main
 biomed-risk-cap-engine = "calibrators.risk_cap_engine:main"
 
 [tool.setuptools]
-packages = ["calibrators", "detectors", "detectors.image", "detectors.stats", "provenance"]
+packages = ["calibrators", "detectors", "detectors.image", "detectors.stats", "detectors.text", "provenance"]
 
 [build-system]
 requires = ["setuptools>=68"]

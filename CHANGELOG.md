@@ -2,8 +2,10 @@
 
 ## Unreleased
 
+## v0.4.1 - Intake and Reliability Hardening
+
 ### Added
-- True-PDF benchmark starter with a compressed-stream PDF fixture and known-gap runner for PDF text extraction.
+- Machine-readable true-PDF text extraction for package-internal overlap screening, backed by a compressed-stream PDF fixture.
 - Package-internal text overlap detector for manuscripts, supplements, prior drafts, thesis chapters, preprints, and lab-prior-paper folders.
 - Section-aware text overlap risk calibration for methods boilerplate, disclosed thesis/preprint overlap, results overlap, and abstract/conclusion overlap.
 - Synthetic text-overlap eval cases `case_025` through `case_030`, including methods boilerplate, disclosed thesis reuse, clean text, and prompt-injection controls.
@@ -11,10 +13,12 @@
 - Explicit `audit_coverage_gap` R1 finding when no detector can run on a supplied package.
 - Detector failure isolation: non-zero detector exits or invalid detector JSON now produce `detector_execution_failure` R1 findings while preserving other module outputs.
 - XLSX source-data intake for statistical consistency and pseudoreplication screening.
+- Release metadata guardrail requiring the `pyproject.toml` version to have a matching changelog entry.
 
 ### Changed
 - Figure-to-figure `declared_derived_from` manifest rows no longer clear image-reuse findings as positive traceability.
-- True binary PDFs are now explicitly skipped by the text-overlap detector with a recorded extraction-gap error instead of being read as raw UTF-8 text.
+- True binary PDFs are extracted as machine-readable text when possible instead of being skipped or read as raw UTF-8 bytes.
+- Censored or bounded numeric values such as `<5`, `<=0.01`, `>10`, or `>=8` are no longer treated as exact observations in statistical forensic screens.
 - The default audit pipeline now runs text overlap screening when supported text files are present.
 - Contract validation now fails closed when `jsonschema` is unavailable instead of silently using a partial fallback.
 - R3/R4 candidates missing benign explanations, resolving materials, or recommended actions are capped to R2 instead of having generic text auto-filled.
