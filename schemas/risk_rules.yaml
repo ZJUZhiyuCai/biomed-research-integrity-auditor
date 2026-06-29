@@ -8,21 +8,51 @@ mode_caps:
     default_max: R4
 
 detector_caps:
-  weak_forensic_triage_signal: R2
-  weak_signal: R2
-  terminal_digit: R2
-  p_value_clustering: R2
-  benford_style: R2
-  precision_mixing: R2
-  cross_file_sequence_reuse: R2
-  image_similarity_candidate: R3
-  global_image_similarity: R3
-  local_patch_reuse: R3
-  pseudoreplication_candidate: R3
-  completeness_gap: R1
+  weak_forensic_triage_signal:
+    max: R2
+  weak_statistical_signal:
+    max: R2
+  weak_signal:
+    max: R2
+  terminal_digit:
+    max: R2
+  p_value_clustering:
+    max: R2
+  benford_style:
+    max: R2
+  precision_mixing:
+    max: R2
+  cross_file_sequence_reuse:
+    max: R2
+  image_similarity_candidate:
+    max: R3
+  global_image_similarity:
+    max: R3
+  image_reuse_cluster:
+    max: R3
+  local_patch_reuse:
+    max: R3
+  pseudoreplication_candidate:
+    max: R3
+  completeness_gap:
+    max: R1
+
+contextual_caps:
+  disclosed_legitimate_reuse:
+    max: R2
+  disclosed_unjustified_reuse:
+    max: R3
+  external_public_material_only:
+    max: R3
 
 r4_requirements:
   - direct_contradiction
   - raw_record_conflict
   - source_to_figure_conflict
   - source_data_cannot_reproduce_claim
+  - raw_image_mismatch
+
+mandatory_fields_for_r3_plus:
+  - benign_explanations
+  - required_materials_to_resolve
+  - recommended_action

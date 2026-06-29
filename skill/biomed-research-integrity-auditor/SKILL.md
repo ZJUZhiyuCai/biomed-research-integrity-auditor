@@ -45,9 +45,11 @@ Use when the user is responding to reviewer, journal, or PubPeer-style concerns.
 
 ## Core Workflow
 
-1. Inventory the package.
-   - Run `scripts/build_package_manifest.py <package_dir> --mode internal --domains wetlab,animal,cell`.
-   - If files are missing, mark them as R1 completeness gaps before doing deeper analysis.
+1. Run the contract-first package audit entrypoint.
+   - Run `scripts/audit_package.py <package_dir> --mode internal_presubmission --output-dir audit_outputs/<case_or_package_id>`.
+   - This is the default path: it inventories the package, runs detectors, validates detector schemas, joins context, applies `schemas/risk_rules.yaml`, validates calibrated findings, and assembles the report.
+   - Do not bypass this orchestrator for routine audits. Use individual detector scripts only for debugging or focused unit checks.
+   - If files are missing, keep them as R1 completeness gaps before doing deeper analysis.
    - Never imply that an audit is complete when source data or raw records are unavailable.
 
 2. Build the raw record hierarchy.
@@ -59,7 +61,8 @@ Use when the user is responding to reviewer, journal, or PubPeer-style concerns.
    - Manually check the mappings; filename similarity is only a starting point.
 
 4. Screen image-integrity candidates.
-   - Run `scripts/image_similarity_screen.py <image_dir> --threshold 6` when raw or exported images are available.
+   - The orchestrator runs `detectors/image/global_near_duplicate.py` and `calibrators/contextual_joiner.py` when raw or exported images are available.
+   - `scripts/image_similarity_screen.py` is a deprecated compatibility wrapper only; it delegates to the global near-duplicate detector and should not be the recommended workflow.
    - Inspect candidate repeats across main figures, supplementary figures, source images, and raw images.
    - Prioritize Western blot/gel, microscopy, histology/IHC/IF, wound healing, colony formation, animal images, and flow plots.
 
@@ -83,11 +86,12 @@ Use when the user is responding to reviewer, journal, or PubPeer-style concerns.
    - For every R3/R4 finding, list plausible non-misconduct explanations and what materials would resolve them.
 
 8. Assemble the report.
-   - Prefer calibrated findings from `calibrators/risk_cap_engine.py` when detector JSON is available.
+   - Use only calibrated findings from `calibrators/risk_cap_engine.py` or `scripts/audit_package.py`.
+   - Reporter input must contain `calibrated_risk_level`; detector candidates with only `risk_suggestion` must not be sent directly to the report assembler.
    - Use `templates/internal-audit-report.md` for internal mode.
    - Use `templates/external-concern-triage.md` for external mode.
    - Use `templates/evidence-ledger.md` for each finding.
-   - Run `scripts/report_assembler.py --mode internal --manifest manifest.json --findings findings.json --output audit-report.md` when structured JSON is available.
+   - Run `scripts/report_assembler.py --mode internal_presubmission --manifest manifest.json --findings calibrated_findings.json --output audit-report.md` when structured JSON is available.
    - End every report with exactly one fenced JSON block labeled `AUDIT_JSON_SUMMARY`; follow `templates/audit-json-summary.schema.json`.
 
 ## Risk Scale
@@ -157,12 +161,14 @@ Load only what the task needs:
 Scripts are screening aids. Read or patch them before relying on them in unfamiliar environments.
 
 - `scripts/build_package_manifest.py`: inventory files, classify materials, compute hashes, and create a missing-materials matrix.
+- `../../scripts/audit_package.py`: default orchestrator for package audits; validates detector, calibrated-finding, and summary contracts.
 - `scripts/figure_source_map.py`: propose filename-based figure-source relationships.
-- `scripts/image_similarity_screen.py`: compute perceptual-hash image-repeat candidates; requires Pillow.
+- `scripts/image_similarity_screen.py`: deprecated compatibility wrapper; delegates to `../../detectors/image/global_near_duplicate.py`.
 - `scripts/stats_consistency_check.py`: check CSV/XLSX numerical summaries for SEM/SD/n consistency and weak anomalies.
 - `scripts/report_assembler.py`: assemble a Markdown audit report from manifest and findings JSON.
 - `../../detectors/image/global_near_duplicate.py`: multi-hash plus D4 transform global image candidate detector.
 - `../../detectors/stats/pseudoreplication_screen.py`: unit-of-analysis mismatch candidate detector.
+- `../../calibrators/contextual_joiner.py`: enrich detector candidates with disclosed-reuse and source-availability context before calibration.
 - `../../calibrators/risk_cap_engine.py`: convert detector candidates into capped findings.
 
 ## Output Style

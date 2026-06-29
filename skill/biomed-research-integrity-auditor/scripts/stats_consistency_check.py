@@ -71,16 +71,41 @@ def row_label(path: Path, idx: int, row: dict[str, str]) -> str:
     return f"{path.name}:row{idx}"
 
 
+def risk_suggestion(level: str, evidence_type: str) -> str:
+    if evidence_type == "weak_forensic_triage_signal" or level in {"R1", "R2"}:
+        return "R2_max" if evidence_type == "weak_forensic_triage_signal" else f"{level}_possible"
+    if level == "R4":
+        return "R4_only_if_direct_contradiction"
+    return f"{level}_possible"
+
+
 def issue(location: str, risk_level: str, message: str, values: dict[str, Any], evidence_type: str = "statistics_consistency") -> dict[str, Any]:
+    is_weak = evidence_type == "weak_forensic_triage_signal"
     return {
-        "finding_id": "",
-        "risk_level": risk_level,
-        "module": "Numerical and Statistical Consistency",
-        "location": location,
+        "candidate_id": "",
+        "detector": "stats.consistency_check",
+        "candidate_type": "weak_statistical_signal" if is_weak else "statistical_consistency_candidate",
+        "locations": [location],
         "finding_type": message,
-        "evidence_type": evidence_type,
-        "evidence": values,
-        "note": "Screening result only; inspect source data, analysis code, rounding, normalization, and benign explanations.",
+        "evidence": {
+            "message": message,
+            "evidence_type": evidence_type,
+            **values,
+        },
+        "evidence_strength": "weak_signal" if is_weak else "candidate",
+        "risk_suggestion": risk_suggestion(risk_level, evidence_type),
+        "risk_cap_tags": [evidence_type, "weak_statistical_signal", "weak_signal"] if is_weak else [evidence_type],
+        "benign_explanations": [
+            "rounding, normalization, export, or reporting differences may explain the observation",
+            "source/raw records and analysis code are needed before escalation",
+        ],
+        "required_materials": [
+            "source data",
+            "raw records where applicable",
+            "analysis file or code",
+        ],
+        "recommended_action": "Inspect source data, analysis code, rounding, normalization, and benign explanations.",
+        "requires_contextual_calibration": True,
     }
 
 
@@ -237,13 +262,24 @@ def first_decimal_digit(raw: str) -> str | None:
     return digits[0] if digits else None
 
 
-def check_terminal_digits(path: Path, columns: dict[str, list[tuple[int, str, float]]], min_count: int, dominance: float) -> list[dict[str, Any]]:
+def effective_min_count(n_values: int, user_min: int | None = None) -> int:
+    if user_min is not None:
+        return user_min
+    if n_values <= 5:
+        return 3
+    if n_values <= 12:
+        return 4
+    return 8
+
+
+def check_terminal_digits(path: Path, columns: dict[str, list[tuple[int, str, float]]], min_count: int | None, dominance: float) -> list[dict[str, Any]]:
     findings = []
     for column, values in columns.items():
         if column in TERMINAL_DIGIT_SKIP_COLUMNS:
             continue
         digits = [digit for _, raw, _ in values if (digit := terminal_digit(raw)) is not None]
-        if len(digits) < min_count:
+        threshold = effective_min_count(len(digits), min_count)
+        if len(digits) < threshold:
             continue
         counts = Counter(digits)
         digit, count = counts.most_common(1)[0]
@@ -252,6 +288,7 @@ def check_terminal_digits(path: Path, columns: dict[str, list[tuple[int, str, fl
             findings.append(issue(f"{path.name}:{column}", "R1", "Terminal-digit preference; weak triage signal", {
                 "column": column,
                 "values_screened": len(digits),
+                "effective_min_count": threshold,
                 "dominant_terminal_digit": digit,
                 "dominant_share": round(share, 3),
                 "digit_counts": dict(sorted(counts.items())),
@@ -259,17 +296,19 @@ def check_terminal_digits(path: Path, columns: dict[str, list[tuple[int, str, fl
     return findings
 
 
-def check_rounding_patterns(path: Path, columns: dict[str, list[tuple[int, str, float]]], min_count: int, share_threshold: float) -> list[dict[str, Any]]:
+def check_rounding_patterns(path: Path, columns: dict[str, list[tuple[int, str, float]]], min_count: int | None, share_threshold: float) -> list[dict[str, Any]]:
     findings = []
     for column, values in columns.items():
         if column in TERMINAL_DIGIT_SKIP_COLUMNS:
             continue
         raw_values = [raw for _, raw, _ in values]
-        if len(raw_values) < min_count:
+        threshold = effective_min_count(len(raw_values), min_count)
+        if len(raw_values) < threshold:
             continue
         terminal = [terminal_digit(raw) for raw in raw_values]
         terminal = [d for d in terminal if d is not None]
-        if len(terminal) < min_count:
+        threshold = effective_min_count(len(terminal), min_count)
+        if len(terminal) < threshold:
             continue
         zero_or_five = sum(1 for digit in terminal if digit in {"0", "5"})
         decimal_counts = Counter(dp for raw in raw_values if (dp := decimal_places(raw)) is not None)
@@ -277,13 +316,14 @@ def check_rounding_patterns(path: Path, columns: dict[str, list[tuple[int, str, 
             findings.append(issue(f"{path.name}:{column}", "R1", "Values disproportionately end in 0 or 5; possible rounding/convenience pattern", {
                 "column": column,
                 "values_screened": len(terminal),
+                "effective_min_count": threshold,
                 "zero_or_five_share": round(zero_or_five / len(terminal), 3),
                 "decimal_place_counts": dict(sorted(decimal_counts.items())),
             }, evidence_type="weak_forensic_triage_signal"))
     return findings
 
 
-def check_precision_mixing(path: Path, columns: dict[str, list[tuple[int, str, float]]], min_count: int) -> list[dict[str, Any]]:
+def check_precision_mixing(path: Path, columns: dict[str, list[tuple[int, str, float]]], min_count: int | None) -> list[dict[str, Any]]:
     findings = []
     dominant_places = {}
     column_counts = {}
@@ -291,7 +331,8 @@ def check_precision_mixing(path: Path, columns: dict[str, list[tuple[int, str, f
         if column in TERMINAL_DIGIT_SKIP_COLUMNS:
             continue
         places = [dp for _, raw, _ in values if (dp := decimal_places(raw)) is not None]
-        if len(places) < min_count:
+        threshold = effective_min_count(len(places), min_count)
+        if len(places) < threshold:
             continue
         counts = Counter(places)
         dominant, dominant_count = counts.most_common(1)[0]
@@ -301,6 +342,7 @@ def check_precision_mixing(path: Path, columns: dict[str, list[tuple[int, str, f
             findings.append(issue(f"{path.name}:{column}", "R1", "Mixed numeric precision within one column; weak triage signal", {
                 "column": column,
                 "values_screened": len(places),
+                "effective_min_count": threshold,
                 "decimal_place_counts": dict(sorted(counts.items())),
             }, evidence_type="weak_forensic_triage_signal"))
 
@@ -669,7 +711,7 @@ def check_table_forensics(
     path: Path,
     rows: list[dict[str, str]],
     min_pairs: int,
-    min_digit_count: int,
+    min_digit_count: int | None,
     digit_dominance: float,
     rounding_share: float,
     residual_tolerance: float,
@@ -731,7 +773,7 @@ def main() -> int:
     parser.add_argument("path", type=Path, help="CSV/TSV file or folder containing source-data tables")
     parser.add_argument("--sem-tolerance", type=float, default=1e-3)
     parser.add_argument("--min-pairs", type=int, default=4, help="Minimum paired numeric rows for column relationship checks")
-    parser.add_argument("--min-digit-count", type=int, default=8, help="Minimum numeric values for terminal-digit and rounding checks")
+    parser.add_argument("--min-digit-count", type=int, default=None, help="Override adaptive minimum numeric values for terminal-digit and rounding checks")
     parser.add_argument("--digit-dominance", type=float, default=0.65, help="Dominant terminal digit share needed to flag")
     parser.add_argument("--rounding-share", type=float, default=0.85, help="Share of values ending in 0 or 5 needed to flag")
     parser.add_argument("--residual-tolerance", type=float, default=1e-9, help="Relative tolerance for exact linear transformation screens")
@@ -740,7 +782,7 @@ def main() -> int:
 
     target = args.path.expanduser().resolve()
     files = collect_files(target)
-    findings = []
+    candidates = []
     errors = []
     tables = []
     for file_path in files:
@@ -748,8 +790,8 @@ def main() -> int:
             rows = read_table(file_path)
             columns = numeric_columns(rows)
             tables.append((file_path, rows, columns))
-            findings.extend(check_rows(file_path, rows, args.sem_tolerance))
-            findings.extend(check_table_forensics(
+            candidates.extend(check_rows(file_path, rows, args.sem_tolerance))
+            candidates.extend(check_table_forensics(
                 file_path,
                 rows,
                 args.min_pairs,
@@ -760,20 +802,30 @@ def main() -> int:
             ))
         except Exception as exc:  # noqa: BLE001 - report unreadable data without aborting.
             errors.append({"path": str(file_path), "error": str(exc)})
-    findings.extend(check_cross_file_sequence_reuse(tables, args.min_pairs))
-    for idx, item in enumerate(findings, start=1):
-        item["finding_id"] = f"BIOMED-STAT-{idx:04d}"
+    candidates.extend(check_cross_file_sequence_reuse(tables, args.min_pairs))
+    for idx, item in enumerate(candidates, start=1):
+        item["candidate_id"] = f"BIOMED-STAT-{idx:04d}"
     result = {
-        "path": str(target),
+        "detector_name": "stats.consistency_check",
+        "detector_version": "0.3.0",
+        "input": {
+            "path": str(target),
+            "sem_tolerance": args.sem_tolerance,
+            "min_pairs": args.min_pairs,
+            "min_digit_count": args.min_digit_count,
+            "digit_dominance": args.digit_dominance,
+            "rounding_share": args.rounding_share,
+            "residual_tolerance": args.residual_tolerance,
+        },
         "files_screened": [str(p) for p in files],
-        "findings": findings,
+        "candidates": candidates,
         "errors": errors,
     }
     args.output.write_text(json.dumps(result, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     print(json.dumps({
         "output": str(args.output),
         "files_screened": len(files),
-        "findings": len(findings),
+        "candidates": len(candidates),
         "errors": len(errors),
     }, indent=2))
     return 0

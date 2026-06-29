@@ -105,6 +105,72 @@ def collect_images(root: Path) -> list[Path]:
     return [path for path in sorted(root.rglob("*")) if path.is_file() and path.suffix.lower() in IMAGE_EXTS]
 
 
+def connected_components(nodes: list[str], edges: list[dict[str, Any]]) -> list[list[str]]:
+    adjacency = {node: set() for node in nodes}
+    for edge in edges:
+        adjacency[edge["left"]].add(edge["right"])
+        adjacency[edge["right"]].add(edge["left"])
+
+    components = []
+    seen: set[str] = set()
+    for node in nodes:
+        if node in seen or not adjacency[node]:
+            continue
+        stack = [node]
+        component = []
+        seen.add(node)
+        while stack:
+            current = stack.pop()
+            component.append(current)
+            for neighbor in sorted(adjacency[current]):
+                if neighbor not in seen:
+                    seen.add(neighbor)
+                    stack.append(neighbor)
+        components.append(sorted(component))
+    return components
+
+
+def cluster_candidates(edges: list[dict[str, Any]], nodes: list[str], threshold: int) -> list[dict[str, Any]]:
+    candidates = []
+    for component in connected_components(nodes, edges):
+        component_edges = [
+            edge for edge in edges
+            if edge["left"] in component and edge["right"] in component
+        ]
+        representative = min(component_edges, key=lambda item: (item["best_hamming_distance"], item["left"], item["right"]))
+        candidate_id = f"IMGCLUSTER-{len(candidates) + 1:04d}"
+        candidates.append({
+            "candidate_id": candidate_id,
+            "detector": "image.global_near_duplicate",
+            "candidate_type": "image_reuse_cluster",
+            "locations": component,
+            "evidence": {
+                "cluster_id": candidate_id,
+                "members": component,
+                "edges": component_edges,
+                "representative_edge": representative,
+                "threshold": threshold,
+            },
+            "evidence_strength": "candidate",
+            "risk_suggestion": "R2_or_R3_pending_context",
+            "risk_cap_tags": ["image_similarity_candidate", "global_image_similarity", "image_reuse_cluster"],
+            "benign_explanations": [
+                "same field or membrane intentionally reused with disclosure",
+                "adjacent crop or shared source image",
+                "figure assembly placeholder or export artifact",
+            ],
+            "required_materials": [
+                "original image files",
+                "acquisition metadata",
+                "figure assembly file",
+                "sample or lane map",
+            ],
+            "recommended_action": "Inspect the image cluster against raw images and sample identity before risk escalation.",
+            "requires_contextual_calibration": True,
+        })
+    return candidates
+
+
 def scan(root: Path, threshold: int, hash_size: int) -> dict[str, Any]:
     try:
         from PIL import Image
@@ -129,7 +195,7 @@ def scan(root: Path, threshold: int, hash_size: int) -> dict[str, Any]:
         except Exception as exc:  # noqa: BLE001 - unreadable files should not abort an audit.
             errors.append({"path": str(path.relative_to(root)), "error": str(exc)})
 
-    candidates = []
+    edges: list[dict[str, Any]] = []
     for i, left in enumerate(images):
         left_hashes = left["hashes"]["identity"]
         for right in images[i + 1:]:
@@ -149,42 +215,19 @@ def scan(root: Path, threshold: int, hash_size: int) -> dict[str, Any]:
                         "distances": distances,
                     }
             if best and best["distance"] <= threshold:
-                candidate_id = f"IMG-GLOBAL-{len(candidates) + 1:04d}"
-                candidates.append({
-                    "candidate_id": candidate_id,
-                    "detector": "image.global_near_duplicate",
-                    "candidate_type": "global_image_similarity",
-                    "locations": [left["path"], right["path"]],
-                    "evidence": {
-                        "left": left["path"],
-                        "right": right["path"],
-                        "best_transform": best["transform"],
-                        "best_hash_method": best["method"],
-                        "best_hamming_distance": best["distance"],
-                        "all_method_distances": best["distances"],
-                        "threshold": threshold,
-                    },
-                    "evidence_strength": "candidate",
-                    "risk_suggestion": "R2_or_R3_pending_context",
-                    "risk_cap_tags": ["image_similarity_candidate"],
-                    "benign_explanations": [
-                        "same field or membrane intentionally reused with disclosure",
-                        "adjacent crop or shared source image",
-                        "figure assembly placeholder or export artifact",
-                    ],
-                    "required_materials": [
-                        "original image files",
-                        "acquisition metadata",
-                        "figure assembly file",
-                        "sample or lane map",
-                    ],
-                    "recommended_action": "Inspect candidate pair against raw images and sample identity before risk escalation.",
-                    "requires_contextual_calibration": True,
+                edges.append({
+                    "left": left["path"],
+                    "right": right["path"],
+                    "best_transform": best["transform"],
+                    "best_hash_method": best["method"],
+                    "best_hamming_distance": best["distance"],
+                    "all_method_distances": best["distances"],
                 })
+    candidates = cluster_candidates(edges, [item["path"] for item in images], threshold)
 
     return {
         "detector_name": "image.global_near_duplicate",
-        "detector_version": "0.2.0",
+        "detector_version": "0.3.0",
         "input": {
             "root": str(root),
             "hash_size": hash_size,
@@ -193,6 +236,7 @@ def scan(root: Path, threshold: int, hash_size: int) -> dict[str, Any]:
             "hash_methods": ["average_hash", "difference_hash", "perceptual_hash"],
         },
         "images_screened": len(images),
+        "pairwise_edges": len(edges),
         "candidates": candidates,
         "errors": errors,
     }

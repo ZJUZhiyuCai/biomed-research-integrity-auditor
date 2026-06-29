@@ -5,10 +5,20 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
 
+ROOT = Path(__file__).resolve().parents[3]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from calibrators.contract_validation import ContractError, validate_instance  # noqa: E402
+
+
+SUMMARY_SCHEMA = ROOT / "schemas" / "audit_summary.schema.json"
+CALIBRATED_SCHEMA = ROOT / "schemas" / "calibrated_findings.schema.json"
 RISK_ORDER = {"R0": 0, "R1": 1, "R2": 2, "R3": 3, "R4": 4}
 
 
@@ -23,9 +33,14 @@ def load_json(path: Path | None, default: Any) -> Any:
 
 
 def coerce_finding(item: dict[str, Any], idx: int) -> dict[str, Any]:
+    if "calibrated_risk_level" not in item:
+        raise ContractError(
+            f"finding {item.get('finding_id', idx)!r} is not calibrated; "
+            "report_assembler only accepts calibrator output with calibrated_risk_level"
+        )
     result = dict(item)
     result.setdefault("finding_id", f"BIOMED-GEN-{idx:04d}")
-    result.setdefault("risk_level", "R1")
+    result["risk_level"] = result["calibrated_risk_level"]
     result.setdefault("module", "Structured Finding")
     result.setdefault("location", "")
     result.setdefault("finding_type", result.get("type", "Structured audit finding"))
@@ -56,46 +71,13 @@ def normalize_findings(payloads: list[Any]) -> list[dict[str, Any]]:
             findings.extend(coerce_finding(item, idx) for idx, item in enumerate(payload, start=1))
         elif isinstance(payload, dict):
             if isinstance(payload.get("findings"), list):
+                if "candidate_count" in payload:
+                    validate_instance(payload, CALIBRATED_SCHEMA, "calibrated findings")
                 findings.extend(coerce_finding(item, idx) for idx, item in enumerate(payload["findings"], start=1))
             elif isinstance(payload.get("candidates"), list):
-                for idx, item in enumerate(payload["candidates"], start=1):
-                    findings.append({
-                        "finding_id": f"BIOMED-IMG-{idx:04d}",
-                        "risk_level": item.get("calibrated_risk_level", item.get("risk_level", "R2")),
-                        "module": "Image Integrity",
-                        "location": " / ".join(item.get("locations", []) or [f"{item.get('left')} / {item.get('right')}"]),
-                        "finding_type": item.get("candidate_type", "Perceptual-hash image similarity candidate"),
-                        "evidence_type": item.get("candidate_type", "image_similarity_candidate"),
-                        "evidence": item,
-                        "benign_explanations_considered": [
-                            "same field intentionally reused",
-                            "figure assembly error",
-                            "image compression or export artifact",
-                        ],
-                        "required_materials_to_resolve": [
-                            "original image files",
-                            "acquisition metadata",
-                            "figure assembly file",
-                        ],
-                        "recommended_action": item.get("recommended_action", "Inspect the candidate pair against original images and sample identity before escalating."),
-                        "note": item.get("note", "Detector candidate only; calibrate before using R3/R4 language."),
-                    })
+                raise ContractError("report_assembler received uncalibrated detector candidates")
             elif payload.get("missing_materials"):
-                for idx, item in enumerate(payload["missing_materials"], start=1):
-                    findings.append({
-                        "finding_id": f"BIOMED-PKG-{idx:04d}",
-                        "risk_level": item.get("risk_level", "R1"),
-                        "module": "Package Completeness",
-                        "location": item.get("category", ""),
-                        "finding_type": "Missing material category",
-                        "evidence_type": "completeness_gap",
-                        "evidence": item.get("reason", ""),
-                        "benign_explanations_considered": [
-                            "material may exist but was not supplied in the audit package",
-                        ],
-                        "required_materials_to_resolve": [humanize(item.get("category", "missing material"))],
-                        "recommended_action": "Request the missing material before treating the audit as complete.",
-                    })
+                raise ContractError("report_assembler received manifest/missing materials as findings input")
     return findings
 
 
@@ -109,7 +91,11 @@ def table(rows: list[list[str]]) -> str:
 
 
 def normalized_mode(mode: str) -> str:
-    return "internal_presubmission" if mode == "internal" else "external_literature_triage"
+    if mode == "internal":
+        return "internal_presubmission"
+    if mode == "external":
+        return "external_public_material"
+    return mode
 
 
 def overall_risk(findings: list[dict[str, Any]], manifest: dict[str, Any]) -> str:
@@ -142,24 +128,30 @@ def summary_finding(item: dict[str, Any]) -> dict[str, Any]:
 
 def build_summary(mode: str, case_id: str | None, manifest: dict[str, Any], findings: list[dict[str, Any]]) -> dict[str, Any]:
     caps = []
-    if mode == "external" and not any(path.lower().endswith((".csv", ".xlsx", ".tif", ".tiff", ".czi", ".nd2", ".fcs")) for path in reviewed_materials(manifest)):
+    normalized = normalized_mode(mode)
+    if normalized == "external_public_material" and not any(path.lower().endswith((".csv", ".xlsx", ".tif", ".tiff", ".czi", ".nd2", ".fcs")) for path in reviewed_materials(manifest)):
         caps.append("Public or presentation-layer materials only; source/raw-level verification is limited.")
     if manifest.get("missing_materials"):
         caps.append("Missing materials are completeness gaps, not evidence of misconduct.")
+    for item in findings:
+        caps.extend(item.get("risk_caps_applied", []) or [])
     return {
-        "audit_mode": normalized_mode(mode),
+        "audit_mode": normalized,
         "case_id": case_id,
         "materials_reviewed": reviewed_materials(manifest),
         "materials_missing": missing_materials(manifest),
         "overall_risk": overall_risk(findings, manifest),
         "misconduct_verdict_present": False,
-        "risk_caps_applied": caps,
+        "risk_caps_applied": sorted(set(caps)),
         "findings": [summary_finding(item) for item in findings],
     }
 
 
 def render_report(mode: str, manifest: dict[str, Any], findings: list[dict[str, Any]], case_id: str | None) -> str:
-    title = "Biomedical Research Integrity Pre-submission Audit" if mode == "internal" else "Biomedical Literature Concern Triage"
+    normalized = normalized_mode(mode)
+    title = "Biomedical Research Integrity Pre-submission Audit" if normalized == "internal_presubmission" else "Biomedical Literature Concern Triage"
+    summary = build_summary(mode, case_id, manifest, findings)
+    validate_instance(summary, SUMMARY_SCHEMA, "audit summary")
     lines = [f"# {title}", ""]
     lines += ["## Scope", ""]
     lines += [f"- Mode: {mode}", f"- Package root: {manifest.get('root', 'not supplied')}", ""]
@@ -207,7 +199,7 @@ def render_report(mode: str, manifest: dict[str, Any], findings: list[dict[str, 
         "## Audit JSON Summary",
         "",
         "```json AUDIT_JSON_SUMMARY",
-        json.dumps(build_summary(mode, case_id, manifest, findings), indent=2, ensure_ascii=False),
+        json.dumps(summary, indent=2, ensure_ascii=False),
         "```",
         "",
     ]
@@ -216,7 +208,11 @@ def render_report(mode: str, manifest: dict[str, Any], findings: list[dict[str, 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--mode", choices=["internal", "external"], default="internal")
+    parser.add_argument(
+        "--mode",
+        choices=["internal", "external", "internal_presubmission", "external_public_material", "response_to_concern"],
+        default="internal_presubmission",
+    )
     parser.add_argument("--manifest", type=Path)
     parser.add_argument("--findings", type=Path, action="append", default=[])
     parser.add_argument("--case-id")

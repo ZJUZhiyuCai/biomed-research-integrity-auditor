@@ -11,6 +11,7 @@ This is deliberately **not** a "paper fraud detector." It is a risk-auditing wor
 - `skill/biomed-research-integrity-auditor/` - the installable Codex skill.
 - `detectors/` - scriptable candidate detectors that emit evidence but not final verdicts.
 - `calibrators/` - risk-cap and evidence-strength calibration.
+- `scripts/audit_package.py` - the default contract-first orchestrator for package audits.
 - `schemas/` - shared JSON/YAML contracts for detector output, paper objects, and source-data expectations.
 - `evals/` - neutral synthetic manuscript packages for blind testing.
 - `evals/run_eval.py` - prompt generation and JSON-summary scoring.
@@ -31,7 +32,7 @@ The skill must not say that misconduct, fraud, fabrication, or falsification is 
 
 Public-material-only review is capped below `R4` unless direct internal contradiction is available. Weak statistical patterns alone are capped below major concern levels.
 
-Detectors only emit candidates. Final risk levels are assigned after calibration by source strength, material completeness, disclosure context, benign explanations, and mode-specific risk caps.
+Detectors only emit candidates with `risk_suggestion`. Final risk levels are assigned only by the calibrator as `calibrated_risk_level`, after source strength, material completeness, disclosure context, benign explanations, and mode-specific caps are applied.
 
 ## Install The Skill
 
@@ -45,6 +46,14 @@ ln -s "$(pwd)/skill/biomed-research-integrity-auditor" ~/.codex/skills/biomed-re
 If the symlink already exists, remove or update it intentionally.
 
 ## Run The Eval Harness
+
+Run the default non-LLM audit pipeline on a package:
+
+```bash
+python3 scripts/audit_package.py evals/cases/case_004 --output-dir audit_outputs/case_004
+```
+
+The orchestrator inventories the package, runs detector scripts, validates detector JSON with `schemas/detector_output.schema.json`, joins context for disclosed reuse, applies `schemas/risk_rules.yaml`, validates calibrated findings, and writes an audit report plus `AUDIT_JSON_SUMMARY.json`.
 
 Create prompts for blind testing:
 

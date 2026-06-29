@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.org/biomed-research-integrity-auditor/calibrated_findings.schema.json",
+  "title": "Calibrated Findings",
+  "type": "object",
+  "required": ["mode", "findings", "candidate_count"],
+  "properties": {
+    "mode": {"type": "string"},
+    "candidate_count": {"type": "integer"},
+    "findings": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/finding"
+      }
+    }
+  },
+  "$defs": {
+    "finding": {
+      "type": "object",
+      "required": [
+        "finding_id",
+        "calibrated_risk_level",
+        "module",
+        "location",
+        "finding_type",
+        "evidence_type",
+        "evidence",
+        "benign_explanations_considered",
+        "required_materials_to_resolve",
+        "recommended_action",
+        "risk_caps_applied"
+      ],
+      "properties": {
+        "finding_id": {"type": "string"},
+        "calibrated_risk_level": {"enum": ["R0", "R1", "R2", "R3", "R4"]},
+        "module": {"type": "string"},
+        "location": {"type": "string"},
+        "finding_type": {"type": "string"},
+        "evidence_type": {"type": "string"},
+        "evidence": {"type": "object"},
+        "evidence_strength": {"type": "string"},
+        "benign_explanations_considered": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "required_materials_to_resolve": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "recommended_action": {"type": "string"},
+        "risk_caps_applied": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "calibration_reason": {"type": "string"}
+      }
+    }
+  }
+}
