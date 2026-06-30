@@ -12,11 +12,14 @@ import {
   getAudit,
   getReport,
   getSummary,
+  inspectPackage,
   listAudits,
+  saveAssemblyManifest,
+  scaffoldPackage,
   uploadZip
 } from "./api";
 import { getLabels } from "./i18n";
-import type { AuditJob, Language, SummaryPayload, Theme } from "./types";
+import type { AuditJob, Language, ManifestRow, PackageInventory, SummaryPayload, Theme } from "./types";
 
 const THEME_KEY = "biomed-self-audit-theme";
 const MAX_ZIP_BYTES = 250 * 1024 * 1024;
@@ -49,6 +52,8 @@ function AppInner() {
   const [provider, setProvider] = useState("auto");
   const [error, setError] = useState<string | null>(null);
   const [lightbox, setLightbox] = useState<LightboxState | null>(null);
+  const [packageInventory, setPackageInventory] = useState<PackageInventory | null>(null);
+  const [packagePrepLoading, setPackagePrepLoading] = useState(false);
 
   const t = useMemo(() => getLabels(language), [language]);
 
@@ -167,6 +172,64 @@ function AppInner() {
     }
   }
 
+  function handlePackagePath(value: string) {
+    setPackagePath(value);
+    if (packageInventory && value.trim() !== packageInventory.package_path) {
+      setPackageInventory(null);
+    }
+  }
+
+  async function handleInspectPackage() {
+    if (!packagePath.trim()) {
+      toast("error", t.invalidPath);
+      return;
+    }
+    setPackagePrepLoading(true);
+    try {
+      const payload = await inspectPackage(packagePath);
+      setPackageInventory(payload.inventory);
+      toast("success", t.packageInspected);
+    } catch (err) {
+      setError(String(err));
+      toast("error", String(err));
+    } finally {
+      setPackagePrepLoading(false);
+    }
+  }
+
+  async function handleScaffoldPackage() {
+    if (!packagePath.trim()) {
+      toast("error", t.invalidPath);
+      return;
+    }
+    setPackagePrepLoading(true);
+    try {
+      const payload = await scaffoldPackage(packagePath);
+      setPackageInventory(payload.inventory);
+      toast("success", t.scaffolded);
+    } catch (err) {
+      setError(String(err));
+      toast("error", String(err));
+    } finally {
+      setPackagePrepLoading(false);
+    }
+  }
+
+  async function handleSaveManifest(rows: ManifestRow[]) {
+    if (!packagePath.trim()) {
+      toast("error", t.invalidPath);
+      return;
+    }
+    try {
+      const payload = await saveAssemblyManifest(packagePath, rows);
+      setPackageInventory(payload.inventory);
+      toast("success", t.manifestSaved);
+    } catch (err) {
+      setError(String(err));
+      toast("error", String(err));
+    }
+  }
+
   async function handleDelete() {
     if (!selectedAuditId) return;
     try {
@@ -204,7 +267,7 @@ function AppInner() {
         onTheme={setTheme}
         onSelect={setSelectedId}
         onRefresh={loadAudits}
-        onPackagePath={setPackagePath}
+        onPackagePath={handlePackagePath}
         onMode={setMode}
         onDomains={setDomains}
         onProvider={setProvider}
@@ -218,6 +281,12 @@ function AppInner() {
         report={report}
         loading={detailLoading}
         error={error}
+        packagePath={packagePath}
+        packageInventory={packageInventory}
+        packagePrepLoading={packagePrepLoading}
+        onInspectPackage={handleInspectPackage}
+        onScaffoldPackage={handleScaffoldPackage}
+        onSaveManifest={handleSaveManifest}
         onRefresh={() => selectedAuditId && loadSelected(selectedAuditId)}
         onDelete={handleDelete}
         onEvidence={openEvidence}

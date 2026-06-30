@@ -81,7 +81,8 @@ python3 -m webapp
 
 然后打开 `http://127.0.0.1:8765`。这个 Web App 只是 `scripts/audit_package.py` 的本地外壳：
 它运行同一条流水线、读取同一批 artifact，并固定显示 Audit Coverage，避免把“未发现 finding”
-误读成“论文已证明没问题”。更多说明见 [`webapp/README.md`](webapp/README.md)。
+误读成“论文已证明没问题”。它也提供本地材料准备工具，可以创建推荐目录结构，并在审计前写入
+`figure_assembly/assembly_manifest.csv` 的 figure-source 声明关系。更多说明见 [`webapp/README.md`](webapp/README.md)。
 
 ### 安装为 Codex Skill（可选）
 

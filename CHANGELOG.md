@@ -3,6 +3,9 @@
 ## Unreleased
 
 ### Added
+- Local web app package-prep tools: inspect recommended package folders, create the scaffold
+  without overwriting supplied files, and write `figure_assembly/assembly_manifest.csv` declared
+  figure-to-source rows with package-relative path and relation-type validation.
 - 16-bit TIFF real-image benchmark coverage for microscopy-derived duplicate detection.
 - Required CI OCR gate: GitHub Actions installs `tesseract-ocr` and runs the scanned-PDF benchmark without skip mode.
 - Same-image copy-move screening in the local patch detector, including coordinate evidence crops and contextual calibration.

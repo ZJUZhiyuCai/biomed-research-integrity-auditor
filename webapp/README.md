@@ -44,10 +44,11 @@ Included:
 - Path traversal protection for evidence serving and guarded zip-package extraction.
 - React/Vite report viewer with audit coverage, R0-R4 register, positive provenance evidence,
   missing materials, evidence images, local history, delete, and Chinese/English labels.
+- Package prep tools: inspect a local package, create the recommended folder scaffold, and write
+  `figure_assembly/assembly_manifest.csv` rows for declared figure-to-source relationships.
 
 Not included yet:
 
-- Visual assembly-manifest builder.
 - Writing/submission-readiness module.
 - PDF export.
 - Network reference/DOI/retraction checks.
@@ -63,4 +64,6 @@ The UI must preserve the same boundary as the CLI:
 - no PASS/FAIL or score;
 - no merged writing-quality score;
 - always show audit coverage and missing scope;
-- render positive provenance as evidence to inspect, not as proof that the manuscript is correct.
+- render positive provenance as evidence to inspect, not as proof that the manuscript is correct;
+- treat assembly-manifest rows as declarations that the pipeline still cross-checks against
+  supplied images, source data, and raw records.

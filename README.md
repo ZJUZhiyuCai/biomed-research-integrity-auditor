@@ -93,7 +93,9 @@ python3 -m webapp
 
 Then open `http://127.0.0.1:8765`. The web app is a thin local wrapper around
 `scripts/audit_package.py`: it runs the same pipeline, reads the same artifacts, and keeps Audit
-Coverage visible so "no findings" is not mistaken for a clean verdict. See
+Coverage visible so "no findings" is not mistaken for a clean verdict. It also includes local
+package-prep tools for creating the recommended folder layout and writing
+`figure_assembly/assembly_manifest.csv` declarations before you run the audit. See
 [`webapp/README.md`](webapp/README.md).
 
 ### Install the skill (optional)

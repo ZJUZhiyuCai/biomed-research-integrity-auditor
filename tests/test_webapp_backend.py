@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 from pathlib import Path
+import tempfile
 import time
 import unittest
 import zipfile
@@ -87,6 +88,95 @@ class WebappBackendTests(unittest.TestCase):
             )
             self.assertEqual(response.status_code, 400)
             self.assertIn("unsafe path", response.text)
+
+    def test_package_prep_scaffold_inspect_and_manifest_round_trip(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            package = tmp_path / "package"
+            with TestClient(create_app(output_root=tmp_path / "runs")) as client:
+                scaffold = client.post("/api/packages/scaffold", json={"package_path": str(package)})
+                scaffold.raise_for_status()
+                inventory = scaffold.json()["inventory"]
+                self.assertTrue(inventory["folders"]["figures"])
+                self.assertTrue(inventory["folders"]["raw_images"])
+                self.assertTrue((package / "PACKAGE_NOTE.txt").is_file())
+
+                figure = package / "figures" / "Figure_1A.png"
+                raw = package / "raw_images" / "Acq_001.tif"
+                source = package / "source_data" / "Figure_1_values.csv"
+                figure.write_bytes(b"figure")
+                raw.write_bytes(b"raw")
+                source.write_text("group,value\ncontrol,1.0\n", encoding="utf-8")
+
+                inspect = client.post("/api/packages/inspect", json={"package_path": str(package)})
+                inspect.raise_for_status()
+                inventory = inspect.json()["inventory"]
+                self.assertIn("figures/Figure_1A.png", inventory["files_by_role"]["figures"])
+                self.assertIn("raw_images/Acq_001.tif", inventory["files_by_role"]["raw_images"])
+                self.assertIn("source_data/Figure_1_values.csv", inventory["files_by_role"]["source_data"])
+
+                save = client.post("/api/packages/assembly-manifest", json={
+                    "package_path": str(package),
+                    "rows": [
+                        {
+                            "figure_panel": "figures/Figure_1A.png",
+                            "source_record": "raw_images/Acq_001.tif",
+                            "relation_type": "declared_derived_from",
+                            "modality": "image",
+                            "notes": "exported figure panel traced to acquisition file",
+                        },
+                        {
+                            "figure_panel": "figures/Figure_1A.png",
+                            "source_record": "source_data/Figure_1_values.csv",
+                            "relation_type": "declared_derived_from",
+                            "modality": "table",
+                            "notes": "",
+                        },
+                    ],
+                })
+                save.raise_for_status()
+                payload = save.json()
+                self.assertEqual(payload["rows_written"], 2)
+                self.assertEqual(payload["inventory"]["assembly_manifest"]["row_count"], 2)
+                manifest_text = (package / "figure_assembly" / "assembly_manifest.csv").read_text(encoding="utf-8")
+                self.assertIn("figure_panel,source_record,relation_type,modality,notes", manifest_text)
+                self.assertIn("raw_images/Acq_001.tif", manifest_text)
+
+    def test_package_prep_manifest_rejects_unsafe_or_unsupported_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            package = tmp_path / "package"
+            (package / "figures").mkdir(parents=True)
+            (package / "raw_images").mkdir()
+            (package / "figures" / "Figure_1A.png").write_bytes(b"figure")
+            (package / "raw_images" / "Acq_001.tif").write_bytes(b"raw")
+
+            with TestClient(create_app(output_root=tmp_path / "runs")) as client:
+                traversal = client.post("/api/packages/assembly-manifest", json={
+                    "package_path": str(package),
+                    "rows": [
+                        {
+                            "figure_panel": "../outside.png",
+                            "source_record": "raw_images/Acq_001.tif",
+                            "relation_type": "declared_derived_from",
+                        }
+                    ],
+                })
+                self.assertEqual(traversal.status_code, 400)
+                self.assertIn("Invalid package-relative path", traversal.text)
+
+                unsupported = client.post("/api/packages/assembly-manifest", json={
+                    "package_path": str(package),
+                    "rows": [
+                        {
+                            "figure_panel": "figures/Figure_1A.png",
+                            "source_record": "raw_images/Acq_001.tif",
+                            "relation_type": "proves_correctness",
+                        }
+                    ],
+                })
+                self.assertEqual(unsupported.status_code, 400)
+                self.assertIn("Unsupported relation_type", unsupported.text)
 
 
 if __name__ == "__main__":

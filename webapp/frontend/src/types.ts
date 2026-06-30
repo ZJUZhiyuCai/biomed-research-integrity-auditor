@@ -8,6 +8,32 @@ export type AuditStatus = "queued" | "running" | "completed" | "failed";
 export type RiskLevel = "R0" | "R1" | "R2" | "R3" | "R4";
 export type Theme = "light" | "dark";
 
+export interface ManifestRow {
+  figure_panel: string;
+  source_record: string;
+  relation_type: string;
+  modality?: string;
+  notes?: string;
+}
+
+export interface AssemblyManifestInventory {
+  path: string | null;
+  rows: ManifestRow[];
+  row_count: number;
+  warnings?: string[];
+}
+
+export interface PackageInventory {
+  package_path: string;
+  exists: boolean;
+  folders: Record<string, boolean>;
+  files_by_role: Record<string, string[]>;
+  file_counts: Record<string, number>;
+  assembly_manifest: AssemblyManifestInventory;
+  relation_types: string[];
+  scope_note: string;
+}
+
 export interface PipelineSummary {
   overall_risk?: string;
   finding_count?: number;

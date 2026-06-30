@@ -3,13 +3,14 @@
 // neutral counts only — never a score or verdict.
 
 import { RefreshCw, Trash2 } from "lucide-react";
-import type { AuditJob, SummaryPayload } from "../types";
+import type { AuditJob, ManifestRow, PackageInventory, SummaryPayload } from "../types";
 import type { Labels } from "../i18n";
 import { CoveragePanel } from "./CoveragePanel";
 import { FindingsPanel } from "./FindingsPanel";
 import { ProvenancePanel } from "./ProvenancePanel";
 import { MissingMaterialsPanel } from "./MissingMaterialsPanel";
 import { ReportPanel } from "./ReportPanel";
+import { PackagePrepPanel } from "./PackagePrepPanel";
 import { WorkspaceSkeleton } from "./Skeleton";
 import { EmptyState, StatusPill } from "./primitives";
 
@@ -20,6 +21,12 @@ interface WorkspaceProps {
   report: string;
   loading: boolean;
   error: string | null;
+  packagePath: string;
+  packageInventory: PackageInventory | null;
+  packagePrepLoading: boolean;
+  onInspectPackage: () => void;
+  onScaffoldPackage: () => void;
+  onSaveManifest: (rows: ManifestRow[]) => Promise<void>;
   onRefresh: () => void;
   onDelete: () => void;
   onEvidence: (images: string[], index: number) => void;
@@ -36,6 +43,16 @@ export function Workspace(props: WorkspaceProps) {
   if (!audit) {
     return (
       <main className="workspace">
+        <PackagePrepPanel
+          t={t}
+          packagePath={props.packagePath}
+          inventory={props.packageInventory}
+          loading={props.packagePrepLoading}
+          onInspect={props.onInspectPackage}
+          onScaffold={props.onScaffoldPackage}
+          onSaveManifest={props.onSaveManifest}
+        />
+        {error && <div className="error-box">{error}</div>}
         <EmptyState text={t.noSelection} />
       </main>
     );
@@ -51,6 +68,16 @@ export function Workspace(props: WorkspaceProps) {
 
   return (
     <main className="workspace">
+      <PackagePrepPanel
+        t={t}
+        packagePath={props.packagePath}
+        inventory={props.packageInventory}
+        loading={props.packagePrepLoading}
+        onInspect={props.onInspectPackage}
+        onScaffold={props.onScaffoldPackage}
+        onSaveManifest={props.onSaveManifest}
+      />
+
       <header className="audit-header">
         <div className="audit-heading">
           <p className="eyebrow">{audit.mode}</p>
