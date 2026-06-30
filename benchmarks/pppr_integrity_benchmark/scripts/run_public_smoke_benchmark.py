@@ -46,18 +46,81 @@ class ORISample:
 
 DEFAULT_ORI_SAMPLES = (
     ORISample(
+        "background",
+        "/sites/default/files/2018-04/background.jpg",
+        "same_image_copy_move",
+        "western_blot_or_gel",
+        "ORI public sample: background / repeated lane practice image.",
+    ),
+    ORISample(
+        "band_detail",
+        "/sites/default/files/2018-04/band_detail.jpg",
+        "same_image_copy_move",
+        "western_blot_or_gel",
+        "ORI public sample: band-detail practice image.",
+    ),
+    ORISample(
+        "background_western",
+        "/sites/default/files/2018-04/background_western.jpg",
+        "same_image_copy_move",
+        "western_blot_or_gel",
+        "ORI public sample: western background practice image.",
+    ),
+    ORISample(
+        "jbc_2b_band_detail",
+        "/sites/default/files/2018-04/jbc_2b_band_detail.jpg",
+        "same_image_copy_move",
+        "western_blot_or_gel",
+        "ORI public sample: band-detail copy-move practice image.",
+    ),
+    ORISample(
+        "dark_areas",
+        "/sites/default/files/2018-04/dark_areas.jpg",
+        "image_local_reuse",
+        "western_blot_or_gel",
+        "ORI public sample: dark-area contrast practice image.",
+    ),
+    ORISample(
         "fig_a",
         "/sites/default/files/2018-04/fig_a.jpg",
-        "image_local_reuse",
+        "same_section_overlap",
         "microscopy",
-        "ORI public sample image A; paired with fig_b for public discrepancy smoke testing.",
+        "ORI public sample image A; paired with fig_b for same-section / overlap practice.",
     ),
     ORISample(
         "fig_b",
         "/sites/default/files/2018-04/fig_b.jpg",
-        "image_local_reuse",
+        "same_section_overlap",
         "microscopy",
-        "ORI public sample image B; paired with fig_a for public discrepancy smoke testing.",
+        "ORI public sample image B; paired with fig_a for same-section / overlap practice.",
+    ),
+    ORISample(
+        "slide",
+        "/sites/default/files/2018-04/slide.jpg",
+        "image_global_similarity",
+        "western_blot_or_gel",
+        "ORI public sample: PowerPoint slide image paired with data.",
+    ),
+    ORISample(
+        "data",
+        "/sites/default/files/2018-04/data.jpg",
+        "image_global_similarity",
+        "western_blot_or_gel",
+        "ORI public sample: data image paired with slide.",
+    ),
+    ORISample(
+        "erasures_film",
+        "/sites/default/files/2018-04/erasures_film.jpg",
+        "image_local_reuse",
+        "western_blot_or_gel",
+        "ORI public sample: erasure / contrast practice image.",
+    ),
+    ORISample(
+        "radial_resoln_aliasing_large",
+        "/sites/default/files/2018-04/radial_resoln_aliasing_large.jpg",
+        "image_local_reuse",
+        "western_blot_or_gel",
+        "ORI public sample: radial-resolution aliasing practice image.",
     ),
     ORISample(
         "weak_background_large",
@@ -65,6 +128,13 @@ DEFAULT_ORI_SAMPLES = (
         "same_image_copy_move",
         "western_blot_or_gel",
         "ORI public sample for weak-background image-forensics practice.",
+    ),
+    ORISample(
+        "high_low_contrast_regions_large",
+        "/sites/default/files/2018-04/high_low_contrast_regions_large.jpg",
+        "image_local_reuse",
+        "western_blot_or_gel",
+        "ORI public sample: high/low contrast region practice image.",
     ),
 )
 
@@ -234,30 +304,108 @@ def write_labels_and_splits(output_root: Path, case_ids: list[str], snapshot_dat
     labels_dir = output_root / "labels"
     labels_dir.mkdir(parents=True, exist_ok=True)
     labels_path = labels_dir / "finding_level_labels.jsonl"
-    label = {
-        "case_id": "ori_samples_public_images",
-        "label_id": "ORI-L0001",
-        "source": "ori_unit_sample",
-        "source_url": "https://ori.hhs.gov/samples",
-        "paper_location": {
-            "figure": "fig_a / fig_b",
-            "panel": "",
-            "caption_text": "ORI public sample pair used for discrepancy-finding practice.",
+    labels = [
+        {
+            "case_id": "ori_samples_public_images",
+            "label_id": "ORI-L0001",
+            "source": "ori_unit_sample",
+            "source_url": "https://ori.hhs.gov/samples",
+            "paper_location": {
+                "figure": "figures/fig_a.jpg / figures/fig_b.jpg",
+                "panel": "",
+                "caption_text": "ORI public sample pair asks whether images are from the same section.",
+            },
+            "issue_type": "same_section_overlap",
+            "modality": "microscopy",
+            "evidence": {
+                "public_files": ["figures/fig_a.jpg", "figures/fig_b.jpg"],
+                "snapshot_date": snapshot_date,
+            },
+            "label_strength": "ori_unit_sample",
+            "evaluation_role": "scope_gap",
+            "expected_risk": "R1",
+            "benign_explanation_possible": True,
+            "benign_explanation_type": "same-section / field-overlap screening is outside the current pixel-copy detector scope",
+            "required_materials_to_resolve": ["original image files", "acquisition metadata", "section and field map"],
+            "notes": "Tracked as a detector-scope gap, not as a recall miss for local copy/paste detection.",
         },
-        "issue_type": "image_local_reuse",
-        "modality": "microscopy",
-        "evidence": {
-            "public_files": ["figures/fig_a.jpg", "figures/fig_b.jpg"],
-            "snapshot_date": snapshot_date,
+        {
+            "case_id": "ori_samples_public_images",
+            "label_id": "ORI-L0002",
+            "source": "ori_unit_sample",
+            "source_url": "https://ori.hhs.gov/samples",
+            "paper_location": {
+                "figure": "figures/data.jpg / figures/slide.jpg",
+                "panel": "",
+                "caption_text": "ORI PowerPoint slide vs data sample.",
+            },
+            "issue_type": "image_global_similarity",
+            "modality": "western_blot_or_gel",
+            "evidence": {
+                "public_files": ["figures/data.jpg", "figures/slide.jpg"],
+                "snapshot_date": snapshot_date,
+            },
+            "label_strength": "ori_unit_sample",
+            "evaluation_role": "recall_label",
+            "expected_risk": "R2_or_R3",
+            "benign_explanation_possible": True,
+            "benign_explanation_type": "public training sample; requires source/raw images for article-level interpretation",
+            "required_materials_to_resolve": ["original image files", "processing history"],
+            "notes": "Detector-scope ORI recall label for global image similarity.",
         },
-        "label_strength": "ori_unit_sample",
-        "expected_risk": "R2_or_R3",
-        "benign_explanation_possible": True,
-        "benign_explanation_type": "public training sample; requires source/raw images for article-level interpretation",
-        "required_materials_to_resolve": ["original image files", "acquisition metadata", "processing history"],
-        "notes": "Unit recall label only; not an article-level concern label.",
-    }
-    labels_path.write_text(json.dumps(label, ensure_ascii=False) + "\n", encoding="utf-8")
+        {
+            "case_id": "ori_samples_public_images",
+            "label_id": "ORI-L0003",
+            "source": "ori_unit_sample",
+            "source_url": "https://ori.hhs.gov/samples",
+            "paper_location": {
+                "figure": "figures/jbc_2b_band_detail.jpg",
+                "panel": "",
+                "caption_text": "ORI band-detail sample with a same-image copy-move candidate.",
+            },
+            "issue_type": "same_image_copy_move",
+            "modality": "western_blot_or_gel",
+            "evidence": {
+                "public_files": ["figures/jbc_2b_band_detail.jpg"],
+                "snapshot_date": snapshot_date,
+            },
+            "label_strength": "ori_unit_sample",
+            "evaluation_role": "recall_label",
+            "expected_risk": "R2_or_R3",
+            "benign_explanation_possible": True,
+            "benign_explanation_type": "public training sample; requires source/raw images for article-level interpretation",
+            "required_materials_to_resolve": ["original image file", "processing history"],
+            "notes": "Detector-scope ORI recall label for same-image copy-move screening.",
+        },
+        {
+            "case_id": "ori_samples_public_images",
+            "label_id": "ORI-L0004",
+            "source": "ori_unit_sample",
+            "source_url": "https://ori.hhs.gov/samples",
+            "paper_location": {
+                "figure": "figures/weak_background_large.jpg",
+                "panel": "",
+                "caption_text": "ORI weak-background sample asks for copied regions in low-contrast material.",
+            },
+            "issue_type": "same_image_copy_move",
+            "modality": "western_blot_or_gel",
+            "evidence": {
+                "public_files": ["figures/weak_background_large.jpg"],
+                "snapshot_date": snapshot_date,
+            },
+            "label_strength": "ori_unit_sample",
+            "evaluation_role": "scope_gap",
+            "expected_risk": "R1",
+            "benign_explanation_possible": True,
+            "benign_explanation_type": "low-contrast copy-move recall is tracked separately from the current default detector gate",
+            "required_materials_to_resolve": ["original image file", "processing history"],
+            "notes": "Tracked as a low-contrast recall gap for future detector work.",
+        },
+    ]
+    labels_path.write_text(
+        "".join(json.dumps(label, ensure_ascii=False) + "\n" for label in labels),
+        encoding="utf-8",
+    )
 
     splits_dir = output_root / "splits"
     splits_dir.mkdir(parents=True, exist_ok=True)

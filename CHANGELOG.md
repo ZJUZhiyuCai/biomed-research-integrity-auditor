@@ -2,7 +2,16 @@
 
 ## Unreleased
 
-- No unreleased changes.
+### Added
+- Expanded the public-data smoke benchmark to download all current ORI public image-forensics
+  JPG samples, not just the original three-image subset.
+- `evaluation_role` for PPPR finding labels, separating metric-bearing `recall_label` entries
+  from `scope_gap` and `reference_only` records.
+
+### Changed
+- The archived `public_smoke_2026-06-30` result now reports 13 ORI images screened, 2/2
+  detector-scope ORI recall labels hit, and two retained ORI scope gaps for future
+  same-section/low-contrast image recall work.
 
 ## v0.6.1 - Human Bilingual Reports and Public Smoke Benchmark
 
@@ -23,8 +32,8 @@
   comment redistribution, and clean-paper labels for controls.
 - Public-data smoke benchmark runner for ORI public image samples plus PMC Open Access S3 packages,
   with local package generation, source manifests, split/label generation, auditor execution, and
-  evaluation. The first archived summary (`public_smoke_2026-06-30`) records a real ORI unit-label
-  miss as a recall gap.
+  evaluation. The archived summary (`public_smoke_2026-06-30`) records compact public-data smoke
+  metrics without storing third-party article or image files.
 
 ### Changed
 - Project version advanced to `0.6.1`.

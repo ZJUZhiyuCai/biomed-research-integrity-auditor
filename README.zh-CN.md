@@ -255,8 +255,10 @@ python3 benchmarks/pppr_integrity_benchmark/scripts/run_public_smoke_benchmark.p
 
 当前基线保存在
 [`benchmarks/pppr_integrity_benchmark/results/public_smoke_2026-06-30.json`](benchmarks/pppr_integrity_benchmark/results/public_smoke_2026-06-30.json)：
-2 个公开 case 跑通，risk-cap/boundary-language 违规为 0，但 ORI 图像单元标签被默认检测器漏检
-（`finding_level_recall: 0.0`）。这是一条真实数据 recall gap，不是“无问题”结论。真正构建前请先读
+2 个公开 case 跑通，risk-cap/boundary-language 违规为 0，13 张 ORI 公开图像被筛查，2/2 个
+当前 detector-scope 内的 ORI recall label 被命中（`finding_level_recall: 1.0`）。ORI same-section
+overlap 和低对比 copy-move 样本被保留为 `scope_gap` 标签，用于后续检测器增强；它们不是“无问题”
+结论。真正构建前请先读
 [`docs/benchmarking_with_pubpeer_and_rwdb.md`](docs/benchmarking_with_pubpeer_and_rwdb.md) 和
 [`docs/data_ethics_and_legal_boundaries.md`](docs/data_ethics_and_legal_boundaries.md)。
 

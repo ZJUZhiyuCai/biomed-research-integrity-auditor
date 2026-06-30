@@ -81,6 +81,10 @@ def label_hit(label: dict[str, Any], findings: list[dict[str, Any]]) -> bool:
     return False
 
 
+def is_recall_label(label: dict[str, Any]) -> bool:
+    return str(label.get("evaluation_role", "recall_label")) == "recall_label"
+
+
 def boundary_violations(summary: dict[str, Any], report_text: str) -> list[str]:
     violations = []
     if summary.get("misconduct_verdict_present"):
@@ -94,7 +98,10 @@ def boundary_violations(summary: dict[str, Any], report_text: str) -> list[str]:
 
 def evaluate(labels: list[dict[str, Any]], outputs_root: Path) -> dict[str, Any]:
     labels_by_case: dict[str, list[dict[str, Any]]] = {}
-    for label in labels:
+    recall_labels = [label for label in labels if is_recall_label(label)]
+    scope_gap_labels = [label for label in labels if str(label.get("evaluation_role", "recall_label")) == "scope_gap"]
+    reference_labels = [label for label in labels if str(label.get("evaluation_role", "recall_label")) == "reference_only"]
+    for label in recall_labels:
         labels_by_case.setdefault(label["case_id"], []).append(label)
 
     cases = []
@@ -139,14 +146,19 @@ def evaluate(labels: list[dict[str, Any]], outputs_root: Path) -> dict[str, Any]
         "cases_evaluated": len(labels_by_case),
         "missing_outputs": missing_outputs,
         "labels": total_labels,
+        "labels_total": len(labels),
+        "recall_labels": len(recall_labels),
+        "scope_gap_labels": len(scope_gap_labels),
+        "reference_only_labels": len(reference_labels),
         "label_hits": total_hits,
         "finding_level_recall": recall,
         "risk_cap_violations": cap_violations,
         "boundary_violations": boundary_count,
         "cases": cases,
         "scope_note": (
-            "Metrics compare audit outputs to public-concern labels. Labels are not misconduct truth, "
-            "and matched controls are not clean-paper proof."
+            "Metrics compare audit outputs only to labels marked evaluation_role=recall_label. "
+            "Scope-gap labels document public observations outside the current detector scope and are not counted as misses. "
+            "Labels are not misconduct truth, and matched controls are not clean-paper proof."
         ),
     }
 
@@ -166,6 +178,7 @@ def main() -> int:
         "output": str(args.output),
         "cases_evaluated": payload["cases_evaluated"],
         "labels": payload["labels"],
+        "scope_gap_labels": payload["scope_gap_labels"],
         "risk_cap_violations": payload["risk_cap_violations"],
         "boundary_violations": payload["boundary_violations"],
     }, indent=2))

@@ -28,17 +28,22 @@ article materials while preserving risk caps, benign explanations, and coverage 
 - PMC Open Access: reusable article materials subject to license.
 - ORI samples: image-forensics unit tests.
 
+Labels may be marked `evaluation_role=recall_label`, `scope_gap`, or `reference_only`.
+Only recall labels contribute to recall metrics. Scope-gap labels document public observations that
+the current detector family is not yet expected to recover.
+
 ## Current Public Smoke Baseline
 
 `results/public_smoke_2026-06-30.json` records a two-case run:
 
-- `ori_samples_public_images`: three ORI public sample images screened; the single ORI unit recall
-  label was not detected by default image detectors.
+- `ori_samples_public_images`: 13 ORI public sample images screened; 2 detector-scope ORI recall
+  labels were detected, while same-section overlap and low-contrast copy-move samples are retained
+  as `scope_gap` labels for future detector work.
 - `pmc_oa_pmc10009402_1`: one CC-BY PMC OA package with XML, PDF, and four media images screened
   as an unannotated material-coverage control.
 
-This is a smoke baseline, not a finished PPPR benchmark. The ORI miss is tracked as a real-data
-recall gap.
+This is a smoke baseline, not a finished PPPR benchmark. Scope-gap labels are real-data evidence
+for future recall work, not clean/no-concern conclusions.
 
 ## Label Strengths
 

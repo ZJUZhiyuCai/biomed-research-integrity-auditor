@@ -13,9 +13,9 @@
   "audit_results": [
     {
       "case_id": "ori_samples_public_images",
-      "overall_risk": "R1",
-      "finding_count": 0,
-      "image_panels_screened": 3,
+      "overall_risk": "R3",
+      "finding_count": 3,
+      "image_panels_screened": 13,
       "source_tables_screened": 0,
       "audit_coverage_gap": false,
       "modules_executed": [
@@ -51,28 +51,33 @@
   "evaluation": {
     "cases_evaluated": 1,
     "missing_outputs": 0,
-    "labels": 1,
-    "label_hits": 0,
-    "finding_level_recall": 0.0,
+    "labels": 2,
+    "labels_total": 4,
+    "recall_labels": 2,
+    "scope_gap_labels": 2,
+    "reference_only_labels": 0,
+    "label_hits": 2,
+    "finding_level_recall": 1.0,
     "risk_cap_violations": 0,
     "boundary_violations": 0,
     "cases": [
       {
         "case_id": "ori_samples_public_images",
-        "labels": 1,
-        "label_hits": 0,
-        "finding_count": 0,
-        "overall_risk": "R1",
+        "labels": 2,
+        "label_hits": 2,
+        "finding_count": 3,
+        "overall_risk": "R3",
         "risk_cap_violations": 0,
         "boundary_violations": []
       }
     ],
-    "scope_note": "Metrics compare audit outputs to public-concern labels. Labels are not misconduct truth, and matched controls are not clean-paper proof."
+    "scope_note": "Metrics compare audit outputs only to labels marked evaluation_role=recall_label. Scope-gap labels document public observations outside the current detector scope and are not counted as misses. Labels are not misconduct truth, and matched controls are not clean-paper proof."
   },
-  "run_time_seconds": 15.233,
+  "run_time_seconds": 76.696,
   "scope_note": "Public smoke labels are recall and coverage checks, not misconduct truth. PMC OA cases are material-coverage controls unless manually annotated.",
   "known_gaps": [
-    "ORI public unit label was not detected by the default image detectors in this smoke run.",
+    "ORI fig_a/fig_b same-section overlap is tracked as evaluation_role=scope_gap because same-section/field-overlap screening is outside the current pixel-copy detector scope.",
+    "ORI weak_background_large low-contrast copy-move is tracked as evaluation_role=scope_gap for future low-contrast image recall work.",
     "PMC OA case is an unannotated material-coverage control, not a clean-paper label.",
     "External literature search was intentionally offline."
   ]

@@ -48,6 +48,7 @@
         "image_global_similarity",
         "image_local_reuse",
         "same_image_copy_move",
+        "same_section_overlap",
         "western_blot_or_gel",
         "microscopy_reuse",
         "statistics_or_numeric",
@@ -73,6 +74,14 @@
         "journal_confirmed_retraction",
         "ori_unit_sample"
       ]
+    },
+    "evaluation_role": {
+      "enum": [
+        "recall_label",
+        "scope_gap",
+        "reference_only"
+      ],
+      "default": "recall_label"
     },
     "annotator_1": {"type": "string"},
     "annotator_2": {"type": "string"},

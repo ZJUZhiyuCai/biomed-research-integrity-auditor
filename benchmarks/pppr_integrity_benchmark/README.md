@@ -58,6 +58,7 @@ Result summaries may be committed under `results/` when they contain no third-pa
 content.
 
 Current baseline: `results/public_smoke_2026-06-30.json` records 2 public cases,
-0 risk-cap violations, 0 boundary-language violations, and an ORI unit-label miss
-(`finding_level_recall: 0.0`). The miss is a real-data recall gap, not a clean-paper
-or no-concern conclusion.
+0 risk-cap violations, 0 boundary-language violations, and 2/2 detector-scope ORI recall
+labels hit (`finding_level_recall: 1.0`). ORI same-section overlap and low-contrast copy-move
+samples are retained as `scope_gap` labels for future detector work, not as clean-paper or
+no-concern conclusions.

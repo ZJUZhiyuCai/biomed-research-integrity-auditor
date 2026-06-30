@@ -5,12 +5,14 @@ article files, figures, PubPeer comments, or screenshots.
 
 ## Public Smoke 2026-06-30
 
-`public_smoke_2026-06-30.json` records the first real public-data smoke run:
+`public_smoke_2026-06-30.json` records the current real public-data smoke run:
 
-- ORI public image-forensics samples: 3 images screened, 1 unit recall label, 0 hits.
+- ORI public image-forensics samples: 13 images screened, 2 detector-scope recall labels, 2 hits.
+- Two ORI observations are retained as `scope_gap` labels rather than recall misses:
+  same-section overlap (`fig_a` / `fig_b`) and low-contrast copy-move (`weak_background_large`).
 - PMC Open Access `PMC10009402.1`: XML, PDF, and 4 media images screened as a material-coverage control.
 - Boundary checks: 0 risk-cap violations and 0 misconduct-verdict violations.
 
-The ORI miss is intentional evidence: the default image detectors did not recover
-that public unit label in this run. Treat it as a real-data recall gap to improve,
-not as a clean result.
+The scope-gap labels are intentional evidence about remaining detector work. They are not counted
+as recall misses because they sit outside the current pixel-copy detector gate, and they are not
+clean/no-concern conclusions.

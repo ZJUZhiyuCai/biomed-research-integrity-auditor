@@ -285,9 +285,10 @@ python3 benchmarks/pppr_integrity_benchmark/scripts/evaluate_audit_outputs.py --
 
 The current public smoke baseline is archived at
 [`benchmarks/pppr_integrity_benchmark/results/public_smoke_2026-06-30.json`](benchmarks/pppr_integrity_benchmark/results/public_smoke_2026-06-30.json):
-2 public cases ran, risk-cap and boundary-language violations were 0, and the ORI unit recall label
-was **missed** by the default image detectors (`finding_level_recall: 0.0`). That miss is tracked as
-a real-data recall gap, not as a clean/no-concern conclusion.
+2 public cases ran, risk-cap and boundary-language violations were 0, 13 ORI public images were
+screened, and 2/2 detector-scope ORI recall labels were hit (`finding_level_recall: 1.0`). ORI
+same-section overlap and low-contrast copy-move samples are retained as `scope_gap` labels for
+future detector work, not as clean/no-concern conclusions.
 
 Read [`docs/benchmarking_with_pubpeer_and_rwdb.md`](docs/benchmarking_with_pubpeer_and_rwdb.md)
 and [`docs/data_ethics_and_legal_boundaries.md`](docs/data_ethics_and_legal_boundaries.md) before

@@ -182,6 +182,18 @@ class PPPRBenchmarkTests(unittest.TestCase):
                 "expected_risk": "R2_or_R3",
                 "benign_explanation_possible": True,
                 "required_materials_to_resolve": ["raw image"],
+            }) + "\n" + json.dumps({
+                "case_id": "case_000001",
+                "label_id": "L0002",
+                "source": "ori_unit_sample",
+                "source_url": "https://ori.hhs.gov/samples",
+                "paper_location": {"figure": "unmatched same-section sample"},
+                "issue_type": "same_section_overlap",
+                "label_strength": "ori_unit_sample",
+                "evaluation_role": "scope_gap",
+                "expected_risk": "R1",
+                "benign_explanation_possible": True,
+                "required_materials_to_resolve": ["raw image"],
             }) + "\n", encoding="utf-8")
             eval_out = tmp_path / "eval.json"
             run([
@@ -196,6 +208,8 @@ class PPPRBenchmarkTests(unittest.TestCase):
             ])
             payload = json.loads(eval_out.read_text(encoding="utf-8"))
             self.assertEqual(payload["labels"], 1)
+            self.assertEqual(payload["labels_total"], 2)
+            self.assertEqual(payload["scope_gap_labels"], 1)
             self.assertEqual(payload["label_hits"], 1)
             self.assertEqual(payload["risk_cap_violations"], 0)
             self.assertEqual(payload["boundary_violations"], 0)
@@ -214,10 +228,18 @@ class PPPRBenchmarkTests(unittest.TestCase):
             labels_path = runner.write_labels_and_splits(tmp_path, ["ori_samples_public_images"], "2026-06-30")
             schema = json.loads((BENCH / "labels.schema.json").read_text(encoding="utf-8"))
             validator = Draft202012Validator(schema)
-            label = json.loads(labels_path.read_text(encoding="utf-8"))
-            self.assertEqual(list(validator.iter_errors(label)), [])
-            self.assertEqual(label["label_strength"], "ori_unit_sample")
-            self.assertNotIn("misconduct", json.dumps(label).lower())
+            labels = [
+                json.loads(line)
+                for line in labels_path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            self.assertGreaterEqual(len(labels), 4)
+            self.assertTrue(any(label.get("evaluation_role") == "recall_label" for label in labels))
+            self.assertTrue(any(label.get("evaluation_role") == "scope_gap" for label in labels))
+            for label in labels:
+                self.assertEqual(list(validator.iter_errors(label)), [])
+                self.assertEqual(label["label_strength"], "ori_unit_sample")
+                self.assertNotIn("misconduct", json.dumps(label).lower())
 
 
 if __name__ == "__main__":

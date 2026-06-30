@@ -74,6 +74,13 @@ Finding-level labels answer what a human annotator can verify from public materi
 - expected risk range under this project's R0-R4 rules;
 - label strength and adjudication status.
 
+Use `evaluation_role` to separate metric-bearing labels from capability-boundary records:
+
+- `recall_label`: counted in finding-level recall and risk-cap checks.
+- `scope_gap`: retained as evidence of future detector work, but not counted as a miss for the
+  current detector family.
+- `reference_only`: kept for package provenance or examples, not for scoring.
+
 Do not use fields such as `misconduct: true`, `fraud: true`, or `fake: true`.
 
 ## Blind Evaluation Design
