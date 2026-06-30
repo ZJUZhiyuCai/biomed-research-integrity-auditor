@@ -36,6 +36,7 @@
 
 ### Changed
 - Project version advanced to `0.5.0`; README files now include the local web-app entry point.
+- Web app font imports now use Latin-only IBM Plex subsets while keeping Chinese system-font fallbacks, reducing the offline frontend bundle without changing the typography model.
 
 ## v0.4.2 - OCR, Real-Image, and External-Search Benchmarks
 
