@@ -68,6 +68,18 @@ python -m pip install -r requirements.txt
 python -m pip install -e .
 ```
 
+For a repeatable local command deployment that also links the commands into
+`~/.local/bin`, run:
+
+```bash
+python3.11 scripts/install_local_commands.py
+# or
+make install-local
+```
+
+This installs `biomed-audit`, `biomed-audit-diff`, `biomed-audit-web`, and
+`biomed-self-audit-webapp`. Make sure `~/.local/bin` is on your `PATH`.
+
 Run the audit on one of the bundled example packages and read the report it writes:
 
 ```bash
@@ -149,6 +161,9 @@ If you prefer a browser UI, build and launch the local self-audit app:
 cd webapp/frontend && npm install && npm run build && cd ../..
 biomed-audit-web
 ```
+
+`scripts/install_local_commands.py` runs the same frontend build automatically
+when `npm` is available.
 
 Then open `http://127.0.0.1:8765`. The web app is a thin local wrapper around
 `scripts/audit_package.py`: it runs the same pipeline, reads the same artifacts, and keeps Audit

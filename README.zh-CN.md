@@ -58,6 +58,17 @@ python -m pip install -r requirements.txt
 python -m pip install -e .
 ```
 
+如果想把本地命令部署过程固定下来，并把命令链接到 `~/.local/bin`：
+
+```bash
+python3.11 scripts/install_local_commands.py
+# 或
+make install-local
+```
+
+它会安装 `biomed-audit`、`biomed-audit-diff`、`biomed-audit-web` 和
+`biomed-self-audit-webapp`。请确认 `~/.local/bin` 已在你的 `PATH` 里。
+
 先运行内置示例包，查看生成的报告：
 
 ```bash
@@ -131,6 +142,8 @@ biomed-audit-diff audit_outputs/v1 audit_outputs/v2 \
 cd webapp/frontend && npm install && npm run build && cd ../..
 biomed-audit-web
 ```
+
+`scripts/install_local_commands.py` 在检测到 `npm` 时会自动执行同样的前端构建。
 
 然后打开 `http://127.0.0.1:8765`。这个 Web App 只是 `scripts/audit_package.py` 的本地外壳：
 它运行同一条流水线、读取同一批 artifact，并固定显示 Audit Coverage，避免把“未发现 finding”
