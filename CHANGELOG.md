@@ -4,13 +4,16 @@
 
 ### Added
 - PPPR/public-concern benchmark scaffold under `benchmarks/pppr_integrity_benchmark/`, including
-  a dataset card, data-ethics boundaries, finding-level label schema, header-only source/label
-  manifests, and offline scripts for RWDB/Crossref normalization, PubPeer manifest normalization,
-  PMC OA local-package assembly, matched-control metadata, benchmark running, and audit-output
-  evaluation.
+  a dataset card, data-ethics boundaries, finding-level label schema, source/label manifests,
+  and offline scripts for RWDB/Crossref normalization, PubPeer manifest normalization, PMC OA
+  local-package assembly, matched-control metadata, benchmark running, and audit-output evaluation.
 - Documentation for PubPeer/RWDB/PMC OA/ORI benchmark use that explicitly treats PubPeer as case
   discovery / weak public-concern metadata, not misconduct ground truth, and forbids scraping,
   comment redistribution, and clean-paper labels for controls.
+- Public-data smoke benchmark runner for ORI public image samples plus PMC Open Access S3 packages,
+  with local package generation, source manifests, split/label generation, auditor execution, and
+  evaluation. The first archived summary (`public_smoke_2026-06-30`) records a real ORI unit-label
+  miss as a recall gap.
 
 ### Changed
 - `make validate` now compiles nested benchmark helper scripts.

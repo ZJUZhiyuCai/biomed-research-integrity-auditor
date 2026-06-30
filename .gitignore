@@ -7,6 +7,7 @@ __pycache__/
 .venv/
 venv/
 .cursor/
+.web-rooter/
 
 evals/outputs/*
 !evals/outputs/.gitkeep

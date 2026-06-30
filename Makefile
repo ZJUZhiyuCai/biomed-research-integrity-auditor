@@ -2,7 +2,7 @@ PYTHON ?= python3
 SKILL_DIR := skill/biomed-research-integrity-auditor
 EVAL_DIR := evals
 
-.PHONY: validate regenerate-evals prompts score true-pdf-benchmark scanned-pdf-benchmark real-image-benchmark
+.PHONY: validate regenerate-evals prompts score true-pdf-benchmark scanned-pdf-benchmark real-image-benchmark pppr-public-smoke
 
 validate:
 	$(PYTHON) -m py_compile scripts/*.py provenance/*.py benchmarks/*/*.py benchmarks/*/scripts/*.py $(EVAL_DIR)/run_eval.py $(EVAL_DIR)/run_script_baseline.py $(EVAL_DIR)/generate_synthetic_cases.py $(EVAL_DIR)/assert_audit_outputs.py $(SKILL_DIR)/scripts/*.py detectors/image/*.py detectors/stats/*.py detectors/text/*.py calibrators/*.py webapp/*.py webapp/backend/*.py tests/*.py
@@ -30,3 +30,6 @@ scanned-pdf-benchmark:
 
 real-image-benchmark:
 	$(PYTHON) benchmarks/real_image/run_real_image_benchmark.py --output-dir tmp/real_image_benchmark
+
+pppr-public-smoke:
+	$(PYTHON) benchmarks/pppr_integrity_benchmark/scripts/run_public_smoke_benchmark.py --output-root tmp/pppr_public_smoke

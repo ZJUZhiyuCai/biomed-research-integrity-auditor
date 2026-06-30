@@ -16,3 +16,7 @@ If in doubt, publish metadata and reconstruction scripts, not the article files.
 
 PubPeer comments must not be copied into this repository or public benchmark artifacts unless
 explicitly permitted by PubPeer's terms and any API agreement.
+
+The public smoke runner downloads ORI and PMC OA materials into `tmp/` for local testing. Do not
+commit those downloaded article files or images. Commit only reconstruction scripts, source
+manifests, and compact result summaries that do not reproduce third-party content.

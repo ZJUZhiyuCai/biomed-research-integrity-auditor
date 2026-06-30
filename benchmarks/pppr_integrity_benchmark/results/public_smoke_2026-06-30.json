@@ -1,0 +1,79 @@
+{
+  "benchmark": "pppr_public_smoke",
+  "snapshot_date": "2026-06-30",
+  "sources": {
+    "ori_samples": "https://ori.hhs.gov/samples",
+    "pmc_oa_aws": "https://pmc.ncbi.nlm.nih.gov/tools/pmcaws/",
+    "pmc_oa_service": "https://pmc.ncbi.nlm.nih.gov/tools/oa-service/"
+  },
+  "case_ids": [
+    "ori_samples_public_images",
+    "pmc_oa_pmc10009402_1"
+  ],
+  "audit_results": [
+    {
+      "case_id": "ori_samples_public_images",
+      "overall_risk": "R1",
+      "finding_count": 0,
+      "image_panels_screened": 3,
+      "source_tables_screened": 0,
+      "audit_coverage_gap": false,
+      "modules_executed": [
+        "image_global_near_duplicate",
+        "image_local_patch_and_same_image_copy_move",
+        "package_internal_text_overlap"
+      ],
+      "modules_not_executed": [
+        "statistics screening (no source_data CSV/TSV/XLSX supplied)",
+        "external literature phrase search (offline: private internal audit, or no provider/fixture)",
+        "methodology/reporting-standard compliance (ARRIVE/CONSORT/ICMJE/MIFlowCyt/omics accession): guided checklist, not auto-screened"
+      ]
+    },
+    {
+      "case_id": "pmc_oa_pmc10009402_1",
+      "overall_risk": "R1",
+      "finding_count": 0,
+      "image_panels_screened": 4,
+      "source_tables_screened": 0,
+      "audit_coverage_gap": false,
+      "modules_executed": [
+        "image_global_near_duplicate",
+        "image_local_patch_and_same_image_copy_move",
+        "package_internal_text_overlap"
+      ],
+      "modules_not_executed": [
+        "statistics screening (no source_data CSV/TSV/XLSX supplied)",
+        "external literature phrase search (offline: private internal audit, or no provider/fixture)",
+        "methodology/reporting-standard compliance (ARRIVE/CONSORT/ICMJE/MIFlowCyt/omics accession): guided checklist, not auto-screened"
+      ]
+    }
+  ],
+  "evaluation": {
+    "cases_evaluated": 1,
+    "missing_outputs": 0,
+    "labels": 1,
+    "label_hits": 0,
+    "finding_level_recall": 0.0,
+    "risk_cap_violations": 0,
+    "boundary_violations": 0,
+    "cases": [
+      {
+        "case_id": "ori_samples_public_images",
+        "labels": 1,
+        "label_hits": 0,
+        "finding_count": 0,
+        "overall_risk": "R1",
+        "risk_cap_violations": 0,
+        "boundary_violations": []
+      }
+    ],
+    "scope_note": "Metrics compare audit outputs to public-concern labels. Labels are not misconduct truth, and matched controls are not clean-paper proof."
+  },
+  "run_time_seconds": 15.233,
+  "scope_note": "Public smoke labels are recall and coverage checks, not misconduct truth. PMC OA cases are material-coverage controls unless manually annotated.",
+  "known_gaps": [
+    "ORI public unit label was not detected by the default image detectors in this smoke run.",
+    "PMC OA case is an unannotated material-coverage control, not a clean-paper label.",
+    "External literature search was intentionally offline."
+  ]
+}

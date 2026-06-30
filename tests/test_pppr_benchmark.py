@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import importlib.util
 import subprocess
 import sys
 import tempfile
@@ -17,6 +18,16 @@ BENCH = ROOT / "benchmarks" / "pppr_integrity_benchmark"
 
 def run(cmd: list[str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(cmd, cwd=ROOT, check=True, capture_output=True, text=True)
+
+
+def load_public_smoke_runner():
+    path = BENCH / "scripts" / "run_public_smoke_benchmark.py"
+    spec = importlib.util.spec_from_file_location("run_public_smoke_benchmark", path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec and spec.loader
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
 
 
 class PPPRBenchmarkTests(unittest.TestCase):
@@ -188,6 +199,25 @@ class PPPRBenchmarkTests(unittest.TestCase):
             self.assertEqual(payload["label_hits"], 1)
             self.assertEqual(payload["risk_cap_violations"], 0)
             self.assertEqual(payload["boundary_violations"], 0)
+
+    def test_public_smoke_runner_helpers_are_schema_safe(self) -> None:
+        runner = load_public_smoke_runner()
+        self.assertEqual(
+            runner.s3_to_https("s3://pmc-oa-opendata/PMC10009402.1/PMC10009402.1.xml?md5=abc"),
+            "https://pmc-oa-opendata.s3.amazonaws.com/PMC10009402.1/PMC10009402.1.xml",
+        )
+        with self.assertRaises(ValueError):
+            runner.s3_to_https("s3://other-bucket/path/file.xml")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            labels_path = runner.write_labels_and_splits(tmp_path, ["ori_samples_public_images"], "2026-06-30")
+            schema = json.loads((BENCH / "labels.schema.json").read_text(encoding="utf-8"))
+            validator = Draft202012Validator(schema)
+            label = json.loads(labels_path.read_text(encoding="utf-8"))
+            self.assertEqual(list(validator.iter_errors(label)), [])
+            self.assertEqual(label["label_strength"], "ori_unit_sample")
+            self.assertNotIn("misconduct", json.dumps(label).lower())
 
 
 if __name__ == "__main__":

@@ -3,8 +3,9 @@
 This directory defines a **post-publication public concern benchmark** scaffold for validating the
 biomedical research-integrity auditor.
 
-It intentionally contains schemas, manifests, scripts, and documentation only. It does not contain
-PubPeer comments, non-OA articles, or third-party paper figures.
+It intentionally contains schemas, manifests, scripts, documentation, and compact result summaries
+only. It does not contain PubPeer comments, non-OA articles, or third-party paper figures. Real ORI
+and PMC OA materials are downloaded into `tmp/` by the public smoke runner when you choose to run it.
 
 Use it to build local or releasable benchmark packages from permitted sources:
 
@@ -36,3 +37,27 @@ python3 benchmarks/pppr_integrity_benchmark/scripts/evaluate_audit_outputs.py \
 ```
 
 Empty label files are valid while the benchmark is being curated.
+
+## Public-Data Smoke
+
+To build and run a tiny real public-data smoke benchmark:
+
+```bash
+python3 benchmarks/pppr_integrity_benchmark/scripts/run_public_smoke_benchmark.py \
+  --output-root tmp/pppr_public_smoke
+```
+
+The smoke benchmark downloads:
+
+- a small ORI public image-forensics sample package;
+- one PMC Open Access S3 package (`PMC10009402.1` by default).
+
+Generated packages, article files, figures, labels, splits, audit outputs, and
+evaluation files are written under `tmp/pppr_public_smoke/` and are not committed.
+Result summaries may be committed under `results/` when they contain no third-party
+content.
+
+Current baseline: `results/public_smoke_2026-06-30.json` records 2 public cases,
+0 risk-cap violations, 0 boundary-language violations, and an ORI unit-label miss
+(`finding_level_recall: 0.0`). The miss is a real-data recall gap, not a clean-paper
+or no-concern conclusion.

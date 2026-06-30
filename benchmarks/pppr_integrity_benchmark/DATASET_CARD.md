@@ -2,8 +2,11 @@
 
 ## Dataset Status
 
-Scaffold only. No real PubPeer comments, article PDFs, or paper figures are included in this
-repository.
+Scaffold plus a small public-data smoke runner. No real PubPeer comments, article PDFs, or paper
+figures are included in this repository.
+
+`scripts/run_public_smoke_benchmark.py` can locally download a tiny ORI + PMC OA smoke set under
+`tmp/`. Only compact result summaries without third-party content should be committed.
 
 ## Intended Use
 
@@ -24,6 +27,18 @@ article materials while preserving risk caps, benign explanations, and coverage 
 - Crossref / Retraction Watch: article-level publication-status metadata.
 - PMC Open Access: reusable article materials subject to license.
 - ORI samples: image-forensics unit tests.
+
+## Current Public Smoke Baseline
+
+`results/public_smoke_2026-06-30.json` records a two-case run:
+
+- `ori_samples_public_images`: three ORI public sample images screened; the single ORI unit recall
+  label was not detected by default image detectors.
+- `pmc_oa_pmc10009402_1`: one CC-BY PMC OA package with XML, PDF, and four media images screened
+  as an unannotated material-coverage control.
+
+This is a smoke baseline, not a finished PPPR benchmark. The ORI miss is tracked as a real-data
+recall gap.
 
 ## Label Strengths
 
