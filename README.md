@@ -1,196 +1,282 @@
 # Biomedical Research Integrity Auditor
 
-An open Codex skill, detector pipeline, and blind-evaluation harness for biomedical research integrity review.
+A tool that helps you **screen a biomedical manuscript package for research-integrity risks
+before submission** — and organizes the evidence into a calm, neutral report.
 
-This is deliberately **not** a "paper fraud detector." It is a risk-auditing workflow for manuscripts, figures, source data, reporting checklists, and public literature-concern triage. The skill is designed to surface evidence-backed integrity risks, benign explanations, missing materials, and next actions without making misconduct verdicts.
+It is **not** a "paper fraud detector." It never decides that misconduct, fraud, fabrication,
+or plagiarism occurred. Instead it surfaces evidence-backed risks, lists benign explanations,
+flags missing materials, and recommends next actions — using an `R0`–`R4` risk scale and
+neutral language throughout.
 
-中文简介：这是一个面向生物医药论文和研究材料的“研究诚信风险审计器”。它不判定作者造假，也不输出学术不端结论，而是帮助作者、审稿人或机构内部团队做投稿前自查和外部公开材料的风险分级。
+Under the hood it is three things: an installable Codex **skill**, a scriptable **detector
+pipeline**, and a **blind-evaluation harness**.
 
-## New here? Start with the self-audit guide
+> 中文简介：这是一个面向生物医药论文和研究材料的"研究诚信风险审计器"。它不判定作者造假，也不输出
+> 学术不端结论，而是帮助作者、审稿人或机构内部团队做投稿前自查和外部公开材料的风险分级。
 
-If you are an author who wants to run a pre-submission self-audit, read
-[`docs/self-audit-guide.md`](docs/self-audit-guide.md). It explains how to prepare materials,
-run the audit, and read the report — and which conclusions you may not draw. Two runnable
-example packages are in [`examples/`](examples/):
+---
+
+## What it does and what it does not
+
+**It does:**
+
+- Screen figures for image near-duplicates and same-image copy-move.
+- Cross-check declared figure-to-raw traceability and record positive provenance evidence.
+- Check numeric/statistical consistency in source or summary tables (SD/SEM/n, p-value range, integer counts).
+- Screen package-internal text overlap, with optional external phrase-search triage.
+- Produce a neutral report with an `R0`–`R4` risk register, an evidence ledger, and an explicit coverage section.
+
+**It does not:**
+
+- Decide misconduct, fraud, fabrication, falsification, or plagiarism.
+- Prove a manuscript is correct or its figures authentic.
+- Run a web-scale plagiarism database search.
+- Auto-check methodology/reporting standards (ARRIVE / CONSORT / ICMJE / MIFlowCyt / omics accessions are guided **manual** checklists).
+
+> **The one rule to remember:** "no issue found" only means *nothing was flagged within the
+> supplied materials and the current detector scope* — never that the work is proven correct.
+
+---
+
+## Who is this for
+
+| You are… | Start here |
+| --- | --- |
+| An **author** running a pre-submission self-audit | [`docs/self-audit-guide.md`](docs/self-audit-guide.md) and the [Quick start](#quick-start) below |
+| A **reviewer or integrity office** triaging concerns | [Quick start](#quick-start), then the external/response modes in [`docs/architecture.md`](docs/architecture.md) |
+| A **developer or evaluator** | [How it works](#how-it-works) and [For developers and evaluators](#for-developers-and-evaluators) |
+
+---
+
+## Quick start
+
+You need Python 3.10+ and the project dependencies:
+
+```bash
+python3 -m pip install -r requirements.txt
+```
+
+Run the audit on one of the bundled example packages and read the report it writes:
 
 ```bash
 python3 scripts/audit_package.py examples/minimal_package --output-dir audit_outputs/minimal
 python3 scripts/audit_package.py examples/full_presubmission_package --output-dir audit_outputs/full
 ```
 
-## What Is Included
+Each run writes to the output directory:
 
-- `skill/biomed-research-integrity-auditor/` - the installable Codex skill.
-- `detectors/` - scriptable candidate detectors that emit evidence but not final verdicts.
-- `calibrators/` - risk-cap and evidence-strength calibration.
-- `scripts/audit_package.py` - the default contract-first orchestrator for package audits.
-- `provenance/` - resource graph builders that distinguish expected traceability from reuse risk.
-- `schemas/` - shared JSON/YAML contracts for detector output, paper objects, and source-data expectations.
-- `evals/` - neutral synthetic manuscript packages for blind testing.
-- `evals/run_eval.py` - prompt generation and JSON-summary scoring.
-- `evals/run_script_baseline.py` - non-LLM detector baseline runner.
-- `evals/generate_synthetic_cases.py` - deterministic synthetic package generator.
-- `examples/` - runnable example packages (`minimal_package/`, `full_presubmission_package/`) for first-time self-audit users.
-- `docs/self-audit-guide.md` - non-developer guide to preparing materials, running the audit, and reading the report.
-- `docs/architecture.md` - audit pipeline architecture.
-- `docs/design-notes.md` - design rationale, boundaries, and source anchors.
+- `audit-report.md` — the human-readable report (scope, coverage, missing materials, risk register, evidence ledger).
+- `AUDIT_JSON_SUMMARY.json` — the same findings in machine-readable form.
+- `coverage.json`, `calibrated_findings.json`, and per-detector outputs — supporting detail.
 
-## Integrity Boundary
+To audit your own package, point the command at your folder and pick a mode
+(`--mode internal_presubmission` is the default; `external_public_material` and
+`response_to_concern` are also available):
 
-The skill must not say that misconduct, fraud, fabrication, or falsification is proven. It uses an `R0` to `R4` research-integrity risk scale:
+```bash
+python3 scripts/audit_package.py /path/to/my_package --output-dir audit_outputs/my_package
+```
 
-- `R0`: no material issue found in supplied materials
-- `R1`: completeness or documentation gap
-- `R2`: reviewable inconsistency or weak evidence pattern
-- `R3`: material concern needing source-data or author clarification
-- `R4`: direct contradiction in supplied internal materials
+**Authors:** the [self-audit guide](docs/self-audit-guide.md) walks through how to lay out your
+materials, run the audit, and read the report — including which conclusions you may not draw.
 
-Public-material-only review is capped below `R4` unless direct internal contradiction is available. Weak statistical patterns alone are capped below major concern levels.
+### Install the skill (optional)
 
-Detectors only emit candidates with `risk_suggestion`. Final risk levels are assigned only by the calibrator as `calibrated_risk_level`, after source strength, material completeness, disclosure context, benign explanations, and mode-specific caps are applied.
-
-## Install The Skill
-
-Clone the repository, then copy or symlink the skill into your Codex skills directory:
+To use it as a Codex skill, symlink it into your skills directory:
 
 ```bash
 mkdir -p ~/.codex/skills
 ln -s "$(pwd)/skill/biomed-research-integrity-auditor" ~/.codex/skills/biomed-research-integrity-auditor
 ```
 
-If the symlink already exists, remove or update it intentionally.
+---
 
-## Run The Eval Harness
+## The R0–R4 risk scale
 
-Run the default non-LLM audit pipeline on a package:
+The tool never says "fraud" or "misconduct." It grades each finding on a five-level scale, and
+even the highest level is not a verdict.
+
+| Level | Meaning | Typical action |
+| --- | --- | --- |
+| `R0` | No issue found in the supplied materials (within scope) | State scope and what is missing |
+| `R1` | Completeness or documentation gap | Add the raw/source records and re-run |
+| `R2` | Reviewable reporting concern or weak statistical pattern | Fix the method/legend/supplement |
+| `R3` | Material concern needing source data or author clarification | Provide raw records and explain |
+| `R4` | Direct contradiction inside the supplied materials | Pause and reconcile before submitting |
+
+Two guardrails keep the scale honest: public-material-only review is capped below `R4` unless a
+direct internal contradiction exists, and weak statistical patterns alone cannot reach the
+higher levels.
+
+---
+
+## How it works
+
+The pipeline separates *finding candidates* from *deciding risk*, so no single component can
+inflate a result:
+
+```text
+material intake → structured extraction → provenance graph → detectors
+→ contextual join → risk calibration → evidence ledger → human-reviewable report
+```
+
+- **Detectors** emit candidates with evidence and locations only — never a final risk level.
+- **Provenance builders** model files and the figure-to-raw relationships you declare.
+- **Context joiners** add disclosure, source-availability, and provenance context.
+- **The calibrator** is the only component that assigns `calibrated_risk_level`, applying source
+  strength, completeness, disclosure, benign explanations, and mode-specific caps.
+- **The reporter** renders calibrated findings in neutral language and rejects uncalibrated input.
+
+`scripts/audit_package.py` is the default orchestrator that runs this whole flow. See
+[`docs/architecture.md`](docs/architecture.md) for the full design.
+
+---
+
+## What makes the results trustworthy
+
+These are the design choices that keep the audit restrained, auditable, and harder to overstate:
+
+- **Separation of duties.** Detectors only suggest; the calibrator decides. Legacy hand-written
+  findings are rejected — every finding must come from a validated detector candidate.
+- **Provenance-aware calibration.** A figure that matches its declared raw is reported as
+  *positive traceability evidence*. But an author-written manifest line cannot bury a real
+  duplicate: if two panels are declared "same field / same membrane" yet are detected as a
+  whole-image near-duplicate, the pipeline reports a `manifest_conflict` requiring raw records.
+- **No silent "clean."** Every report and `AUDIT_JSON_SUMMARY` carries an `audit_coverage` block
+  listing which modules ran, which did not, how many image panels were screened, and how many
+  image files were unreadable. An empty finding list within scope is never presented as a
+  verified-correct manuscript.
+- **Fail-closed contracts.** Detector, calibrated-finding, and summary outputs are schema-validated.
+  If `jsonschema` is unavailable the pipeline stops rather than silently degrading. A package with
+  no runnable detector yields an explicit `audit_coverage_gap` (R1), and a detector that crashes
+  yields a `detector_execution_failure` (R1) while preserving the other modules' output.
+- **Risk caps that match the evidence.** Weak statistical/forensic patterns cap at R2;
+  completeness gaps at R1; public-material-only triage at R3; `R4` requires a tagged direct
+  contradiction.
+
+---
+
+## Repository layout
+
+| Path | Purpose |
+| --- | --- |
+| `skill/biomed-research-integrity-auditor/` | The installable Codex skill (instructions, templates, references, helper scripts). |
+| `scripts/audit_package.py` | The default contract-first orchestrator for a package audit. |
+| `detectors/` | Candidate detectors (image, statistics, text) that emit evidence, not verdicts. |
+| `calibrators/` | Risk-cap and evidence-strength calibration, plus contract validation. |
+| `provenance/` | Resource-graph builders that separate expected traceability from reuse risk. |
+| `schemas/` | JSON/YAML contracts for detector output, risk rules, and source-data expectations. |
+| `examples/` | Runnable example packages (`minimal_package/`, `full_presubmission_package/`). |
+| `docs/self-audit-guide.md` | Non-developer guide to preparing materials and reading the report. |
+| `docs/architecture.md`, `docs/design-notes.md` | Pipeline architecture and design rationale. |
+| `evals/` | Neutral synthetic packages, the eval harness, and ground truth. |
+| `benchmarks/` | True-PDF, scanned-PDF OCR, and real-image regression benchmarks. |
+
+---
+
+## For developers and evaluators
+
+### Run the audit on a synthetic case
 
 ```bash
 python3 scripts/audit_package.py evals/cases/case_004 --output-dir audit_outputs/case_004
 ```
 
-The orchestrator inventories the package, runs detector scripts, validates detector JSON with `schemas/detector_output.schema.json`, joins context for disclosed reuse, applies `schemas/risk_rules.yaml`, validates calibrated findings, and writes an audit report plus `AUDIT_JSON_SUMMARY.json`.
-Schema validation requires `jsonschema`; if it is unavailable, the pipeline fails closed instead of falling back to partial contract checks.
-If no detector can run on the supplied package, the pipeline emits an explicit `audit_coverage_gap` R1 finding rather than treating the package as clean.
-If an individual detector exits non-zero or writes invalid JSON, the pipeline preserves other detector outputs and emits a `detector_execution_failure` R1 finding for the failed module.
-The calibrator accepts detector-candidate payloads only; legacy hand-written findings are rejected as inputs.
-Risk-rule keys are validated, including mode-specific `missing_source_data_max` caps and `report_as: positive_evidence` routing for R0 traceability candidates.
+### Non-LLM detector baseline
 
-The pipeline is provenance-aware: figure-panel similarity to a declared raw/source image is reported as positive traceability evidence, while unmapped figure-to-raw similarity is capped as an `R1` traceability gap rather than an `R3` image-reuse concern.
-A declared figure-to-figure same-field/same-membrane relationship cannot clear a verifiable whole-image near-duplicate; that pair is reported as an unverifiable `manifest_conflict` requiring raw records, so an author-written manifest line cannot silently suppress a real duplicate.
-The JSON summary includes both risk findings and machine-readable positive provenance, so clean traceability can be tested separately from unresolved gaps.
-Every report and `AUDIT_JSON_SUMMARY` also includes an `audit_coverage` block (modules executed, modules not run, image panels screened, unreadable image files, detector failures, and a scope note), so an empty finding list within scope is not mistaken for a verified-correct manuscript.
-The image pipeline also includes a conservative local patch screen that exports evidence crops for cross-image region reuse and same-image copy-move candidates. Patch similarity remains a detector candidate: declared traceability and same-field/channel relationships are excluded before risk calibration, and `R4` still requires a direct contradiction tag.
-The statistics pipeline screens CSV, TSV, and XLSX source-data tables. Legacy `.xls` files may be inventoried as source material, but they are not treated as supported detector input.
-The text pipeline includes a package-internal overlap screen for supplied manuscript, supplementary, draft, thesis, preprint, and lab-prior-paper text. The default orchestrator can also run privacy-aware external phrase-search triage with query/result provenance. It is not a web-scale plagiarism search; findings remain section-aware overlap candidates and must be calibrated against disclosure, citation, and journal-policy context.
-
-Structured figure assembly manifests are preferred when available:
-
-```csv
-figure_panel,source_record,relation_type,modality,notes
-figures/Figure_1A_control.png,raw_images/acquisition_A001.png,declared_derived_from,microscopy,control representative image
-```
-
-Manifest precedence is `assembly_manifest.csv` or `.yaml`, then parsed text manifests, then filename-derived figure-source maps.
-
-Create prompts for blind testing:
-
-```bash
-python3 evals/run_eval.py generate-prompts
-```
-
-Run each prompt against an agent that has access to the skill and the target `cases/case_XXX` package, then save its report as:
-
-```text
-evals/outputs/case_001.md
-evals/outputs/case_002.md
-...
-```
-
-Each report must end with one fenced JSON block labeled `AUDIT_JSON_SUMMARY`. Score the outputs:
-
-```bash
-python3 evals/run_eval.py score
-```
-
-The scorecard is written to `evals/scorecards/`.
-
-A persisted Codex-orchestrated eval run is archived at
-[`evals/llm_runs/2026-06-30-codex-orchestrated/`](evals/llm_runs/2026-06-30-codex-orchestrated/).
-It scored 30/30 synthetic cases with 0 boundary violations and 0 risk-cap violations. This is
-evidence that the current harness was executed and retained; it is not an independent third-party
-blinded LLM validation.
-
-Run the non-LLM detector baseline:
+This delegates to the orchestrator and isolates detector/calibration behavior from any LLM:
 
 ```bash
 python3 evals/run_script_baseline.py --case case_004
-python3 evals/run_script_baseline.py --case case_010
-python3 evals/run_script_baseline.py --case case_020
-python3 evals/run_script_baseline.py --case case_026
 ```
 
-Run the true-PDF benchmark:
-
-```bash
-python3 benchmarks/true_pdf/run_true_pdf_benchmark.py
-```
-
-This benchmark verifies that a true binary PDF with compressed machine-readable text is extracted before package-internal text-overlap screening, while still confirming the expected text is not visible as raw PDF bytes.
-
-Run the scanned-PDF OCR benchmark when OCR runtime dependencies are available:
-
-```bash
-python3 benchmarks/scanned_pdf/run_scanned_pdf_benchmark.py
-```
-
-This benchmark creates an image-only PDF and verifies that OCR text can feed the package-internal text-overlap detector. Local `make validate` skips it if `tesseract`, PyMuPDF, or pytesseract are unavailable; CI installs `tesseract-ocr` and runs this benchmark without `--skip-if-unavailable`, making OCR a required gate for pushes and pull requests.
-
-Run the real-image benchmark:
-
-```bash
-python3 benchmarks/real_image/run_real_image_benchmark.py
-```
-
-This benchmark uses a downscaled public-domain National Cancer Institute microscopy image to test duplicate detection on real image texture rather than hand-drawn synthetic shapes.
-It also generates a 16-bit TIFF microscopy-derived pair to verify that image detectors normalize high-bit-depth grayscale inputs before hashing.
-
-Run an explicit external literature/library phrase search:
-
-```bash
-python3 detectors/text/external_literature_search.py <package_dir> --provider europepmc --output external_literature_candidates.json
-```
-
-The default audit orchestrator also accepts `--external-literature-provider auto|none|fixture|europepmc|crossref`. `auto` uses a package fixture when present, runs Europe PMC in `external_public_material` mode, and stays offline for private internal audits unless a provider is explicitly requested. External search is a candidate-finding aid against Europe PMC, Crossref, or a fixture file, not a plagiarism database or verdict.
-
-CI also asserts key script-baseline audit outputs against `evals/ground_truth/` with:
+After baseline audit outputs have been generated, check them against `evals/ground_truth/`:
 
 ```bash
 python3 evals/assert_audit_outputs.py --outputs-root audit_outputs
 ```
 
-## Regenerate Synthetic Cases
+### Blind evaluation harness
 
-The generated cases are already committed. To regenerate them:
+Generate prompts, run them against an agent that has the skill and a single `cases/case_XXX`
+package, save each report to `evals/outputs/case_XXX.md` (ending in one `AUDIT_JSON_SUMMARY`
+block), then score:
 
 ```bash
-python3 -m pip install -r requirements.txt
+python3 evals/run_eval.py generate-prompts
+python3 evals/run_eval.py score          # scorecards land in evals/scorecards/
+```
+
+The harness rewards **restraint** as much as recall: a model fails by over-claiming, ignoring
+benign explanations, exceeding risk caps, or using verdict language — not just by missing a risk.
+
+**Blind-testing note:** the tested agent must receive only the case package path, never
+`ground_truth/`, `outputs/`, `scorecards/`, or `prompts/`. For stricter evaluation, copy the case
+into an isolated workspace and keep the answer key outside it.
+
+### Archived eval run
+
+A persisted run is kept at
+[`evals/llm_runs/2026-06-30-codex-orchestrated/`](evals/llm_runs/2026-06-30-codex-orchestrated/):
+30/30 synthetic cases passed with 0 boundary violations and 0 risk-cap violations. This shows the
+harness was executed and retained — it is **not** an independent, third-party, blinded LLM
+validation, and it does not measure performance on real manuscripts.
+
+### Benchmarks
+
+```bash
+python3 benchmarks/true_pdf/run_true_pdf_benchmark.py        # compressed machine-text PDF extraction
+python3 benchmarks/scanned_pdf/run_scanned_pdf_benchmark.py  # image-only PDF OCR (needs tesseract/PyMuPDF/pytesseract)
+python3 benchmarks/real_image/run_real_image_benchmark.py    # real public-domain microscopy + 16-bit TIFF
+```
+
+`make validate` skips the scanned-PDF benchmark when the OCR runtime is missing; CI installs
+`tesseract-ocr` and runs it as a required gate.
+
+### External literature phrase search
+
+Off by default for private audits. Run it explicitly, or let the orchestrator decide:
+
+```bash
+python3 detectors/text/external_literature_search.py <package_dir> --provider europepmc --output external_literature_candidates.json
+```
+
+The orchestrator's `--external-literature-provider auto|none|fixture|europepmc|crossref` uses a
+package fixture when present, queries Europe PMC in `external_public_material` mode, and stays
+offline for private internal audits unless you request a provider. Results are candidates for
+manual review, never a plagiarism database or verdict.
+
+### Regenerate synthetic cases
+
+The cases are committed; regenerate them deterministically with:
+
+```bash
 python3 evals/generate_synthetic_cases.py
 python3 evals/run_eval.py generate-prompts
 ```
 
-## Blind-Testing Note
+---
 
-The `ground_truth/` directory is included so the harness is reproducible. A tested agent should only receive the case package path and must not read `ground_truth/`, `outputs/`, `scorecards/`, or `prompts/`. For stricter evaluation, copy the target case package into an isolated workspace and keep the answer key outside the agent's accessible directory.
+## Limitations
 
-## Current Limitations
+- Image, local-patch, and same-image copy-move detection are single-package only; they do not
+  search across papers or external image corpora.
+- Text-overlap screening is package-internal; the optional external phrase search is triage, not
+  exhaustive plagiarism-database coverage or a verdict.
+- True-PDF intake handles machine-readable text and OCR-capable scanned PDFs; figure/caption
+  extraction is limited.
+- Image intake normalizes high-bit-depth grayscale TIFFs, but broad validation on
+  multi-frame/Z-stack/channel microscopy remains future work.
+- Statistical screening covers p-value range/validity, SD/SEM/n consistency, integer-count
+  feasibility, and weak forensic patterns. Weak digit/rounding screens need at least 8 comparable
+  values, and integer-count feasibility needs n ≥ 6 while respecting reported precision. It does
+  **not** implement Benford-style first-digit analysis or p-value clustering/distribution tests —
+  those remain manual checks.
+- Public-material review is capped by missing source/raw records and must never be read as a
+  misconduct verdict.
 
-- Local patch and same-image copy-move detection are single-package only; they do not search across papers or external image corpora.
-- Default text overlap screening is package-internal, with privacy-aware external phrase-search triage available through the orchestrator; it does not perform exhaustive plagiarism-database coverage or a plagiarism verdict.
-- True PDF intake supports machine-readable text and OCR-capable scanned PDFs when OCR runtime dependencies are available; figure/caption extraction remains limited.
-- Image intake now normalizes high-bit-depth grayscale TIFF-style inputs, but broad validation on multi-frame/Z-stack/channel microscopy corpora remains future work.
-- Statistical screening checks p-value range/validity, SD/SEM/n consistency, integer-count feasibility, and weak forensic patterns. Weak digit/rounding screens require at least 8 comparable values by default, and integer-count feasibility requires n >= 6 while respecting reported precision. It does not perform Benford-style first-digit distribution analysis or p-value clustering/distribution tests; those remain manual statistical checks and are not implemented as detectors.
-- Public-material review remains capped by missing source/raw records and must not be treated as a misconduct verdict.
+---
 
 ## License
 
-MIT. See `LICENSE`.
+MIT. See [`LICENSE`](LICENSE).
