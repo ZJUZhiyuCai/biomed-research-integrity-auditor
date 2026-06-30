@@ -142,7 +142,7 @@ Detector candidates must not include `risk_level` or `calibrated_risk_level`.
 
 ## Human Report Contract
 
-`audit-report.md` is a human-first bilingual Markdown report, not a detector payload dump. It starts with a Quick Read, scope, audit coverage, claim coverage when supplied, materials needed, verified traceability evidence, risk register, finding cards, action checklist, technical appendix, and integrity boundary. Finding cards summarize observations, reader-facing evidence metrics, benign explanations, resolving materials, and next actions. Raw detector payloads remain in `calibrated_findings.json`, detector output files, and the final machine-readable summary.
+`audit-report.md` is a human-first bilingual Markdown report, not a detector payload dump. It starts with a Quick Read, scope, audit coverage, claim coverage when supplied, methodology readiness, materials needed, verified traceability evidence, risk register, finding cards, action checklist, technical appendix, and integrity boundary. Finding cards summarize observations, reader-facing evidence metrics, benign explanations, resolving materials, and next actions. Raw detector payloads remain in `calibrated_findings.json`, detector output files, and the final machine-readable summary.
 
 ## Audit Summary Contract
 
@@ -150,8 +150,9 @@ Reports end with exactly one `AUDIT_JSON_SUMMARY` block. In addition to calibrat
 
 - `positive_provenance`: declared figure-to-raw/source traceability entries such as `expected_traceability`.
 - `traceability_gaps`: unresolved figure-to-raw/source similarities capped as R1 completeness gaps.
-- `audit_coverage`: which detector modules executed, which modules were not run (including offline external search and the always-manual methodology/reporting-standard compliance checks), image panels screened, unreadable image files, source tables screened, detector failures, and a scope note. This lets a reader separate "screened and clean within scope" from "not screened", so an empty finding list is not mistaken for a verified-correct manuscript.
+- `audit_coverage`: which detector modules executed, which modules were not run (including offline external search and the manual methodology/reporting-standard compliance determination), image panels screened, unreadable image files, source tables screened, detector failures, and a scope note. This lets a reader separate "screened and clean within scope" from "not screened", so an empty finding list is not mistaken for a verified-correct manuscript.
 - `claim_coverage`: optional claim-to-evidence completeness counts when `claim_manifest.csv` is supplied. This records whether claims are linked to source data, raw records, analysis code, and protocols; it does not validate scientific truth.
+- `methodology_checklist`: structured manual-review readiness prompts for wet-lab, animal, clinical, cell, flow, and omics reporting standards. It records supporting-material availability and missing categories; it does not determine ARRIVE/CONSORT/ICMJE/MIFlowCyt/omics compliance.
 
 Positive provenance is not proof of authenticity; it only records traceability within supplied materials. Audit coverage is descriptive scope, not a quality score.
 
@@ -162,8 +163,9 @@ Positive provenance is not proof of authenticity; it only records traceability w
 - `audit_snapshot.json`: audit id, tool version, package root hash, and per-file SHA-256 hashes.
 - `file_hash_manifest.json`: compact file hash manifest for leave-behind review.
 - `claim_coverage.json` / `claim_coverage.csv`: claim-to-evidence coverage from `claim_manifest.csv` if supplied.
+- `methodology_checklist.json` / `methodology_checklist.csv`: reporting-standard readiness checklist for manual review.
 - `missing_materials.csv`, `verified_traceability.csv`, and `unresolved_actions.csv`: CSV exports for co-author review.
-- `submission_qc_packet/`: a bundled packet containing the report, machine-readable summary, coverage, calibrated findings, hash manifest, claim coverage, unresolved actions, and `author_signoff.yaml`.
+- `submission_qc_packet/`: a bundled packet containing the report, machine-readable summary, coverage, calibrated findings, hash manifest, claim coverage, methodology checklist, unresolved actions, and `author_signoff.yaml`.
 
 These outputs are versioning and review artifacts. They must not be displayed as a pass/fail approval, integrity score, or clean-manuscript certificate.
 

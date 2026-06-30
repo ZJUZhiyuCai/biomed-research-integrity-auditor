@@ -72,6 +72,7 @@ MODULE_LABELS = {
     "statistics_consistency": ("Statistical consistency screen", "统计一致性筛查"),
     "pseudoreplication": ("Unit-of-analysis screen", "分析单位/伪重复筛查"),
     "package_internal_text_overlap": ("Package-internal text-overlap screen", "包内文本重叠筛查"),
+    "methodology_readiness_checklist": ("Methodology readiness checklist", "方法学准备度清单"),
 }
 MATERIAL_LABELS = {
     "ethics_irb": ("Ethics / IRB records", "伦理/IRB 文件"),
@@ -488,6 +489,7 @@ def build_summary(
     positive_evidence: list[dict[str, Any]] | None = None,
     coverage: dict[str, Any] | None = None,
     claim_coverage: dict[str, Any] | None = None,
+    methodology_checklist: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     caps = []
     normalized = normalized_mode(mode)
@@ -510,6 +512,7 @@ def build_summary(
         "findings": [summary_finding(item) for item in findings],
         **({"audit_coverage": coverage} if coverage else {}),
         **({"claim_coverage": claim_coverage} if claim_coverage else {}),
+        **({"methodology_checklist": methodology_checklist} if methodology_checklist else {}),
     }
 
 
@@ -587,6 +590,116 @@ def render_claim_coverage(claim_coverage: dict[str, Any] | None) -> list[str]:
     scope_note = claim_coverage.get("scope_note")
     if scope_note:
         lines += [f"> {scope_note}", ""]
+    return lines
+
+
+def methodology_status_label(status: str) -> str:
+    labels = {
+        "manual_review_ready": "Manual review ready / 可人工复核",
+        "manual_review_limited": "Manual review limited / 人工复核材料有限",
+        "materials_supplied_manual_review_required": "Materials supplied; manual review required / 已有材料，需人工复核",
+        "partial_supporting_materials_manual_review_limited": "Partial support; manual review limited / 部分支撑材料，人工复核受限",
+        "supporting_material_missing": "Supporting material missing / 缺少支撑材料",
+        "not_requested": "Not requested for this domain scope / 本次领域范围未请求",
+    }
+    return labels.get(status, humanize(status))
+
+
+def render_methodology_checklist(methodology_checklist: dict[str, Any] | None) -> list[str]:
+    if not methodology_checklist:
+        return []
+    lines = ["## Methodology Readiness / 方法学准备度", ""]
+    lines += [
+        methodology_checklist.get(
+            "boundary_note",
+            "This checklist records supporting-material readiness for manual methodology review; it is not an automated compliance determination.",
+        ),
+        "",
+        methodology_checklist.get(
+            "boundary_note_zh",
+            "本清单记录人工方法学复核的支撑材料准备度；不自动判定合规。",
+        ),
+        "",
+    ]
+    totals = methodology_checklist.get("totals", {}) or {}
+    lines += [table([
+        ["Item / 项目", "Count / 数量"],
+        ["Requested modules / 本次请求模块", str(totals.get("modules_requested", 0))],
+        ["Checks ready for manual review / 可进入人工复核的检查项", str(totals.get("checks_ready_for_manual_review", 0))],
+        ["Checks with partial support / 部分支撑材料的检查项", str(totals.get("checks_partial_supporting_materials", 0))],
+        ["Checks missing supporting materials / 缺少支撑材料的检查项", str(totals.get("checks_missing_supporting_materials", 0))],
+    ])]
+
+    requested_modules = [module for module in methodology_checklist.get("modules", []) or [] if module.get("requested")]
+    if not requested_modules:
+        lines += [
+            "No methodology modules were requested by the domain scope.",
+            "",
+            "本次领域范围未请求具体方法学模块。",
+            "",
+        ]
+        return lines
+
+    module_rows = [["Module / 模块", "Standard / 标准", "Readiness / 准备度"]]
+    for module in requested_modules:
+        module_rows.append([
+            f"{module.get('label_en', '')} / {module.get('label_zh', '')}",
+            str(module.get("standard", "")),
+            methodology_status_label(str(module.get("status", ""))),
+        ])
+    lines += [table(module_rows)]
+
+    missing_rows = [["Module / 模块", "Check / 检查项", "Status / 状态", "Missing support / 缺少支撑", "Action / 动作"]]
+    for module in requested_modules:
+        for check in module.get("checks", []) or []:
+            if check.get("status") not in {"supporting_material_missing", "partial_supporting_materials_manual_review_limited"}:
+                continue
+            missing_rows.append([
+                f"{module.get('label_en', '')} / {module.get('label_zh', '')}",
+                f"{check.get('label_en', '')} / {check.get('label_zh', '')}",
+                methodology_status_label(str(check.get("status", ""))),
+                ", ".join(check.get("missing_material_categories", []) or []),
+                f"{check.get('recommended_action_en', '')} / {check.get('recommended_action_zh', '')}",
+            ])
+    if len(missing_rows) > 1:
+        lines += [
+            "**Material gaps for methodology review / 方法学复核材料缺口**",
+            "",
+            table(missing_rows),
+        ]
+    else:
+        lines += [
+            "All requested methodology modules have at least one supporting material category available for manual review.",
+            "",
+            "所有请求的方法学模块均至少具备一类可供人工复核的支撑材料。",
+            "",
+        ]
+
+    ready_rows = [["Module / 模块", "Check / 检查项", "Status / 状态", "Supplied support / 已提供支撑"]]
+    for module in requested_modules:
+        for check in module.get("checks", []) or []:
+            if check.get("status") not in {
+                "materials_supplied_manual_review_required",
+                "partial_supporting_materials_manual_review_limited",
+            }:
+                continue
+            ready_rows.append([
+                f"{module.get('label_en', '')} / {module.get('label_zh', '')}",
+                f"{check.get('label_en', '')} / {check.get('label_zh', '')}",
+                methodology_status_label(str(check.get("status", ""))),
+                ", ".join(check.get("supplied_material_categories", []) or []),
+            ])
+    if len(ready_rows) > 1:
+        lines += [
+            "**Ready for human review / 可人工复核项目**",
+            "",
+            table(ready_rows),
+        ]
+    lines += [
+        "> A ready item means supporting files exist; it does not mean the method is adequate or policy-compliant.",
+        "> “可复核”只表示存在支撑文件；不代表方法充分或符合政策。",
+        "",
+    ]
     return lines
 
 
@@ -725,6 +838,18 @@ def render_action_checklist(summary: dict[str, Any], manifest: dict[str, Any], f
             missing_material_label(category),
             f"Provide or document why this material is unavailable: {item.get('reason', category)}",
         ))
+    methodology = summary.get("methodology_checklist") or {}
+    for module in methodology.get("modules", []) or []:
+        if not module.get("requested"):
+            continue
+        for check in module.get("checks", []) or []:
+            if check.get("status") not in {"supporting_material_missing", "partial_supporting_materials_manual_review_limited"}:
+                continue
+            actions.append((
+                "R1",
+                f"{module.get('label_en', module.get('module_id', 'Methodology'))}",
+                str(check.get("recommended_action_en") or "Add supporting material for methodology review."),
+            ))
     if not actions:
         lines += [
             "- Preserve this report with the reviewed package snapshot.",
@@ -773,11 +898,21 @@ def render_report(
     positive_evidence: list[dict[str, Any]] | None = None,
     coverage: dict[str, Any] | None = None,
     claim_coverage: dict[str, Any] | None = None,
+    methodology_checklist: dict[str, Any] | None = None,
 ) -> str:
     normalized = normalized_mode(mode)
     title = REPORT_TITLES.get(normalized, REPORT_TITLES["internal_presubmission"])
     positive_evidence = positive_evidence or []
-    summary = build_summary(mode, case_id, manifest, findings, positive_evidence, coverage, claim_coverage)
+    summary = build_summary(
+        mode,
+        case_id,
+        manifest,
+        findings,
+        positive_evidence,
+        coverage,
+        claim_coverage,
+        methodology_checklist,
+    )
     validate_instance(summary, SUMMARY_SCHEMA, "audit summary")
     lines = [f"# {title}", ""]
     lines += render_quick_read(summary, manifest, findings, coverage, normalized)
@@ -790,6 +925,7 @@ def render_report(
     ]
     lines += render_coverage(coverage)
     lines += render_claim_coverage(claim_coverage)
+    lines += render_methodology_checklist(methodology_checklist)
 
     lines += ["## Materials Needed / 需要补充的材料", ""]
     missing_rows = [["Material / 材料", "Risk / 风险", "Why needed / 为什么需要"]]
@@ -875,6 +1011,7 @@ def main() -> int:
     parser.add_argument("--positive-evidence", type=Path, action="append", default=[])
     parser.add_argument("--coverage", type=Path)
     parser.add_argument("--claim-coverage", type=Path)
+    parser.add_argument("--methodology-checklist", type=Path)
     parser.add_argument("--case-id")
     parser.add_argument("--output", type=Path, default=Path("audit-report.md"))
     args = parser.parse_args()
@@ -886,8 +1023,18 @@ def main() -> int:
     positive_evidence = normalize_positive_evidence(positive_payloads)
     coverage = load_json(args.coverage, None) if args.coverage else None
     claim_coverage = load_json(args.claim_coverage, None) if args.claim_coverage else None
+    methodology_checklist = load_json(args.methodology_checklist, None) if args.methodology_checklist else None
     args.output.write_text(
-        render_report(args.mode, manifest, findings, args.case_id, positive_evidence, coverage, claim_coverage),
+        render_report(
+            args.mode,
+            manifest,
+            findings,
+            args.case_id,
+            positive_evidence,
+            coverage,
+            claim_coverage,
+            methodology_checklist,
+        ),
         encoding="utf-8",
     )
     print(json.dumps({"output": str(args.output), "findings": len(findings)}, indent=2))

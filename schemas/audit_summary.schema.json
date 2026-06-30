@@ -103,6 +103,72 @@
         "unresolved_claims": {"type": "array"},
         "scope_note": {"type": "string"}
       }
+    },
+    "methodology_checklist": {
+      "type": "object",
+      "required": ["version", "scope", "requested_domains", "modules", "totals", "boundary_note"],
+      "properties": {
+        "version": {"type": "string"},
+        "scope": {"type": "string"},
+        "requested_domains": {"type": "array", "items": {"type": "string"}},
+        "boundary_note": {"type": "string"},
+        "boundary_note_zh": {"type": "string"},
+        "totals": {
+          "type": "object",
+          "properties": {
+            "modules_requested": {"type": "integer"},
+            "checks_ready_for_manual_review": {"type": "integer"},
+            "checks_partial_supporting_materials": {"type": "integer"},
+            "checks_missing_supporting_materials": {"type": "integer"},
+            "checks_not_requested": {"type": "integer"}
+          }
+        },
+        "modules": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["module_id", "label_en", "label_zh", "standard", "requested", "status", "checks"],
+            "properties": {
+              "module_id": {"type": "string"},
+              "label_en": {"type": "string"},
+              "label_zh": {"type": "string"},
+              "standard": {"type": "string"},
+              "domains": {"type": "array", "items": {"type": "string"}},
+              "requested": {"type": "boolean"},
+              "status": {"type": "string"},
+              "checks": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "check_id",
+                    "label_en",
+                    "label_zh",
+                    "status",
+                    "supporting_material_categories",
+                    "supplied_material_categories",
+                    "missing_material_categories",
+                    "recommended_action_en",
+                    "recommended_action_zh"
+                  ],
+                  "properties": {
+                    "check_id": {"type": "string"},
+                    "label_en": {"type": "string"},
+                    "label_zh": {"type": "string"},
+                    "status": {"type": "string"},
+                    "supporting_material_categories": {"type": "array", "items": {"type": "string"}},
+                    "supplied_material_categories": {"type": "array", "items": {"type": "string"}},
+                    "missing_material_categories": {"type": "array", "items": {"type": "string"}},
+                    "supplied_files": {"type": "object"},
+                    "recommended_action_en": {"type": "string"},
+                    "recommended_action_zh": {"type": "string"}
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
     }
   }
 }

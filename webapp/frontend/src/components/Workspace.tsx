@@ -11,6 +11,7 @@ import { ProvenancePanel } from "./ProvenancePanel";
 import { MissingMaterialsPanel } from "./MissingMaterialsPanel";
 import { ReportPanel } from "./ReportPanel";
 import { PackagePrepPanel } from "./PackagePrepPanel";
+import { MethodologyPanel } from "./MethodologyPanel";
 import { WorkspaceSkeleton } from "./Skeleton";
 import { EmptyState, StatusPill } from "./primitives";
 
@@ -143,6 +144,7 @@ export function Workspace(props: WorkspaceProps) {
             </div>
           )}
           <CoveragePanel coverage={detail.coverage} t={t} />
+          <MethodologyPanel checklist={detail.audit_summary?.methodology_checklist} t={t} />
           <section className="two-column">
             <ProvenancePanel summary={detail.audit_summary} t={t} />
             <MissingMaterialsPanel summary={detail.audit_summary} t={t} />

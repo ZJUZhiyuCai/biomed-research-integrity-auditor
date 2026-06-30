@@ -1505,8 +1505,12 @@ class EndToEndTests(unittest.TestCase):
                 coverage = summary["audit_coverage"]
                 self.assertTrue(coverage["modules_executed"])
                 self.assertTrue(coverage["scope_note"])
+                self.assertIn("methodology_readiness_checklist", coverage["modules_executed"])
+                self.assertIn("methodology_checklist", summary)
+                self.assertGreaterEqual(summary["methodology_checklist"]["totals"]["modules_requested"], 1)
                 report = (out / "audit-report.md").read_text(encoding="utf-8")
                 self.assertIn("## Audit Coverage", report)
+                self.assertIn("## Methodology Readiness", report)
                 if name == "full_presubmission_package":
                     # The full example demonstrates verified figure-to-raw traceability.
                     self.assertGreaterEqual(len(summary["positive_provenance"]), 2)
@@ -1540,16 +1544,25 @@ class EndToEndTests(unittest.TestCase):
             summary = json.loads((out / "AUDIT_JSON_SUMMARY.json").read_text(encoding="utf-8"))
             self.assertIn("claim_coverage", summary)
             self.assertEqual(summary["claim_coverage"]["claims_with_raw_records"], 2)
+            self.assertIn("methodology_checklist", summary)
+            self.assertGreaterEqual(
+                summary["methodology_checklist"]["totals"]["checks_partial_supporting_materials"],
+                0,
+            )
 
             pipeline_summary = json.loads((out / "pipeline_summary.json").read_text(encoding="utf-8"))
             packet = pipeline_summary["submission_qc_packet"]
             self.assertIn("author_signoff.yaml", packet["files"])
             self.assertIn("audit-report.html", packet["files"])
+            self.assertIn("methodology_checklist.json", packet["files"])
+            self.assertIn("methodology_checklist.csv", packet["files"])
             self.assertIn("unresolved_actions.csv", packet["files"])
             self.assertTrue((out / "unresolved_actions.csv").is_file())
             self.assertTrue((out / "missing_materials.csv").is_file())
+            self.assertTrue((out / "methodology_checklist.csv").is_file())
             self.assertTrue((out / "verified_traceability.csv").is_file())
             self.assertIn("## Claim Coverage", (out / "audit-report.md").read_text(encoding="utf-8"))
+            self.assertIn("## Methodology Readiness", (out / "audit-report.md").read_text(encoding="utf-8"))
 
     def test_re_audit_diff_script_compares_submission_qc_metrics(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1618,6 +1631,7 @@ class EndToEndTests(unittest.TestCase):
             summary = json.loads((out / "AUDIT_JSON_SUMMARY.json").read_text(encoding="utf-8"))
             coverage = summary["audit_coverage"]
             self.assertIn("statistics_consistency", coverage["modules_executed"])
+            self.assertIn("methodology_readiness_checklist", coverage["modules_executed"])
             self.assertTrue(any("image" in item for item in coverage["modules_not_executed"]))
             self.assertTrue(any("methodology" in item for item in coverage["modules_not_executed"]))
             self.assertTrue(coverage["scope_note"])

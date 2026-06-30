@@ -35,8 +35,8 @@ checked. Always read it.
 
 - A misconduct, fraud, fabrication, or plagiarism detector or verdict.
 - A web-scale plagiarism database search.
-- A methodology-compliance checker (ARRIVE / CONSORT / ICMJE / MIFlowCyt / omics accession are
-  guided manual checklists, not automated screens).
+- An automated methodology-compliance decision. ARRIVE / CONSORT / ICMJE / MIFlowCyt / omics
+  accession review is organized as a structured manual-readiness checklist.
 - A replacement for human review by you, your co-authors, or the journal.
 
 If the report ever reads like an accusation, you are misreading it. Use neutral language such
@@ -114,8 +114,9 @@ Outputs land in `audit_outputs/my_package/`:
 - `coverage.json`, `calibrated_findings.json`, and detector outputs — supporting detail.
 - `audit_snapshot.json` / `file_hash_manifest.json` — file hashes for the exact package version reviewed.
 - `claim_coverage.json` / `claim_coverage.csv` — claim-to-evidence coverage when `claim_manifest.csv` is supplied.
+- `methodology_checklist.json` / `methodology_checklist.csv` — supporting-material readiness prompts for manual methodology review.
 - `submission_qc_packet/` — a leave-behind packet with unresolved actions, verified traceability,
-  missing materials, file hashes, claim coverage, and an author sign-off template.
+  missing materials, file hashes, claim coverage, methodology checklist, and an author sign-off template.
 
 ---
 
@@ -133,8 +134,8 @@ python3 scripts/audit_package.py examples/minimal_package --output-dir audit_out
 What to expect: overall risk **R1**, no findings, and a **Materials Needed / 需要补充的材料**
 table (figures, raw images, protocols, etc.) because the package is intentionally tiny. The Audit Coverage
 section shows that statistics and text screening ran, image screening was skipped (no images),
-and external/methodology checks were not run. This is the honest "small scope, can't conclude
-much" result.
+external search stayed offline, and methodology readiness is only a manual checklist. This is
+the honest "small scope, can't conclude much" result.
 
 ### Full pre-submission example (realistic layout)
 
@@ -227,8 +228,8 @@ silently dropped — but they are not screened.
 
 **"It didn't catch an obvious problem."**
 The automated detectors are a screen, not a guarantee. Coverage is intentionally honest about
-this. Combine the tool with manual review and the methodology checklists in
-`skill/biomed-research-integrity-auditor/references/`.
+this. Combine the tool with manual review of `methodology_checklist.json` / `.csv` and the
+deeper reference notes in `skill/biomed-research-integrity-auditor/references/`.
 
 ---
 
@@ -236,9 +237,10 @@ this. Combine the tool with manual review and the methodology checklists in
 
 1. Resolve every R4, and explain or correct every R3, before submission.
 2. Add raw/source records for the R1 completeness gaps you can close.
-3. Do the manual checks the tool does not automate: methodology/reporting-standard compliance,
-   and any external literature comparison.
+3. Work through `methodology_checklist.csv`: "materials supplied" means ready for human review,
+   not compliant. Add missing protocol, ethics, registration, FCS, accession, or analysis-code
+   records where needed.
 4. Keep `AUDIT_JSON_SUMMARY.json` with your submission records as a quality-control trail.
 
 A complete self-audit is **automated screening + your manual review of raw/source records +
-methodology checklists** — not the tool alone.
+methodology checklist items** — not the tool alone.

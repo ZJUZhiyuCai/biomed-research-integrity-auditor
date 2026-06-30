@@ -9,6 +9,9 @@
   from `scope_gap` and `reference_only` records.
 - A conservative low-contrast autocontrast probe for same-image copy-move screening, guarded by
   same-displacement tile clustering and positive/negative synthetic regression tests.
+- Structured methodology/reporting-standard readiness output (`methodology_checklist.json` and
+  `.csv`) covering wet-lab, animal, clinical, cell, flow, and omics manual-review prompts, with
+  bilingual report and webapp panels.
 
 ### Changed
 - The archived `public_smoke_2026-06-30` result now reports 13 ORI images screened, 2/2
@@ -16,6 +19,8 @@
   same-section/low-contrast image recall work.
 - Same-image copy-move screening preserves the existing luma path while applying the stricter
   displacement-cluster requirement only to low-contrast enhanced tiles.
+- Audit coverage now records the methodology readiness checklist as executed while still stating
+  that ARRIVE/CONSORT/ICMJE/MIFlowCyt/omics compliance determinations require manual review.
 
 ## v0.6.1 - Human Bilingual Reports and Public Smoke Benchmark
 

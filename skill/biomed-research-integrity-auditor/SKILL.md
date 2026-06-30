@@ -56,7 +56,7 @@ Use when the user is responding to reviewer, journal, or PubPeer-style concerns.
    - Treat unsupported keys in `schemas/risk_rules.yaml` as configuration errors, not comments.
    - If files are missing, keep them as R1 completeness gaps before doing deeper analysis.
    - Never imply that an audit is complete when source data or raw records are unavailable.
-   - The orchestrator also writes `audit_snapshot.json`, `file_hash_manifest.json`, `claim_coverage.*`, CSV review exports, and `submission_qc_packet/`. Treat these as versioning/review artifacts, not approval certificates.
+   - The orchestrator also writes `audit_snapshot.json`, `file_hash_manifest.json`, `claim_coverage.*`, `methodology_checklist.*`, CSV review exports, and `submission_qc_packet/`. Treat these as versioning/review artifacts, not approval certificates.
    - If a package includes `claim_manifest.csv`, or the user passes `--claim-manifest`, read Claim Coverage as claim-to-evidence completeness only; it does not prove the claim is true.
    - To compare a repaired package against an earlier audit, use `scripts/compare_audit_runs.py <old_output> <new_output>` or run the new audit with `--compare-to <old_output>`.
 
@@ -108,6 +108,7 @@ Use when the user is responding to reviewer, journal, or PubPeer-style concerns.
 
 7. Audit methodology and compliance gaps.
    - Read `references/biomed-module-checklists.md` for domain-specific checks.
+   - The orchestrator emits `methodology_checklist.json` / `.csv` and renders a Methodology Readiness section. This is a structured manual-review readiness checklist, not an automated compliance verdict.
    - Animal: ARRIVE-style study design, sample size, randomization, blinding, exclusion, outcomes, statistics, sex/age/strain, humane endpoints, ethics.
    - Clinical: registration, protocol, SAP, CONSORT flow, outcomes, IRB, consent, adverse events, data sharing.
    - Cell: cell source, STR, mycoplasma, passage, antibodies/RRID, catalog/batch, controls.
@@ -127,7 +128,7 @@ Use when the user is responding to reviewer, journal, or PubPeer-style concerns.
    - Run `scripts/report_assembler.py --mode internal_presubmission --manifest manifest.json --findings calibrated_findings.json --output audit-report.md` when structured JSON is available.
    - Treat `audit-report.md` as a human-first bilingual Markdown document. Lead with Quick Read, Scope, Audit Coverage, Materials Needed, Risk Register, finding cards, and Action Checklist before the technical appendix.
    - Summarize detector evidence in readable prose and compact metrics. Do not dump raw detector JSON into the human finding cards; raw payloads belong in `calibrated_findings.json`, detector artifacts, and the final machine-readable summary.
-   - Always state audit coverage: which modules ran, which did not (offline external search, and the manual methodology/reporting-standard checks), how many image panels were screened, and any unreadable image files. An empty finding list within scope is not a clean-manuscript verdict. The default orchestrator records this as an `audit_coverage` block.
+   - Always state audit coverage: which modules ran, which did not (offline external search, and the manual methodology/reporting-standard compliance determination), how many image panels were screened, and any unreadable image files. An empty finding list within scope is not a clean-manuscript verdict. The default orchestrator records this as an `audit_coverage` block and adds a separate `methodology_checklist` readiness block.
    - End every report with exactly one fenced JSON block labeled `AUDIT_JSON_SUMMARY`; follow `templates/audit-json-summary.schema.json`.
 
 ## Risk Scale
@@ -206,6 +207,7 @@ Scripts are screening aids. Read or patch them before relying on them in unfamil
 - `scripts/build_package_manifest.py`: inventory files, classify materials, compute hashes, and create a missing-materials matrix.
 - `../../scripts/audit_package.py`: default orchestrator for package audits; validates detector, calibrated-finding, and summary contracts.
 - `../../scripts/submission_qc.py`: helper module for audit snapshots, claim coverage, submission QC packet exports, author sign-off template, and re-audit diff metrics.
+- `../../scripts/methodology_checklist.py`: structured methodology/reporting-standard readiness checklist for manual ARRIVE/CONSORT/ICMJE/MIFlowCyt/omics review.
 - `../../scripts/compare_audit_runs.py`: compare two audit output directories after remediation.
 - `../../provenance/build_resource_graph.py`: build file/resource nodes and provenance edges used for negative calibration.
 - `../../provenance/parse_assembly_manifest.py`: extract declared figure-to-raw/source links from assembly manifests without executing manifest text.

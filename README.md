@@ -28,6 +28,7 @@ pipeline**, and a **blind-evaluation harness**.
 - Record an audit snapshot with file hashes, optional claim-to-evidence coverage, and a submission QC packet.
 - Check numeric/statistical consistency in source or summary tables (SD/SEM/n, p-value range, integer counts).
 - Screen package-internal text overlap, with optional external phrase-search triage.
+- Emit a structured methodology/reporting-standard readiness checklist for manual ARRIVE / CONSORT / ICMJE / MIFlowCyt / omics review.
 - Produce a bilingual human-readable report with a Quick Read, coverage, materials needed,
   finding cards, action checklist, technical appendix, and an `R0`–`R4` risk register.
 
@@ -36,7 +37,7 @@ pipeline**, and a **blind-evaluation harness**.
 - Decide misconduct, fraud, fabrication, falsification, or plagiarism.
 - Prove a manuscript is correct or its figures authentic.
 - Run a web-scale plagiarism database search.
-- Auto-check methodology/reporting standards (ARRIVE / CONSORT / ICMJE / MIFlowCyt / omics accessions are guided **manual** checklists).
+- Determine methodology/reporting-standard compliance automatically. The checklist records supporting-material readiness for **manual** review.
 
 > **The one rule to remember:** "no issue found" only means *nothing was flagged within the
 > supplied materials and the current detector scope* — never that the work is proven correct.
@@ -76,8 +77,9 @@ Each run writes to the output directory:
 - `coverage.json`, `calibrated_findings.json`, and per-detector outputs — supporting detail.
 - `audit_snapshot.json` and `file_hash_manifest.json` — the exact package version reviewed, including SHA-256 hashes.
 - `claim_coverage.json` / `claim_coverage.csv` — claim-to-evidence coverage when `claim_manifest.csv` is supplied.
+- `methodology_checklist.json` / `methodology_checklist.csv` — manual-review readiness prompts for wet-lab, animal, clinical, cell, flow, and omics reporting.
 - `submission_qc_packet/` — a leave-behind packet with the report, coverage, unresolved actions, verified traceability,
-  missing materials, file hashes, claim coverage, and an author sign-off template.
+  missing materials, file hashes, claim coverage, methodology checklist, and an author sign-off template.
 
 To audit your own package, point the command at your folder and pick a mode
 (`--mode internal_presubmission` is the default; `external_public_material` and

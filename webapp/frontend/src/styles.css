@@ -727,6 +727,77 @@ button:disabled:hover {
   border-top: 1px dashed var(--border);
 }
 
+.methodology-panel {
+  border-left: 4px solid var(--brand);
+}
+.methodology-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(112px, 1fr));
+  gap: 8px;
+  margin-top: 14px;
+}
+.methodology-modules {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(180px, 1fr));
+  gap: 10px;
+  margin-top: 14px;
+}
+.methodology-module {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.methodology-module strong {
+  font-size: 13px;
+}
+.methodology-module span,
+.methodology-module em {
+  color: var(--muted);
+  font-size: 12px;
+  font-style: normal;
+}
+.methodology-module em {
+  color: var(--brand-ink);
+}
+.methodology-gaps {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px dashed var(--border);
+}
+.methodology-gap-row {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.9fr) minmax(260px, 1.1fr) minmax(120px, auto);
+  gap: 12px;
+  align-items: start;
+  padding: 10px 0;
+  border-top: 1px solid var(--border);
+}
+.methodology-gap-row:first-of-type {
+  border-top: 0;
+}
+.methodology-gap-row div {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.methodology-gap-row strong {
+  font-size: 13px;
+}
+.methodology-gap-row span,
+.methodology-gap-row p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+.methodology-gap-row code {
+  overflow-wrap: anywhere;
+  color: var(--text);
+}
+
 /* ---------- Package prep ---------- */
 .prep-panel {
   border-left: 4px solid var(--border-strong);
@@ -1345,6 +1416,8 @@ button:disabled:hover {
   .two-column,
   .finding-grid,
   .prep-grid,
+  .methodology-modules,
+  .methodology-gap-row,
   .relationship-form {
     grid-template-columns: 1fr;
   }
@@ -1360,6 +1433,9 @@ button:disabled:hover {
   }
   .coverage-metrics {
     grid-template-columns: repeat(3, 1fr);
+  }
+  .methodology-metrics {
+    grid-template-columns: repeat(2, 1fr);
   }
   .audit-header {
     flex-direction: column;

@@ -19,6 +19,7 @@
 - 记录本次审计的文件哈希快照、可选 claim-to-evidence 覆盖情况，并导出投稿前 QC packet。
 - 检查源数据或汇总表中的数值/统计一致性，例如 SD/SEM/n、p-value 范围、整数计数可行性。
 - 筛查包内文本重叠，并可选择运行外部短语检索 triage。
+- 输出结构化方法学/报告规范准备度清单，供 ARRIVE、CONSORT、ICMJE、MIFlowCyt、组学 accession 等人工复核使用。
 - 输出双语、人类可读的中性报告：包含 Quick Read、Audit Coverage、需要补充的材料、发现卡片、行动清单、技术附录和 `R0` 到 `R4` 风险登记。
 
 **它不能做：**
@@ -26,7 +27,7 @@
 - 判定学术不端、造假、伪造、篡改或抄袭。
 - 证明论文正确，或证明图像真实。
 - 进行全网级查重或接入商业查重数据库。
-- 自动完成方法学/报告规范合规审查。ARRIVE、CONSORT、ICMJE、MIFlowCyt、组学 accession 等目前是**人工清单**，不是自动检测器输出。
+- 自动判定方法学/报告规范合规。现在的 checklist 只记录人工复核所需支撑材料的准备度。
 
 > **最重要的一条：**“未发现问题”只表示在当前提供材料和当前检测范围内没有触发候选信号；它绝不等于“论文已被证明正确”。
 
@@ -64,7 +65,8 @@ python3 scripts/audit_package.py examples/full_presubmission_package --output-di
 - `coverage.json`、`calibrated_findings.json` 和各检测器输出：用于复核的结构化细节。
 - `audit_snapshot.json` 和 `file_hash_manifest.json`：记录本次审计到底审了哪个版本的材料，包括 SHA-256。
 - `claim_coverage.json` / `claim_coverage.csv`：如果提供 `claim_manifest.csv`，这里会列出 claim-to-evidence 覆盖情况。
-- `submission_qc_packet/`：投稿前留档包，包含报告、coverage、未解决动作、已验证 traceability、缺失材料、文件哈希、claim coverage 和 author sign-off 模板。
+- `methodology_checklist.json` / `methodology_checklist.csv`：wet-lab、animal、clinical、cell、flow、omics 的人工复核准备度清单。
+- `submission_qc_packet/`：投稿前留档包，包含报告、coverage、未解决动作、已验证 traceability、缺失材料、文件哈希、claim coverage、methodology checklist 和 author sign-off 模板。
 
 审计你自己的材料包时，把命令指向你的目录即可。默认模式是 `internal_presubmission`，也支持 `external_public_material` 和 `response_to_concern`：
 

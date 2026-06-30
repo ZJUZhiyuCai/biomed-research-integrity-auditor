@@ -19,6 +19,10 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from calibrators.contract_validation import ContractError, validate_instance  # noqa: E402
+from scripts.methodology_checklist import (  # noqa: E402
+    build_methodology_checklist,
+    write_methodology_checklist_csv,
+)
 from scripts.submission_qc import (  # noqa: E402
     build_audit_snapshot,
     build_claim_coverage,
@@ -557,8 +561,9 @@ def build_coverage(
             "external literature phrase search (offline: private internal audit, or no provider/fixture)"
         )
 
+    coverage["modules_executed"].append("methodology_readiness_checklist")
     coverage["modules_not_executed"].append(
-        "methodology/reporting-standard compliance (ARRIVE/CONSORT/ICMJE/MIFlowCyt/omics accession): guided checklist, not auto-screened"
+        "methodology/reporting-standard compliance determination (ARRIVE/CONSORT/ICMJE/MIFlowCyt/omics accession): manual review required"
     )
 
     for path in detector_outputs:
@@ -622,6 +627,7 @@ def run_report(
     output_dir: Path,
     coverage: Path | None = None,
     claim_coverage: Path | None = None,
+    methodology_checklist: Path | None = None,
 ) -> Path:
     report = output_dir / "audit-report.md"
     cmd = [
@@ -642,6 +648,8 @@ def run_report(
         cmd.extend(["--coverage", str(coverage)])
     if claim_coverage is not None:
         cmd.extend(["--claim-coverage", str(claim_coverage)])
+    if methodology_checklist is not None:
+        cmd.extend(["--methodology-checklist", str(methodology_checklist)])
     if case_id:
         cmd.extend(["--case-id", case_id])
     run(cmd)
@@ -685,6 +693,11 @@ def run_pipeline(
     write_qc_json(claim_coverage_path, claim_coverage)
     claim_coverage_csv = output_dir / "claim_coverage.csv"
     write_claim_coverage_csv(claim_coverage_csv, claim_coverage)
+    methodology_checklist = build_methodology_checklist(manifest_payload)
+    methodology_checklist_path = output_dir / "methodology_checklist.json"
+    write_json(methodology_checklist_path, methodology_checklist)
+    methodology_checklist_csv = output_dir / "methodology_checklist.csv"
+    write_methodology_checklist_csv(methodology_checklist_csv, methodology_checklist)
 
     provenance_graph = build_provenance(package, manifest, output_dir)
     detector_outputs = []
@@ -717,6 +730,7 @@ def run_pipeline(
         output_dir,
         coverage_path,
         claim_coverage_path,
+        methodology_checklist_path,
     )
     audit_summary = extract_audit_summary(report)
     audit_summary_path = output_dir / "AUDIT_JSON_SUMMARY.json"
@@ -749,6 +763,7 @@ def run_pipeline(
         read_json(calibrated),
         snapshot,
         claim_coverage,
+        methodology_checklist,
         re_audit_diff,
     )
 
@@ -761,6 +776,8 @@ def run_pipeline(
         "file_hash_manifest": str(file_hash_manifest_path),
         "claim_coverage": str(claim_coverage_path),
         "claim_coverage_csv": str(claim_coverage_csv),
+        "methodology_checklist": str(methodology_checklist_path),
+        "methodology_checklist_csv": str(methodology_checklist_csv),
         "missing_materials_csv": str(missing_materials_csv),
         "verified_traceability_csv": str(verified_traceability_csv),
         "unresolved_actions_csv": str(unresolved_actions_csv),

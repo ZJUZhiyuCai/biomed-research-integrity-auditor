@@ -79,6 +79,46 @@ export interface Coverage {
   [key: string]: unknown;
 }
 
+export interface MethodologyCheck {
+  check_id?: string;
+  label_en?: string;
+  label_zh?: string;
+  status?: string;
+  supporting_material_categories?: string[];
+  supplied_material_categories?: string[];
+  missing_material_categories?: string[];
+  supplied_files?: Record<string, string[]>;
+  recommended_action_en?: string;
+  recommended_action_zh?: string;
+  [key: string]: unknown;
+}
+
+export interface MethodologyModule {
+  module_id?: string;
+  label_en?: string;
+  label_zh?: string;
+  standard?: string;
+  requested?: boolean;
+  status?: string;
+  checks?: MethodologyCheck[];
+  [key: string]: unknown;
+}
+
+export interface MethodologyChecklist {
+  requested_domains?: string[];
+  modules?: MethodologyModule[];
+  totals?: {
+    modules_requested?: number;
+    checks_ready_for_manual_review?: number;
+    checks_partial_supporting_materials?: number;
+    checks_missing_supporting_materials?: number;
+    checks_not_requested?: number;
+  };
+  boundary_note?: string;
+  boundary_note_zh?: string;
+  [key: string]: unknown;
+}
+
 export interface Finding {
   finding_id?: string;
   finding_type?: string;
@@ -138,6 +178,7 @@ export interface AuditSummary {
   risk_caps_applied?: string[];
   findings?: Finding[];
   audit_coverage?: Coverage;
+  methodology_checklist?: MethodologyChecklist;
   [key: string]: unknown;
 }
 
