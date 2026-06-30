@@ -27,8 +27,10 @@ The central rule is separation of duties:
 Use `scripts/audit_package.py` for routine package audits. It is the only recommended default path:
 
 ```bash
-python3 scripts/audit_package.py <package_dir> --mode internal_presubmission --output-dir audit_outputs/<case_id>
+biomed-audit <package_dir> --mode internal_presubmission --output-dir audit_outputs/<case_id>
 ```
+
+When running directly from a source checkout, `python scripts/audit_package.py ...` accepts the same arguments.
 
 The orchestrator runs package inventory, provenance graph construction, source-data detectors, image detectors, contextual joining, risk calibration, calibrated-finding validation, report assembly, and audit-summary validation. Individual detector scripts remain useful for debugging and unit tests, but should not be the default workflow.
 

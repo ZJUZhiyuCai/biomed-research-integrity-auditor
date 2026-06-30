@@ -56,18 +56,27 @@ pipeline**, and a **blind-evaluation harness**.
 
 ## Quick start
 
-You need Python 3.10+ and the project dependencies:
+Use a Python 3.10+ interpreter, then install the project in editable mode so
+the product CLI commands are available:
 
 ```bash
-python3 -m pip install -r requirements.txt
+python3.11 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+python -m pip install -e .
 ```
 
 Run the audit on one of the bundled example packages and read the report it writes:
 
 ```bash
-python3 scripts/audit_package.py examples/minimal_package --output-dir audit_outputs/minimal
-python3 scripts/audit_package.py examples/full_presubmission_package --output-dir audit_outputs/full
+biomed-audit examples/minimal_package --output-dir audit_outputs/minimal
+biomed-audit examples/full_presubmission_package --output-dir audit_outputs/full
 ```
+
+If your `python3` already points to Python 3.10+, you can use `python3` instead
+of `python3.11`. When running from a source checkout without installing console
+scripts, use `python scripts/audit_package.py ...` with the same arguments.
 
 Each run writes to the output directory:
 
@@ -86,7 +95,7 @@ To audit your own package, point the command at your folder and pick a mode
 `response_to_concern` are also available):
 
 ```bash
-python3 scripts/audit_package.py /path/to/my_package --output-dir audit_outputs/my_package
+biomed-audit /path/to/my_package --output-dir audit_outputs/my_package
 ```
 
 **Authors:** the [self-audit guide](docs/self-audit-guide.md) walks through how to lay out your
@@ -111,7 +120,7 @@ not a claim that the scientific conclusion is true.
 After fixing gaps, compare two audit outputs:
 
 ```bash
-python3 scripts/compare_audit_runs.py audit_outputs/v1 audit_outputs/v2 \
+biomed-audit-diff audit_outputs/v1 audit_outputs/v2 \
   --output audit_outputs/v2/re_audit_diff.json \
   --csv audit_outputs/v2/re_audit_diff.csv
 ```
@@ -126,7 +135,7 @@ If you prefer a browser UI, build and launch the local self-audit app:
 
 ```bash
 cd webapp/frontend && npm install && npm run build && cd ../..
-python3 -m webapp
+biomed-audit-web
 ```
 
 Then open `http://127.0.0.1:8765`. The web app is a thin local wrapper around
@@ -135,6 +144,8 @@ Coverage visible so "no findings" is not mistaken for a clean verdict. It also i
 package-prep tools for creating the recommended folder layout and writing
 `figure_assembly/assembly_manifest.csv` declarations before you run the audit. See
 [`webapp/README.md`](webapp/README.md).
+
+Source-checkout fallback: `python -m webapp`.
 
 ### Install the skill (optional)
 
@@ -238,7 +249,7 @@ These are the design choices that keep the audit restrained, auditable, and hard
 ### Run the audit on a synthetic case
 
 ```bash
-python3 scripts/audit_package.py evals/cases/case_004 --output-dir audit_outputs/case_004
+biomed-audit evals/cases/case_004 --output-dir audit_outputs/case_004
 ```
 
 ### Non-LLM detector baseline

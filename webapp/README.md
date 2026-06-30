@@ -6,10 +6,14 @@ background subprocess and the UI reads the artifacts the CLI writes.
 
 ## Run
 
-Install Python and frontend dependencies:
+Install the Python package with a Python 3.10+ interpreter, then build the frontend:
 
 ```bash
-python3 -m pip install -r requirements.txt
+python3.11 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+python -m pip install -e .
 cd webapp/frontend
 npm install
 npm run build
@@ -19,16 +23,19 @@ cd ../..
 Start the local app:
 
 ```bash
-python3 -m webapp
+biomed-audit-web
 ```
 
 Open `http://127.0.0.1:8765`. The app stores local run artifacts under
 `audit_outputs/webapp/`.
 
+If your `python3` already points to Python 3.10+, you can use `python3` instead
+of `python3.11`. Source-checkout fallback: `python -m webapp`.
+
 For frontend development, run the API and Vite separately:
 
 ```bash
-python3 -m webapp --no-browser
+biomed-audit-web --no-browser
 cd webapp/frontend
 npm run dev
 ```

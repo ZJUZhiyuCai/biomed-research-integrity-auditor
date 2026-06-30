@@ -95,17 +95,26 @@ Claim coverage is only a completeness check. It does not say whether the claim i
 
 ## Step 2: Install and run
 
-You need Python 3.10+ and the project dependencies:
+Use a Python 3.10+ interpreter, then install the project in editable mode so
+the `biomed-audit` command is available:
 
 ```bash
-python3 -m pip install -r requirements.txt
+python3.11 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+python -m pip install -e .
 ```
 
 Run the audit (internal pre-submission mode is the default):
 
 ```bash
-python3 scripts/audit_package.py /path/to/my_package --output-dir audit_outputs/my_package
+biomed-audit /path/to/my_package --output-dir audit_outputs/my_package
 ```
+
+If your `python3` already points to Python 3.10+, you can use `python3` instead
+of `python3.11`. Source-checkout fallback:
+`python scripts/audit_package.py /path/to/my_package --output-dir audit_outputs/my_package`.
 
 Outputs land in `audit_outputs/my_package/`:
 
@@ -128,7 +137,7 @@ samples with synthetic images — not real data.
 ### Minimal example (fastest)
 
 ```bash
-python3 scripts/audit_package.py examples/minimal_package --output-dir audit_outputs/minimal
+biomed-audit examples/minimal_package --output-dir audit_outputs/minimal
 ```
 
 What to expect: overall risk **R1**, no findings, and a **Materials Needed / 需要补充的材料**
@@ -140,7 +149,7 @@ the honest "small scope, can't conclude much" result.
 ### Full pre-submission example (realistic layout)
 
 ```bash
-python3 scripts/audit_package.py examples/full_presubmission_package --output-dir audit_outputs/full
+biomed-audit examples/full_presubmission_package --output-dir audit_outputs/full
 ```
 
 What to expect: overall risk **R1**, **two positive-traceability links** (each figure panel

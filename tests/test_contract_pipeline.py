@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import tomllib
 import unittest
 from unittest import mock
 from pathlib import Path
@@ -302,6 +303,16 @@ class ContractPipelineTests(unittest.TestCase):
         assert match is not None
         changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
         self.assertIn(f"## v{match.group(1)}", changelog)
+
+    def test_pyproject_exposes_product_cli_entrypoints(self) -> None:
+        config = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+        project = config["project"]
+        self.assertEqual(project["requires-python"], ">=3.10")
+        scripts = project["scripts"]
+        self.assertEqual(scripts["biomed-audit"], "scripts.audit_package:main")
+        self.assertEqual(scripts["biomed-audit-diff"], "scripts.compare_audit_runs:main")
+        self.assertEqual(scripts["biomed-audit-web"], "webapp.__main__:main")
+        self.assertIn("scripts", config["tool"]["setuptools"]["packages"])
 
     def test_contract_validation_fails_closed_without_jsonschema(self) -> None:
         original_import = builtins.__import__

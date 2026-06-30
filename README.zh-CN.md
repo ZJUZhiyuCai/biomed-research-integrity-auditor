@@ -45,18 +45,27 @@
 
 ## 快速开始
 
-需要 Python 3.10+ 和项目依赖：
+请使用 Python 3.10+ 解释器，并用 editable 模式安装项目，这样
+`biomed-audit` 等顶层命令才会出现在环境里：
 
 ```bash
-python3 -m pip install -r requirements.txt
+python3.11 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+python -m pip install -e .
 ```
 
 先运行内置示例包，查看生成的报告：
 
 ```bash
-python3 scripts/audit_package.py examples/minimal_package --output-dir audit_outputs/minimal
-python3 scripts/audit_package.py examples/full_presubmission_package --output-dir audit_outputs/full
+biomed-audit examples/minimal_package --output-dir audit_outputs/minimal
+biomed-audit examples/full_presubmission_package --output-dir audit_outputs/full
 ```
+
+如果你的 `python3` 已经指向 Python 3.10+，也可以直接用 `python3`。
+如果是在源码目录中运行、还没有安装 console scripts，可以继续使用
+`python scripts/audit_package.py ...`，参数相同。
 
 每次运行会在输出目录写入：
 
@@ -71,7 +80,7 @@ python3 scripts/audit_package.py examples/full_presubmission_package --output-di
 审计你自己的材料包时，把命令指向你的目录即可。默认模式是 `internal_presubmission`，也支持 `external_public_material` 和 `response_to_concern`：
 
 ```bash
-python3 scripts/audit_package.py /path/to/my_package --output-dir audit_outputs/my_package
+biomed-audit /path/to/my_package --output-dir audit_outputs/my_package
 ```
 
 **作者用户：**请先读 [`docs/self-audit-guide.md`](docs/self-audit-guide.md)。它会说明材料目录怎么准备、报告怎么看，以及哪些结论不能从工具输出中推出。
@@ -94,7 +103,7 @@ C001,"Treatment increases signal intensity",Results p.4,Fig1A,source_data/Fig1.c
 修改材料、补齐缺口后，可以比较两次审计输出：
 
 ```bash
-python3 scripts/compare_audit_runs.py audit_outputs/v1 audit_outputs/v2 \
+biomed-audit-diff audit_outputs/v1 audit_outputs/v2 \
   --output audit_outputs/v2/re_audit_diff.json \
   --csv audit_outputs/v2/re_audit_diff.csv
 ```
@@ -107,13 +116,15 @@ python3 scripts/compare_audit_runs.py audit_outputs/v1 audit_outputs/v2 \
 
 ```bash
 cd webapp/frontend && npm install && npm run build && cd ../..
-python3 -m webapp
+biomed-audit-web
 ```
 
 然后打开 `http://127.0.0.1:8765`。这个 Web App 只是 `scripts/audit_package.py` 的本地外壳：
 它运行同一条流水线、读取同一批 artifact，并固定显示 Audit Coverage，避免把“未发现 finding”
 误读成“论文已证明没问题”。它也提供本地材料准备工具，可以创建推荐目录结构，并在审计前写入
 `figure_assembly/assembly_manifest.csv` 的 figure-source 声明关系。更多说明见 [`webapp/README.md`](webapp/README.md)。
+
+源码运行 fallback：`python -m webapp`。
 
 ### 安装为 Codex Skill（可选）
 
@@ -197,7 +208,7 @@ material intake → structured extraction → provenance graph → detectors
 ### 运行 synthetic case 审计
 
 ```bash
-python3 scripts/audit_package.py evals/cases/case_004 --output-dir audit_outputs/case_004
+biomed-audit evals/cases/case_004 --output-dir audit_outputs/case_004
 ```
 
 ### 非 LLM detector baseline

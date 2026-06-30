@@ -3,7 +3,7 @@ name = "biomed-research-integrity-auditor"
 version = "0.6.1"
 description = "Codex skill and detector pipeline for biomedical research integrity risk auditing"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 license = {text = "MIT"}
 dependencies = [
   "Pillow>=10.0",
@@ -20,13 +20,16 @@ dependencies = [
 ]
 
 [project.scripts]
+biomed-audit = "scripts.audit_package:main"
+biomed-audit-diff = "scripts.compare_audit_runs:main"
+biomed-audit-web = "webapp.__main__:main"
 biomed-image-global-near-duplicate = "detectors.image.global_near_duplicate:main"
 biomed-pseudoreplication-screen = "detectors.stats.pseudoreplication_screen:main"
 biomed-risk-cap-engine = "calibrators.risk_cap_engine:main"
 biomed-self-audit-webapp = "webapp.__main__:main"
 
 [tool.setuptools]
-packages = ["calibrators", "detectors", "detectors.image", "detectors.stats", "detectors.text", "provenance", "webapp", "webapp.backend"]
+packages = ["calibrators", "detectors", "detectors.image", "detectors.stats", "detectors.text", "provenance", "scripts", "webapp", "webapp.backend"]
 
 [build-system]
 requires = ["setuptools>=68"]

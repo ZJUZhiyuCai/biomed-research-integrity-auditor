@@ -3,6 +3,8 @@
 ## Unreleased
 
 ### Added
+- Product-facing console entry points: `biomed-audit`, `biomed-audit-diff`, and
+  `biomed-audit-web`, while retaining existing script/module fallbacks.
 - Expanded the public-data smoke benchmark to download all current ORI public image-forensics
   JPG samples, not just the original three-image subset.
 - `evaluation_role` for PPPR finding labels, separating metric-bearing `recall_label` entries
@@ -14,6 +16,7 @@
   bilingual report and webapp panels.
 
 ### Changed
+- Python support metadata now matches the documented and CI-tested requirement: Python 3.10+.
 - The archived `public_smoke_2026-06-30` result now reports 13 ORI images screened, 2/2
   detector-scope ORI recall labels hit, and two retained ORI scope gaps for future
   same-section/low-contrast image recall work.
