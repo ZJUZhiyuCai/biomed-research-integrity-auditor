@@ -7,11 +7,15 @@
   JPG samples, not just the original three-image subset.
 - `evaluation_role` for PPPR finding labels, separating metric-bearing `recall_label` entries
   from `scope_gap` and `reference_only` records.
+- A conservative low-contrast autocontrast probe for same-image copy-move screening, guarded by
+  same-displacement tile clustering and positive/negative synthetic regression tests.
 
 ### Changed
 - The archived `public_smoke_2026-06-30` result now reports 13 ORI images screened, 2/2
   detector-scope ORI recall labels hit, and two retained ORI scope gaps for future
   same-section/low-contrast image recall work.
+- Same-image copy-move screening preserves the existing luma path while applying the stricter
+  displacement-cluster requirement only to low-contrast enhanced tiles.
 
 ## v0.6.1 - Human Bilingual Reports and Public Smoke Benchmark
 

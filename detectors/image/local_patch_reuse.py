@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from collections import defaultdict
 import json
 import math
 import sys
@@ -190,7 +191,20 @@ def tile_hashes(tile: Any, hash_size: int) -> dict[str, int]:
     }
 
 
-def generate_tiles(img: Any, tile_size: int, stride: int, hash_size: int, min_stddev: float) -> list[dict[str, Any]]:
+def contrast_enhanced_luma(img: Any) -> Any:
+    from PIL import ImageOps
+
+    return ImageOps.autocontrast(img.convert("L"))
+
+
+def generate_tiles(
+    img: Any,
+    tile_size: int,
+    stride: int,
+    hash_size: int,
+    min_stddev: float,
+    view_name: str = "luma",
+) -> list[dict[str, Any]]:
     width, height = img.size
     if width < tile_size or height < tile_size:
         return []
@@ -213,6 +227,8 @@ def generate_tiles(img: Any, tile_size: int, stride: int, hash_size: int, min_st
                 "image": tile,
                 "hashes": tile_hashes(tile, hash_size),
                 "stddev": round(stddev, 3),
+                "view": view_name,
+                "tile_size": tile_size,
             })
     return tiles
 
@@ -365,16 +381,17 @@ def scan_pair(
 
 def scan_within_image(
     image: dict[str, Any],
+    tiles: list[dict[str, Any]],
     hash_threshold: int,
     hash_size: int,
     ncc_threshold: float,
     max_region_fraction: float,
     min_gap: int,
     min_tile_hits: int,
+    require_displacement_cluster: bool = False,
 ) -> list[dict[str, Any]]:
     hits: list[dict[str, Any]] = []
     seen_regions: set[tuple[tuple[int, int, int, int], tuple[int, int, int, int], str]] = set()
-    tiles = image["tiles"]
     for left_index, left_tile in enumerate(tiles):
         for right_tile in tiles[left_index + 1:]:
             if not distinct_within_image_regions(left_tile["bounds"], right_tile["bounds"], min_gap):
@@ -396,12 +413,52 @@ def scan_within_image(
                 "hash_distances": best["hash_distances"],
                 "tile_stddev_a": left_tile["stddev"],
                 "tile_stddev_b": right_tile["stddev"],
+                "detection_view": left_tile.get("view", "luma"),
+                "tile_size": left_tile.get("tile_size"),
             })
     if len(hits) < min_tile_hits:
         return []
-    if hits and merged_region_fraction(hits, image["image"].size, image["image"].size) > max_region_fraction:
+    if require_displacement_cluster:
+        hits = best_displacement_cluster(hits, image["image"].size, max_region_fraction, min_tile_hits)
+        if not hits:
+            return []
+    elif merged_region_fraction(hits, image["image"].size, image["image"].size) > max_region_fraction:
         return []
     return hits
+
+
+def displacement_key(hit: dict[str, Any], bin_size: int = 32) -> tuple[int, int, str]:
+    dx = int(hit["region_b"]["x"]) - int(hit["region_a"]["x"])
+    dy = int(hit["region_b"]["y"]) - int(hit["region_a"]["y"])
+    return (
+        round(dx / bin_size) * bin_size,
+        round(dy / bin_size) * bin_size,
+        str(hit.get("best_transform", "identity")),
+    )
+
+
+def best_displacement_cluster(
+    hits: list[dict[str, Any]],
+    image_size: tuple[int, int],
+    max_region_fraction: float,
+    min_tile_hits: int,
+) -> list[dict[str, Any]]:
+    groups: dict[tuple[int, int, str], list[dict[str, Any]]] = defaultdict(list)
+    for hit in hits:
+        groups[displacement_key(hit)].append(hit)
+
+    eligible = []
+    for key, group in groups.items():
+        if len(group) < min_tile_hits:
+            continue
+        if merged_region_fraction(group, image_size, image_size) > max_region_fraction:
+            continue
+        best_score = max(float(hit["score"]) for hit in group)
+        mean_score = sum(float(hit["score"]) for hit in group) / len(group)
+        eligible.append((len(group), best_score, mean_score, key, group))
+    if not eligible:
+        return []
+    return max(eligible, key=lambda item: (item[0], item[1], item[2]))[-1]
 
 
 def candidate_from_hits(
@@ -449,6 +506,7 @@ def candidate_from_hits(
         "best_transform": best_hit["best_transform"],
         "score": best_hit["score"],
         "hash_distance": best_hit["hash_distance"],
+        "detection_view": best_hit.get("detection_view", "luma"),
         "evidence_crops": evidence_paths,
     }
     risk_tags = ["image_similarity_candidate", "local_patch_reuse"]
@@ -499,6 +557,9 @@ def scan(
     within_image_ncc_threshold: float,
     within_image_min_gap: int,
     within_image_min_tile_hits: int,
+    low_contrast_stddev_threshold: float,
+    low_contrast_min_stddev: float,
+    low_contrast_ncc_threshold: float,
 ) -> dict[str, Any]:
     try:
         from PIL import Image
@@ -515,10 +576,23 @@ def scan(
             with Image.open(path) as img:
                 base = normalized_rgb(img)
                 tiles = generate_tiles(base, tile_size, stride, hash_size, min_stddev)
+                _, image_stddev = luma_stats(base)
+                low_contrast_tiles = []
+                if image_stddev < low_contrast_stddev_threshold:
+                    low_contrast_tiles = generate_tiles(
+                        contrast_enhanced_luma(base),
+                        tile_size,
+                        stride,
+                        hash_size,
+                        low_contrast_min_stddev,
+                        "low_contrast_autocontrast",
+                    )
                 images.append({
                     "path": str(path.relative_to(root)),
                     "image": base.copy(),
                     "tiles": tiles,
+                    "low_contrast_tiles": low_contrast_tiles,
+                    "stddev": round(image_stddev, 3),
                 })
         except Exception as exc:  # noqa: BLE001 - unreadable files should not abort an audit.
             errors.append({"path": str(path.relative_to(root)), "error": str(exc)})
@@ -526,17 +600,30 @@ def scan(
     candidates = []
     same_image_candidate_count = 0
     for image in images:
-        if not image["tiles"]:
-            continue
-        hits = scan_within_image(
-            image,
-            hash_threshold,
-            hash_size,
-            max(ncc_threshold, within_image_ncc_threshold),
-            max_region_fraction,
-            within_image_min_gap,
-            within_image_min_tile_hits,
-        )
+        hits = []
+        if image["tiles"]:
+            hits = scan_within_image(
+                image,
+                image["tiles"],
+                hash_threshold,
+                hash_size,
+                max(ncc_threshold, within_image_ncc_threshold),
+                max_region_fraction,
+                within_image_min_gap,
+                within_image_min_tile_hits,
+            )
+        if not hits and image["low_contrast_tiles"]:
+            hits = scan_within_image(
+                image,
+                image["low_contrast_tiles"],
+                hash_threshold,
+                hash_size,
+                max(ncc_threshold, low_contrast_ncc_threshold),
+                max_region_fraction,
+                within_image_min_gap,
+                within_image_min_tile_hits,
+                True,
+            )
         if not hits:
             continue
         same_image_candidate_count += 1
@@ -590,6 +677,9 @@ def scan(
             "within_image_ncc_threshold": within_image_ncc_threshold,
             "within_image_min_gap": within_image_min_gap,
             "within_image_min_tile_hits": within_image_min_tile_hits,
+            "low_contrast_stddev_threshold": low_contrast_stddev_threshold,
+            "low_contrast_min_stddev": low_contrast_min_stddev,
+            "low_contrast_ncc_threshold": low_contrast_ncc_threshold,
             "transforms": list(TRANSFORMS),
         },
         "images_screened": len(images),
@@ -615,6 +705,9 @@ def main() -> int:
     parser.add_argument("--within-image-ncc-threshold", type=float, default=0.995)
     parser.add_argument("--within-image-min-gap", type=int, default=16)
     parser.add_argument("--within-image-min-tile-hits", type=int, default=2)
+    parser.add_argument("--low-contrast-stddev-threshold", type=float, default=8.0)
+    parser.add_argument("--low-contrast-min-stddev", type=float, default=8.0)
+    parser.add_argument("--low-contrast-ncc-threshold", type=float, default=0.995)
     parser.add_argument("--evidence-dir", type=Path)
     parser.add_argument("--output", type=Path, default=Path("local_patch_candidates.json"))
     args = parser.parse_args()
@@ -638,6 +731,9 @@ def main() -> int:
         args.within_image_ncc_threshold,
         args.within_image_min_gap,
         args.within_image_min_tile_hits,
+        args.low_contrast_stddev_threshold,
+        args.low_contrast_min_stddev,
+        args.low_contrast_ncc_threshold,
     )
     output.write_text(json.dumps(result, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     print(json.dumps({

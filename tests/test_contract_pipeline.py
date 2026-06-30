@@ -147,6 +147,32 @@ def write_same_image_copy_move_package(package: Path) -> None:
     )
 
 
+def low_contrast_noise_image(seed: int, size: tuple[int, int] = (576, 576)) -> Image.Image:
+    from random import Random
+
+    rng = Random(seed)
+    image = Image.new("L", size, 235)
+    pixels = image.load()
+    for y in range(size[1]):
+        for x in range(size[0]):
+            pixels[x, y] = max(0, min(255, 235 + rng.randint(-10, 10)))
+    return image.convert("RGB")
+
+
+def write_low_contrast_copy_move_package(package: Path, copied: bool = True) -> None:
+    (package / "figures").mkdir(parents=True)
+    write_minimal_source(package)
+    image = low_contrast_noise_image(1407)
+    if copied:
+        patch = image.crop((64, 64, 256, 256))
+        image.paste(patch, (320, 320))
+    write_png(package / "figures/Figure_low_contrast.png", image)
+    (package / "manuscript.pdf").write_text(
+        "Figure low contrast is an exported microscopy-like panel supplied for image-integrity screening.\n",
+        encoding="utf-8",
+    )
+
+
 def write_manifest_suppression_attack_package(package: Path) -> None:
     """Two whole-image flipped duplicates declared as same-field channels.
 
@@ -565,6 +591,50 @@ class ContractPipelineTests(unittest.TestCase):
             self.assertEqual(edge["similarity_scope"], "same_image_copy_move")
             self.assertGreaterEqual(edge["tile_hit_count"], 2)
             self.assertTrue(Path(edge["evidence_crops"]["side_by_side"]).exists())
+
+    def test_local_patch_detector_finds_low_contrast_same_image_copy_move(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "pkg"
+            write_low_contrast_copy_move_package(package, copied=True)
+            output = Path(tmp) / "local_patch.json"
+            evidence_dir = Path(tmp) / "evidence"
+            run([
+                PYTHON,
+                "detectors/image/local_patch_reuse.py",
+                str(package),
+                "--evidence-dir",
+                str(evidence_dir),
+                "--output",
+                str(output),
+            ])
+            payload = json.loads(output.read_text(encoding="utf-8"))
+            validate_instance(payload, ROOT / "schemas" / "detector_output.schema.json", "low-contrast copy-move detector")
+            same_image = [item for item in payload["candidates"] if item["candidate_type"] == "same_image_copy_move"]
+            self.assertEqual(len(same_image), 1)
+            edge = same_image[0]["evidence"]["representative_edge"]
+            self.assertEqual(edge["detection_view"], "low_contrast_autocontrast")
+            self.assertTrue(edge["same_image"])
+            self.assertGreaterEqual(edge["tile_hit_count"], 2)
+            self.assertGreaterEqual(edge["score"], 0.995)
+            self.assertEqual(payload["same_image_candidate_count"], 1)
+            self.assertLess(payload["input"]["low_contrast_stddev_threshold"], 9.0)
+
+    def test_local_patch_detector_does_not_flag_low_contrast_noise_without_copy(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "pkg"
+            write_low_contrast_copy_move_package(package, copied=False)
+            output = Path(tmp) / "local_patch.json"
+            run([
+                PYTHON,
+                "detectors/image/local_patch_reuse.py",
+                str(package),
+                "--output",
+                str(output),
+            ])
+            payload = json.loads(output.read_text(encoding="utf-8"))
+            validate_instance(payload, ROOT / "schemas" / "detector_output.schema.json", "low-contrast no-copy detector")
+            self.assertEqual(payload["same_image_candidate_count"], 0)
+            self.assertEqual(payload["candidates"], [])
 
     def test_local_patch_detector_excludes_declared_traceability_pair(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

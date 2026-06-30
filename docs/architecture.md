@@ -185,7 +185,7 @@ Re-audit comparison is available through `scripts/compare_audit_runs.py` or `scr
 ## P0 Detectors
 
 - `detectors/image/global_near_duplicate.py`: global image near-duplicate clusters using average hash, dHash, pHash-style DCT, and D4 transforms.
-- `detectors/image/local_patch_reuse.py`: conservative overlapping-tile local patch reuse and same-image copy-move candidates with D4 confirmation, normalized cross-correlation, and evidence crop export.
+- `detectors/image/local_patch_reuse.py`: conservative overlapping-tile local patch reuse and same-image copy-move candidates with D4 confirmation, normalized cross-correlation, evidence crop export, and a guarded low-contrast same-image probe that requires same-displacement tile support.
 - `detectors/text/external_literature_search.py`: external phrase-search candidates with query/result provenance and provider-gap reporting.
 - `detectors/text/text_overlap_screen.py`: package-internal paragraph overlap candidates using section-aware n-gram similarity.
 - `detectors/stats/pseudoreplication_screen.py`: possible unit-of-analysis mismatch candidates from biological and technical replicate columns.
