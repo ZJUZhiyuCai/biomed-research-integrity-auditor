@@ -1,5 +1,7 @@
 # Biomedical Research Integrity Auditor
 
+[中文说明](README.zh-CN.md)
+
 A tool that helps you **screen a biomedical manuscript package for research-integrity risks
 before submission** — and organizes the evidence into a calm, neutral report.
 
