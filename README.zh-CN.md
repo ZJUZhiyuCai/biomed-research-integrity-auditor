@@ -2,7 +2,7 @@
 
 [English README](README.md)
 
-这是一个帮助你在投稿前**筛查生物医学论文包研究诚信风险**的工具。它会把图像、源数据、文本重叠、材料缺口和检测覆盖范围整理成一份克制、中性的审计报告。
+这是一个帮助你在投稿前**筛查生物医学论文包研究诚信风险**的工具。它会把图像、源数据、文本重叠、材料缺口和检测覆盖范围整理成一份克制、中性、双语的人类可读审计报告；机器可读 JSON 仍保留在报告末尾和单独 artifact 中。
 
 它**不是**“论文打假器”。它不会判定学术不端、造假、伪造、篡改或抄袭成立；它只做三件事：呈现有证据支持的风险、列出可能的良性解释、指出还需要哪些材料才能继续核验。报告统一使用 `R0` 到 `R4` 的风险等级，并保持中性措辞。
 
@@ -19,7 +19,7 @@
 - 记录本次审计的文件哈希快照、可选 claim-to-evidence 覆盖情况，并导出投稿前 QC packet。
 - 检查源数据或汇总表中的数值/统计一致性，例如 SD/SEM/n、p-value 范围、整数计数可行性。
 - 筛查包内文本重叠，并可选择运行外部短语检索 triage。
-- 输出带有 `R0` 到 `R4` 风险表、证据台账和 Audit Coverage 的中性报告。
+- 输出双语、人类可读的中性报告：包含 Quick Read、Audit Coverage、需要补充的材料、发现卡片、行动清单、技术附录和 `R0` 到 `R4` 风险登记。
 
 **它不能做：**
 
@@ -59,7 +59,7 @@ python3 scripts/audit_package.py examples/full_presubmission_package --output-di
 
 每次运行会在输出目录写入：
 
-- `audit-report.md`：给人读的报告，包含 scope、coverage、缺失材料、风险表和证据台账。
+- `audit-report.md`：双语的人类可读报告，包含 Quick Read、scope、coverage、需要补充的材料、可追溯证据、发现卡片、行动清单和技术附录。
 - `AUDIT_JSON_SUMMARY.json`：同一批信息的机器可读摘要。
 - `coverage.json`、`calibrated_findings.json` 和各检测器输出：用于复核的结构化细节。
 - `audit_snapshot.json` 和 `file_hash_manifest.json`：记录本次审计到底审了哪个版本的材料，包括 SHA-256。
@@ -85,7 +85,7 @@ claim_id,claim_text,manuscript_location,figure_or_table,source_data,raw_record,a
 C001,"Treatment increases signal intensity",Results p.4,Fig1A,source_data/Fig1.csv,raw_images/acq_001.tif,statistics_code/fig1.ipynb,protocols/microscopy.md,first_author,ready
 ```
 
-报告会新增 **Claim Coverage** 区块。它只表示证据链完整性，不表示该科学结论已被证明正确。
+报告会新增 **Claim Coverage / 声明-证据覆盖** 区块。它只表示证据链完整性，不表示该科学结论已被证明正确。
 
 ### Re-audit diff
 
@@ -146,14 +146,14 @@ ln -s "$(pwd)/skill/biomed-research-integrity-auditor" ~/.codex/skills/biomed-re
 
 ```text
 material intake → structured extraction → provenance graph → detectors
-→ contextual join → risk calibration → evidence ledger → human-reviewable report
+→ contextual join → risk calibration → evidence ledger → bilingual human report
 ```
 
 - **Detectors** 只输出候选、证据和位置，不输出最终风险等级。
 - **Provenance builders** 建模文件、raw/source 记录和你声明的 figure-to-raw 关系。
 - **Context joiners** 加入披露信息、source/raw 可得性和 provenance 上下文。
 - **Calibrator** 是唯一赋予 `calibrated_risk_level` 的组件，会考虑证据强度、材料完整性、披露情况、良性解释和模式风险上限。
-- **Reporter** 只渲染已校准 finding，并拒绝未校准输入。
+- **Reporter** 只渲染已校准 finding，用中性双语写成人类先读的 Markdown，并拒绝未校准输入。
 
 `scripts/audit_package.py` 是默认编排入口，会运行完整流程。完整设计见 [`docs/architecture.md`](docs/architecture.md)。
 

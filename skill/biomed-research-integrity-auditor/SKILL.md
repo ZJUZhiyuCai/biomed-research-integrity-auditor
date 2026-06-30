@@ -10,7 +10,7 @@ Use this skill to audit biomedical manuscript packages for research integrity ri
 This skill is part of a small audit pipeline:
 
 ```text
-material intake -> structured extraction -> provenance graph -> detector candidates -> provenance-aware contextual join -> risk calibration -> evidence ledger -> human-reviewable report
+material intake -> structured extraction -> provenance graph -> detector candidates -> provenance-aware contextual join -> risk calibration -> evidence ledger -> bilingual human report
 ```
 
 Detectors emit candidates only. Final report risk levels must pass through source-strength review, material-completeness review, benign-explanation testing, and the risk caps below.
@@ -123,8 +123,10 @@ Use when the user is responding to reviewer, journal, or PubPeer-style concerns.
    - Reporter input must contain `calibrated_risk_level`; detector candidates with only `risk_suggestion` must not be sent directly to the report assembler.
    - Use `templates/internal-audit-report.md` for internal mode.
    - Use `templates/external-concern-triage.md` for external mode.
-   - Use `templates/evidence-ledger.md` for each finding.
+   - Use `templates/evidence-ledger.md` for each finding card.
    - Run `scripts/report_assembler.py --mode internal_presubmission --manifest manifest.json --findings calibrated_findings.json --output audit-report.md` when structured JSON is available.
+   - Treat `audit-report.md` as a human-first bilingual Markdown document. Lead with Quick Read, Scope, Audit Coverage, Materials Needed, Risk Register, finding cards, and Action Checklist before the technical appendix.
+   - Summarize detector evidence in readable prose and compact metrics. Do not dump raw detector JSON into the human finding cards; raw payloads belong in `calibrated_findings.json`, detector artifacts, and the final machine-readable summary.
    - Always state audit coverage: which modules ran, which did not (offline external search, and the manual methodology/reporting-standard checks), how many image panels were screened, and any unreadable image files. An empty finding list within scope is not a clean-manuscript verdict. The default orchestrator records this as an `audit_coverage` block.
    - End every report with exactly one fenced JSON block labeled `AUDIT_JSON_SUMMARY`; follow `templates/audit-json-summary.schema.json`.
 
@@ -210,7 +212,7 @@ Scripts are screening aids. Read or patch them before relying on them in unfamil
 - `scripts/figure_source_map.py`: propose filename-based figure-source relationships.
 - `scripts/image_similarity_screen.py`: deprecated compatibility wrapper; delegates to `../../detectors/image/global_near_duplicate.py`.
 - `scripts/stats_consistency_check.py`: check CSV/XLSX numerical summaries for SEM/SD/n consistency and weak anomalies.
-- `scripts/report_assembler.py`: assemble a Markdown audit report from manifest and findings JSON.
+- `scripts/report_assembler.py`: assemble a bilingual human-readable Markdown audit report from manifest and findings JSON.
 - `../../detectors/image/global_near_duplicate.py`: multi-hash plus D4 transform global image candidate detector.
 - `../../detectors/image/local_patch_reuse.py`: overlapping-tile local patch and same-image copy-move candidate detector with evidence crop export.
 - `../../detectors/text/text_overlap_screen.py`: package-internal paragraph overlap candidate detector; no web-scale plagiarism search.
@@ -225,11 +227,12 @@ Scripts are screening aids. Read or patch them before relying on them in unfamil
 
 ## Output Style
 
-Be concise, evidence-first, and calm. Lead with scope, supplied materials, missing materials, and risk register. Keep speculative text out of finding titles. Use author-query phrasing for external mode:
+Be concise, evidence-first, bilingual, and calm. Lead with a human-readable Quick Read, scope, audit coverage, supplied/missing materials, risk register, finding cards, and an action checklist. Keep speculative text out of finding titles. Use author-query phrasing for external mode:
 
 > Could the authors clarify whether the same membrane/loading control was intentionally reused, and provide the uncropped blot and sample map?
 
 Do not produce public accusations, social-media posts, or definitive institutional conclusions.
+Do not make the main report read like a detector log. Keep raw JSON and exhaustive payload details in machine-readable artifacts, and reserve the Markdown body for what a PI, co-author, reviewer, or integrity office can scan and act on.
 
 ## Required JSON Summary
 

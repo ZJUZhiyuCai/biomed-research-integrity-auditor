@@ -3,7 +3,8 @@
 [中文说明](README.zh-CN.md)
 
 A tool that helps you **screen a biomedical manuscript package for research-integrity risks
-before submission** — and organizes the evidence into a calm, neutral report.
+before submission** — and organizes the evidence into a calm, neutral, bilingual report
+that humans can read before machines parse the JSON.
 
 It is **not** a "paper fraud detector." It never decides that misconduct, fraud, fabrication,
 or plagiarism occurred. Instead it surfaces evidence-backed risks, lists benign explanations,
@@ -27,7 +28,8 @@ pipeline**, and a **blind-evaluation harness**.
 - Record an audit snapshot with file hashes, optional claim-to-evidence coverage, and a submission QC packet.
 - Check numeric/statistical consistency in source or summary tables (SD/SEM/n, p-value range, integer counts).
 - Screen package-internal text overlap, with optional external phrase-search triage.
-- Produce a neutral report with an `R0`–`R4` risk register, an evidence ledger, and an explicit coverage section.
+- Produce a bilingual human-readable report with a Quick Read, coverage, materials needed,
+  finding cards, action checklist, technical appendix, and an `R0`–`R4` risk register.
 
 **It does not:**
 
@@ -68,7 +70,8 @@ python3 scripts/audit_package.py examples/full_presubmission_package --output-di
 
 Each run writes to the output directory:
 
-- `audit-report.md` — the human-readable report (scope, coverage, missing materials, risk register, evidence ledger).
+- `audit-report.md` — the bilingual human-readable report (Quick Read, scope, coverage,
+  materials needed, traceability evidence, finding cards, action checklist, technical appendix).
 - `AUDIT_JSON_SUMMARY.json` — the same findings in machine-readable form.
 - `coverage.json`, `calibrated_findings.json`, and per-detector outputs — supporting detail.
 - `audit_snapshot.json` and `file_hash_manifest.json` — the exact package version reviewed, including SHA-256 hashes.
@@ -98,8 +101,8 @@ claim_id,claim_text,manuscript_location,figure_or_table,source_data,raw_record,a
 C001,"Treatment increases signal intensity",Results p.4,Fig1A,source_data/Fig1.csv,raw_images/acq_001.tif,statistics_code/fig1.ipynb,protocols/microscopy.md,first_author,ready
 ```
 
-The report then includes **Claim Coverage** counts. This is a completeness view, not a claim that
-the scientific conclusion is true.
+The report then includes **Claim Coverage / 声明-证据覆盖** counts. This is a completeness view,
+not a claim that the scientific conclusion is true.
 
 ### Re-audit diff
 
@@ -168,7 +171,7 @@ inflate a result:
 
 ```text
 material intake → structured extraction → provenance graph → detectors
-→ contextual join → risk calibration → evidence ledger → human-reviewable report
+→ contextual join → risk calibration → evidence ledger → bilingual human report
 ```
 
 - **Detectors** emit candidates with evidence and locations only — never a final risk level.
@@ -176,7 +179,8 @@ material intake → structured extraction → provenance graph → detectors
 - **Context joiners** add disclosure, source-availability, and provenance context.
 - **The calibrator** is the only component that assigns `calibrated_risk_level`, applying source
   strength, completeness, disclosure, benign explanations, and mode-specific caps.
-- **The reporter** renders calibrated findings in neutral language and rejects uncalibrated input.
+- **The reporter** renders calibrated findings in neutral bilingual language, keeps the main
+  Markdown body readable, and rejects uncalibrated input.
 
 `scripts/audit_package.py` is the default orchestrator that runs this whole flow. See
 [`docs/architecture.md`](docs/architecture.md) for the full design.

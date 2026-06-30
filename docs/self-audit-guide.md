@@ -109,7 +109,7 @@ python3 scripts/audit_package.py /path/to/my_package --output-dir audit_outputs/
 
 Outputs land in `audit_outputs/my_package/`:
 
-- `audit-report.md` — the human-readable report.
+- `audit-report.md` — the bilingual human-readable report.
 - `AUDIT_JSON_SUMMARY.json` — a machine-readable summary.
 - `coverage.json`, `calibrated_findings.json`, and detector outputs — supporting detail.
 - `audit_snapshot.json` / `file_hash_manifest.json` — file hashes for the exact package version reviewed.
@@ -130,8 +130,8 @@ samples with synthetic images — not real data.
 python3 scripts/audit_package.py examples/minimal_package --output-dir audit_outputs/minimal
 ```
 
-What to expect: overall risk **R1**, no findings, and a **Missing Materials** list (figures,
-raw images, protocols, etc.) because the package is intentionally tiny. The Audit Coverage
+What to expect: overall risk **R1**, no findings, and a **Materials Needed / 需要补充的材料**
+table (figures, raw images, protocols, etc.) because the package is intentionally tiny. The Audit Coverage
 section shows that statistics and text screening ran, image screening was skipped (no images),
 and external/methodology checks were not run. This is the honest "small scope, can't conclude
 much" result.
@@ -144,7 +144,7 @@ python3 scripts/audit_package.py examples/full_presubmission_package --output-di
 
 What to expect: overall risk **R1**, **two positive-traceability links** (each figure panel
 confirmed against its declared raw acquisition, shown under "Verified Traceability Evidence"),
-two declared claims with source/raw/code/protocol coverage, no risk findings, and a short Missing Materials list. This is the honest "clean within scope,
+two declared claims with source/raw/code/protocol coverage, no risk findings, and a short Materials Needed list. This is the honest "clean within scope,
 with verified traceability, but not a complete audit" result.
 
 > Regenerate the example images with `python3 examples/generate_example_assets.py` (optional;
@@ -154,17 +154,22 @@ with verified traceability, but not a complete audit" result.
 
 ## Step 4: Read the report
 
-The report has these sections. Read them in order.
+The report is bilingual by default. Read the human Markdown sections first; use the final
+`AUDIT_JSON_SUMMARY` block only when another tool needs machine-readable data.
 
 | Section | What it tells you |
 | --- | --- |
-| **Scope** | The mode and package root. |
-| **Audit Coverage** | Which detector modules ran, which did not, image panels screened, unreadable image files, and the scope note. **Start here** to know what was actually checked. |
-| **Missing Materials Matrix** | Expected material categories that were not found, each as a completeness gap. |
-| **Verified Traceability Evidence** | Figure-to-raw links the tool confirmed (positive evidence). |
-| **Risk Register** | Each finding with its risk level. |
-| **Evidence Ledger** | Per-finding detail: evidence, benign explanations, materials needed, recommended action. |
-| **Audit JSON Summary** | The same information in machine-readable form. |
+| **Quick Read / 快速结论** | The top-level risk, number of candidate findings, materials reviewed, missing categories, and the reminder that no findings is not proof of correctness. Start here. |
+| **Scope / 范围** | The mode, case ID, and package root. |
+| **Audit Coverage / 本次检查覆盖** | Which detector modules ran, which did not, image panels screened, unreadable image files, detector failures, and the scope note. Use this to know what was actually checked. |
+| **Claim Coverage / 声明-证据覆盖** | Claim-to-evidence completeness when `claim_manifest.csv` is supplied. This is not claim correctness. |
+| **Materials Needed / 需要补充的材料** | Expected material categories that were not found, each as a completeness gap. |
+| **Verified Traceability Evidence / 已验证可追溯证据** | Figure-to-raw links the tool confirmed as positive provenance evidence. |
+| **Risk Register / 风险登记** | One row per candidate finding with level, module, location, and type. |
+| **Findings / Evidence Ledger / 发现项与证据台账** | Human-readable finding cards: observation, why it matters, evidence summary, benign explanations, materials needed, and recommended action. |
+| **Action Checklist / 下一步清单** | The practical follow-up list, sorted by risk and missing materials. |
+| **Technical Appendix / 技术附录** | Compact technical details plus pointers to `calibrated_findings.json` and detector outputs. |
+| **Audit JSON Summary / 机器可读摘要** | The same audit summary in one machine-readable fenced JSON block. |
 
 ### The R0-R4 risk scale, in plain language
 
@@ -205,11 +210,11 @@ documented?"
 ## Frequently confusing results
 
 **"It says `figure assembly` is missing, but I included `assembly_manifest.csv`."**
-The Missing Materials row named *figure assembly* refers to assembly/design project files
+The Materials Needed row named *figure assembly* refers to assembly/design project files
 (PowerPoint, Photoshop, Illustrator, etc.). Your structured CSV/YAML manifest is still read and
 used by the tool — look at the **Verified Traceability Evidence** section, which lists the
 figure-to-raw links it confirmed from your manifest. This is exactly why you should read the
-whole report, not just the Missing Materials list.
+whole report, not just the Materials Needed list.
 
 **"Overall risk is R1 but there are no findings."**
 R1 here comes from missing materials, not from a detected problem. Add the missing records and

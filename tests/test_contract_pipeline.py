@@ -63,6 +63,10 @@ def risk_value(risk: str) -> int:
     return RISK_ORDER.get(risk, -1)
 
 
+def report_body_without_json_summary(report: str) -> str:
+    return report.split("```json AUDIT_JSON_SUMMARY", 1)[0]
+
+
 def textured_image(seed: int, size: tuple[int, int] = (256, 256)) -> Image.Image:
     img = Image.new("RGB", size, (22 + seed % 20, 24, 31))
     draw = ImageDraw.Draw(img)
@@ -1547,6 +1551,57 @@ class EndToEndTests(unittest.TestCase):
             self.assertTrue(any("image" in item for item in coverage["modules_not_executed"]))
             self.assertTrue(any("methodology" in item for item in coverage["modules_not_executed"]))
             self.assertTrue(coverage["scope_note"])
+
+    def test_report_is_bilingual_and_human_readable_for_no_finding_r1(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "minimal"
+            run([
+                PYTHON,
+                "scripts/audit_package.py",
+                "examples/minimal_package",
+                "--output-dir",
+                str(out),
+                "--case-id",
+                "minimal_package",
+            ])
+            report = (out / "audit-report.md").read_text(encoding="utf-8")
+            body = report_body_without_json_summary(report)
+            self.assertEqual(report.count("```json AUDIT_JSON_SUMMARY"), 1)
+            self.assertIn("# Biomedical Research Integrity Audit / 生物医药研究诚信审计报告", report)
+            self.assertIn("## Quick Read / 快速结论", report)
+            self.assertIn("## Materials Needed / 需要补充的材料", report)
+            self.assertIn("Overall risk remains R1", report)
+            self.assertIn("总体风险", report)
+            self.assertIn("本次没有候选发现卡片", report)
+            self.assertIn("Raw or uncropped images / 原始或未裁剪图像", report)
+            self.assertNotIn("`{\"", body)
+            self.assertNotIn("cluster_id", body)
+
+    def test_report_summarizes_image_evidence_without_raw_detector_json(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "case004"
+            run([
+                PYTHON,
+                "scripts/audit_package.py",
+                "evals/cases/case_004",
+                "--output-dir",
+                str(out),
+                "--case-id",
+                "case_004",
+            ])
+            report = (out / "audit-report.md").read_text(encoding="utf-8")
+            body = report_body_without_json_summary(report)
+            self.assertEqual(report.count("```json AUDIT_JSON_SUMMARY"), 1)
+            self.assertIn("**What was observed / 观察到什么**", body)
+            self.assertIn("**Evidence summary / 证据摘要**", body)
+            self.assertIn("Best matching transform: `flip_h`.", body)
+            self.assertIn("Hamming distance: 0.", body)
+            self.assertIn("Action Checklist / 下一步清单", body)
+            self.assertNotIn("cluster_id", body)
+            self.assertNotIn("contextual_edges", body)
+            self.assertNotIn("`{\"", body)
+            summary = json.loads((out / "AUDIT_JSON_SUMMARY.json").read_text(encoding="utf-8"))
+            self.assertEqual(summary["overall_risk"], "R3")
 
     def test_coverage_reports_unreadable_image_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

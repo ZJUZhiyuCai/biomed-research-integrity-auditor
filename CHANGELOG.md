@@ -2,7 +2,18 @@
 
 ## Unreleased
 
+- No unreleased changes.
+
+## v0.6.1 - Human Bilingual Reports and Public Smoke Benchmark
+
 ### Added
+- Human-first bilingual Markdown reports from the CLI assembler, with a Quick Read, scope,
+  audit coverage, claim coverage, materials-needed table, verified traceability evidence,
+  risk register, finding cards, action checklist, technical appendix, integrity boundary,
+  and the existing machine-readable `AUDIT_JSON_SUMMARY` block.
+- Regression tests that assert reports are bilingual, readable without raw detector JSON in
+  the main body, preserve exactly one `AUDIT_JSON_SUMMARY` block, and summarize image evidence
+  with reader-facing metrics.
 - PPPR/public-concern benchmark scaffold under `benchmarks/pppr_integrity_benchmark/`, including
   a dataset card, data-ethics boundaries, finding-level label schema, source/label manifests,
   and offline scripts for RWDB/Crossref normalization, PubPeer manifest normalization, PMC OA
@@ -16,6 +27,9 @@
   miss as a recall gap.
 
 ### Changed
+- Project version advanced to `0.6.1`.
+- The report assembler now treats the Markdown body as the human reading surface and keeps
+  raw detector payloads in supporting JSON artifacts / the final machine-readable summary.
 - `make validate` now compiles nested benchmark helper scripts.
 
 ## v0.6.0 - Submission QC Packet

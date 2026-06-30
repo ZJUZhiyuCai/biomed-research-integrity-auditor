@@ -10,7 +10,7 @@ material intake
 -> contextual join
 -> risk calibration
 -> evidence ledger
--> human-reviewable report
+-> bilingual human report
 ```
 
 The central rule is separation of duties:
@@ -19,7 +19,7 @@ The central rule is separation of duties:
 - **Provenance graph builders** model files as resources and declared figure/source relationships as edges.
 - **Context joiners** add disclosed-reuse, source-availability, and provenance context before calibration.
 - **Calibrators** apply `schemas/risk_rules.yaml`, mode-specific caps, source-strength rules, benign-explanation requirements, and R4 requirements.
-- **Reporters** express calibrated findings in neutral audit language and reject uncalibrated detector candidates.
+- **Reporters** express calibrated findings in neutral bilingual audit language and reject uncalibrated detector candidates.
 - **Evals** test both recall and restraint.
 
 ## Default Entrypoint
@@ -139,6 +139,10 @@ Detector candidates must not include `risk_level` or `calibrated_risk_level`.
 ## Calibrated Finding Contract
 
 `calibrators/risk_cap_engine.py` is the only component that emits `calibrated_risk_level`. Reporter code reads only that field and maps it to display-level `risk_level` inside the final report summary.
+
+## Human Report Contract
+
+`audit-report.md` is a human-first bilingual Markdown report, not a detector payload dump. It starts with a Quick Read, scope, audit coverage, claim coverage when supplied, materials needed, verified traceability evidence, risk register, finding cards, action checklist, technical appendix, and integrity boundary. Finding cards summarize observations, reader-facing evidence metrics, benign explanations, resolving materials, and next actions. Raw detector payloads remain in `calibrated_findings.json`, detector output files, and the final machine-readable summary.
 
 ## Audit Summary Contract
 
