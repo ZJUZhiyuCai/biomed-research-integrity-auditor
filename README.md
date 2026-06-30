@@ -1,18 +1,19 @@
-# Biomedical Research Integrity Auditor
+# Biomedical Research Self-Audit Assistant
 
 [中文说明](README.zh-CN.md)
 
-A tool that helps you **screen a biomedical manuscript package for research-integrity risks
-before submission** — and organizes the evidence into a calm, neutral, bilingual report
-that humans can read before machines parse the JSON.
+A local-first presubmission self-audit tool for biomedical researchers.
+
+It helps research teams check whether manuscript figures, raw images, source data, statistics,
+text, traceability records, and reporting materials are internally consistent and reviewable
+before submission.
 
 It is **not** a "paper fraud detector." It never decides that misconduct, fraud, fabrication,
-or plagiarism occurred. Instead it surfaces evidence-backed risks, lists benign explanations,
-flags missing materials, and recommends next actions — using an `R0`–`R4` risk scale and
-neutral language throughout.
+or plagiarism occurred. Instead it produces evidence-backed findings, missing-material requests,
+and a presubmission action queue for human review, using neutral language throughout.
 
-Under the hood it is three things: an installable Codex **skill**, a scriptable **detector
-pipeline**, and a **blind-evaluation harness**.
+Under the hood it is an installable local **CLI**, a local-first **web app**, a Codex
+**skill**, and a scriptable **detector pipeline**.
 
 > 中文简介：这是一个面向生物医药论文和研究材料的"研究诚信风险审计器"。它不判定作者造假，也不输出
 > 学术不端结论，而是帮助作者、审稿人或机构内部团队做投稿前自查和外部公开材料的风险分级。
@@ -29,8 +30,8 @@ pipeline**, and a **blind-evaluation harness**.
 - Check numeric/statistical consistency in source or summary tables (SD/SEM/n, p-value range, integer counts).
 - Screen package-internal text overlap, with optional external phrase-search triage.
 - Emit a structured methodology/reporting-standard readiness checklist for manual ARRIVE / CONSORT / ICMJE / MIFlowCyt / omics review.
-- Produce a bilingual human-readable report with a Quick Read, coverage, materials needed,
-  finding cards, action checklist, technical appendix, and an `R0`–`R4` risk register.
+- Produce a bilingual human-readable report with a Quick Read, submission-readiness status,
+  action queue, coverage, materials needed, finding cards, technical appendix, and an `R0`–`R4` risk register.
 
 **It does not:**
 
@@ -70,7 +71,7 @@ python -m pip install -e .
 Run the audit on one of the bundled example packages and read the report it writes:
 
 ```bash
-biomed-audit examples/minimal_package --output-dir audit_outputs/minimal
+biomed-audit examples/minimal_package --scan-profile quick --output-dir audit_outputs/minimal
 biomed-audit examples/full_presubmission_package --output-dir audit_outputs/full
 ```
 
@@ -81,13 +82,14 @@ scripts, use `python scripts/audit_package.py ...` with the same arguments.
 Each run writes to the output directory:
 
 - `audit-report.md` — the bilingual human-readable report (Quick Read, scope, coverage,
-  materials needed, traceability evidence, finding cards, action checklist, technical appendix).
+  materials needed, traceability evidence, finding cards, action queue, technical appendix).
 - `AUDIT_JSON_SUMMARY.json` — the same findings in machine-readable form.
 - `coverage.json`, `calibrated_findings.json`, and per-detector outputs — supporting detail.
 - `audit_snapshot.json` and `file_hash_manifest.json` — the exact package version reviewed, including SHA-256 hashes.
 - `claim_coverage.json` / `claim_coverage.csv` — claim-to-evidence coverage when `claim_manifest.csv` is supplied.
 - `methodology_checklist.json` / `methodology_checklist.csv` — manual-review readiness prompts for wet-lab, animal, clinical, cell, flow, and omics reporting.
-- `submission_qc_packet/` — a leave-behind packet with the report, coverage, unresolved actions, verified traceability,
+- `unresolved_actions.csv`, `resolved_actions.csv`, and `accepted_with_reason.csv` — team trackers for follow-up.
+- `submission_qc_packet/` — a leave-behind packet with the report, coverage, action trackers, verified traceability,
   missing materials, file hashes, claim coverage, methodology checklist, and an author sign-off template.
 
 To audit your own package, point the command at your folder and pick a mode
@@ -100,6 +102,16 @@ biomed-audit /path/to/my_package --output-dir audit_outputs/my_package
 
 **Authors:** the [self-audit guide](docs/self-audit-guide.md) walks through how to lay out your
 materials, run the audit, and read the report — including which conclusions you may not draw.
+
+### Scan profiles
+
+Use `--scan-profile` to control speed and depth:
+
+| Profile | Intended use | What changes |
+| --- | --- | --- |
+| `quick` | First-pass drag-and-check review | Keeps fast source/text/global-image screens; skips expensive local-patch/copy-move deep image screening and external phrase search. |
+| `standard` | Default pre-submission QC | Runs the current balanced detector set and exports the submission QC packet. |
+| `deep` | Focused recheck or response-to-concern work | Preserves all current screens and marks the run as a deeper review surface for future detector/profile expansion. |
 
 ### Optional claim-to-evidence manifest
 

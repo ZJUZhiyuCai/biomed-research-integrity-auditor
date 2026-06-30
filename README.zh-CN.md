@@ -1,12 +1,14 @@
-# 生物医学研究诚信风险审计器
+# 生物医学投稿前自查助手
 
 [English README](README.md)
 
-这是一个帮助你在投稿前**筛查生物医学论文包研究诚信风险**的工具。它会把图像、源数据、文本重叠、材料缺口和检测覆盖范围整理成一份克制、中性、双语的人类可读审计报告；机器可读 JSON 仍保留在报告末尾和单独 artifact 中。
+这是一个面向生物医学科研团队的本地化投稿前自查工具。
 
-它**不是**“论文打假器”。它不会判定学术不端、造假、伪造、篡改或抄袭成立；它只做三件事：呈现有证据支持的风险、列出可能的良性解释、指出还需要哪些材料才能继续核验。报告统一使用 `R0` 到 `R4` 的风险等级，并保持中性措辞。
+它帮助作者在投稿前检查图像、原始数据、source data、统计结果、文本、图文对应关系和报告材料是否一致、可追溯、可复核。
 
-从工程上看，这个项目包含三部分：一个可安装的 Codex **Skill**、一组可脚本化运行的**检测与校准流水线**，以及一个用于盲测的**评测框架**。
+它**不是**“论文打假器”。它不会判定学术不端、造假、伪造、篡改或抄袭成立；它输出的是有证据支持的风险提示、缺失材料清单和投稿前行动项。报告统一使用中性措辞，并把机器可读 JSON 保留在报告末尾和单独 artifact 中。
+
+从工程上看，这个项目包含本地 **CLI**、本地优先的 **Web App**、可安装的 Codex **Skill**，以及一组可脚本化运行的**检测与校准流水线**。
 
 ---
 
@@ -20,7 +22,7 @@
 - 检查源数据或汇总表中的数值/统计一致性，例如 SD/SEM/n、p-value 范围、整数计数可行性。
 - 筛查包内文本重叠，并可选择运行外部短语检索 triage。
 - 输出结构化方法学/报告规范准备度清单，供 ARRIVE、CONSORT、ICMJE、MIFlowCyt、组学 accession 等人工复核使用。
-- 输出双语、人类可读的中性报告：包含 Quick Read、Audit Coverage、需要补充的材料、发现卡片、行动清单、技术附录和 `R0` 到 `R4` 风险登记。
+- 输出双语、人类可读的中性报告：包含 Quick Read、投稿准备状态、行动队列、Audit Coverage、需要补充的材料、发现卡片、技术附录和 `R0` 到 `R4` 风险登记。
 
 **它不能做：**
 
@@ -59,7 +61,7 @@ python -m pip install -e .
 先运行内置示例包，查看生成的报告：
 
 ```bash
-biomed-audit examples/minimal_package --output-dir audit_outputs/minimal
+biomed-audit examples/minimal_package --scan-profile quick --output-dir audit_outputs/minimal
 biomed-audit examples/full_presubmission_package --output-dir audit_outputs/full
 ```
 
@@ -69,13 +71,14 @@ biomed-audit examples/full_presubmission_package --output-dir audit_outputs/full
 
 每次运行会在输出目录写入：
 
-- `audit-report.md`：双语的人类可读报告，包含 Quick Read、scope、coverage、需要补充的材料、可追溯证据、发现卡片、行动清单和技术附录。
+- `audit-report.md`：双语的人类可读报告，包含 Quick Read、投稿准备状态、行动队列、scope、coverage、需要补充的材料、可追溯证据、发现卡片和技术附录。
 - `AUDIT_JSON_SUMMARY.json`：同一批信息的机器可读摘要。
 - `coverage.json`、`calibrated_findings.json` 和各检测器输出：用于复核的结构化细节。
 - `audit_snapshot.json` 和 `file_hash_manifest.json`：记录本次审计到底审了哪个版本的材料，包括 SHA-256。
 - `claim_coverage.json` / `claim_coverage.csv`：如果提供 `claim_manifest.csv`，这里会列出 claim-to-evidence 覆盖情况。
 - `methodology_checklist.json` / `methodology_checklist.csv`：wet-lab、animal、clinical、cell、flow、omics 的人工复核准备度清单。
-- `submission_qc_packet/`：投稿前留档包，包含报告、coverage、未解决动作、已验证 traceability、缺失材料、文件哈希、claim coverage、methodology checklist 和 author sign-off 模板。
+- `unresolved_actions.csv`、`resolved_actions.csv`、`accepted_with_reason.csv`：团队协作用的行动项跟踪表。
+- `submission_qc_packet/`：投稿前留档包，包含报告、coverage、行动项跟踪表、已验证 traceability、缺失材料、文件哈希、claim coverage、methodology checklist 和 author sign-off 模板。
 
 审计你自己的材料包时，把命令指向你的目录即可。默认模式是 `internal_presubmission`，也支持 `external_public_material` 和 `response_to_concern`：
 
@@ -84,6 +87,16 @@ biomed-audit /path/to/my_package --output-dir audit_outputs/my_package
 ```
 
 **作者用户：**请先读 [`docs/self-audit-guide.md`](docs/self-audit-guide.md)。它会说明材料目录怎么准备、报告怎么看，以及哪些结论不能从工具输出中推出。
+
+### 扫描档位
+
+用 `--scan-profile` 控制速度和深度：
+
+| 档位 | 适用场景 | 变化 |
+| --- | --- | --- |
+| `quick` | 第一次快速拖稿自查 | 保留快速 source/text/整图筛查；跳过耗时的 local-patch/copy-move 深度图像筛查和外部短语检索。 |
+| `standard` | 默认投稿前 QC | 运行当前平衡的检测集合，并导出 submission QC packet。 |
+| `deep` | 回应质疑或重点复核 | 保留当前全部筛查，并把本次运行标记为深度复核，方便后续 detector/profile 扩展。 |
 
 ### 可选：claim-to-evidence manifest
 

@@ -48,6 +48,7 @@ function AppInner() {
   const [report, setReport] = useState("");
   const [packagePath, setPackagePath] = useState("");
   const [mode, setMode] = useState("internal_presubmission");
+  const [scanProfile, setScanProfile] = useState("standard");
   const [domains, setDomains] = useState("wetlab,animal,cell");
   const [provider, setProvider] = useState("auto");
   const [error, setError] = useState<string | null>(null);
@@ -139,6 +140,7 @@ function AppInner() {
       const job = await createAudit({
         package_path: packagePath,
         mode,
+        scan_profile: scanProfile,
         domains,
         external_literature_provider: provider
       });
@@ -162,7 +164,7 @@ function AppInner() {
     }
     setError(null);
     try {
-      const job = await uploadZip(file, mode, domains, provider);
+      const job = await uploadZip(file, mode, scanProfile, domains, provider);
       setAudits((items) => [job, ...items]);
       setSelectedId(job.audit_id);
       toast("success", t.uploaded);
@@ -261,6 +263,7 @@ function AppInner() {
         theme={theme}
         packagePath={packagePath}
         mode={mode}
+        scanProfile={scanProfile}
         domains={domains}
         provider={provider}
         onLanguage={setLanguage}
@@ -269,6 +272,7 @@ function AppInner() {
         onRefresh={loadAudits}
         onPackagePath={handlePackagePath}
         onMode={setMode}
+        onScanProfile={setScanProfile}
         onDomains={setDomains}
         onProvider={setProvider}
         onRun={runAudit}

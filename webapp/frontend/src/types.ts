@@ -43,6 +43,7 @@ export interface PackageInventory {
 
 export interface PipelineSummary {
   overall_risk?: string;
+  scan_profile?: string;
   finding_count?: number;
   positive_provenance_count?: number;
   candidate_count?: number;
@@ -53,6 +54,7 @@ export interface AuditJob {
   audit_id: string;
   status: AuditStatus;
   mode: string;
+  scan_profile: string;
   domains: string;
   external_literature_provider: string;
   package_path: string;
@@ -75,6 +77,7 @@ export interface Coverage {
   detector_failures?: string[];
   audit_coverage_gap?: boolean;
   external_literature_provider?: string | null;
+  scan_profile?: string;
   scope_note?: string;
   [key: string]: unknown;
 }

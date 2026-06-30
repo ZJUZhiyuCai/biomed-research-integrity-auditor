@@ -52,6 +52,8 @@ Included:
 - Path traversal protection for evidence serving and guarded zip-package extraction.
 - React/Vite report viewer with audit coverage, R0-R4 register, positive provenance evidence,
   missing materials, evidence images, local history, delete, and Chinese/English labels.
+- Scan-profile selection (`quick`, `standard`, `deep`) wired through to the CLI. Quick runs are
+  explicitly marked as narrower-scope runs when expensive deep image screening is skipped.
 - Package prep tools: inspect a local package, create the recommended folder scaffold, and write
   `figure_assembly/assembly_manifest.csv` rows for declared figure-to-source relationships.
 - Package-prep guardrails: bounded directory inventory, visible scan warnings, package-relative

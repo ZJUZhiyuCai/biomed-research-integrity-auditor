@@ -20,6 +20,7 @@ async function api<T>(path: string, options?: RequestInit): Promise<T> {
 export interface CreateAuditInput {
   package_path: string;
   mode: string;
+  scan_profile: string;
   domains: string;
   external_literature_provider: string;
 }
@@ -67,12 +68,14 @@ export async function getReport(id: string): Promise<string> {
 export async function uploadZip(
   file: File,
   mode: string,
+  scan_profile: string,
   domains: string,
   external_literature_provider: string
 ): Promise<AuditJob> {
   const form = new FormData();
   form.append("file", file);
   form.append("mode", mode);
+  form.append("scan_profile", scan_profile);
   form.append("domains", domains);
   form.append("external_literature_provider", external_literature_provider);
   const response = await fetch("/api/audits/upload", { method: "POST", body: form });

@@ -10,7 +10,7 @@ material intake
 -> contextual join
 -> risk calibration
 -> evidence ledger
--> bilingual human report
+-> bilingual human report + presubmission action queue
 ```
 
 The central rule is separation of duties:
@@ -32,7 +32,13 @@ biomed-audit <package_dir> --mode internal_presubmission --output-dir audit_outp
 
 When running directly from a source checkout, `python scripts/audit_package.py ...` accepts the same arguments.
 
-The orchestrator runs package inventory, provenance graph construction, source-data detectors, image detectors, contextual joining, risk calibration, calibrated-finding validation, report assembly, and audit-summary validation. Individual detector scripts remain useful for debugging and unit tests, but should not be the default workflow.
+The orchestrator runs package inventory, provenance graph construction, source-data detectors, image detectors, contextual joining, risk calibration, calibrated-finding validation, report assembly, action-queue export, and audit-summary validation. Individual detector scripts remain useful for debugging and unit tests, but should not be the default workflow.
+
+Use `--scan-profile quick|standard|deep` to control runtime depth:
+
+- `quick`: first-pass local self-check. It keeps fast source/text/global-image screens and records that local-patch/copy-move deep image screening and external phrase search were skipped.
+- `standard`: default pre-submission QC profile.
+- `deep`: focused recheck/response profile. It currently preserves all standard screens and gives future detector tuning a stable profile name.
 
 For a first-time, non-developer walkthrough see `docs/self-audit-guide.md`, and the runnable `examples/minimal_package` and `examples/full_presubmission_package` packages.
 
@@ -144,7 +150,7 @@ Detector candidates must not include `risk_level` or `calibrated_risk_level`.
 
 ## Human Report Contract
 
-`audit-report.md` is a human-first bilingual Markdown report, not a detector payload dump. It starts with a Quick Read, scope, audit coverage, claim coverage when supplied, methodology readiness, materials needed, verified traceability evidence, risk register, finding cards, action checklist, technical appendix, and integrity boundary. Finding cards summarize observations, reader-facing evidence metrics, benign explanations, resolving materials, and next actions. Raw detector payloads remain in `calibrated_findings.json`, detector output files, and the final machine-readable summary.
+`audit-report.md` is a human-first bilingual Markdown report, not a detector payload dump. It starts with a Quick Read, submission-readiness status, presubmission action queue, scope, audit coverage, claim coverage when supplied, methodology readiness, materials needed, verified traceability evidence, risk register, finding cards, compact action checklist, technical appendix, and integrity boundary. Finding cards summarize observations, reader-facing evidence metrics, benign explanations, resolving materials, and next actions. Raw detector payloads remain in `calibrated_findings.json`, detector output files, and the final machine-readable summary.
 
 ## Audit Summary Contract
 
@@ -155,6 +161,8 @@ Reports end with exactly one `AUDIT_JSON_SUMMARY` block. In addition to calibrat
 - `audit_coverage`: which detector modules executed, which modules were not run (including offline external search and the manual methodology/reporting-standard compliance determination), image panels screened, unreadable image files, source tables screened, detector failures, and a scope note. This lets a reader separate "screened and clean within scope" from "not screened", so an empty finding list is not mistaken for a verified-correct manuscript.
 - `claim_coverage`: optional claim-to-evidence completeness counts when `claim_manifest.csv` is supplied. This records whether claims are linked to source data, raw records, analysis code, and protocols; it does not validate scientific truth.
 - `methodology_checklist`: structured manual-review readiness prompts for wet-lab, animal, clinical, cell, flow, and omics reporting standards. It records supporting-material availability and missing categories; it does not determine ARRIVE/CONSORT/ICMJE/MIFlowCyt/omics compliance.
+- `scan_profile`: `quick`, `standard`, or `deep`, so readers can tell whether a run was a fast first pass or a broader audit.
+- `action_queue`: four workflow buckets (`must_resolve`, `provide_materials`, `clarify_or_disclose`, `low_priority_checks`) with owner/status tracker fields. This is a repair queue, not a pass/fail score.
 
 Positive provenance is not proof of authenticity; it only records traceability within supplied materials. Audit coverage is descriptive scope, not a quality score.
 
@@ -166,8 +174,8 @@ Positive provenance is not proof of authenticity; it only records traceability w
 - `file_hash_manifest.json`: compact file hash manifest for leave-behind review.
 - `claim_coverage.json` / `claim_coverage.csv`: claim-to-evidence coverage from `claim_manifest.csv` if supplied.
 - `methodology_checklist.json` / `methodology_checklist.csv`: reporting-standard readiness checklist for manual review.
-- `missing_materials.csv`, `verified_traceability.csv`, and `unresolved_actions.csv`: CSV exports for co-author review.
-- `submission_qc_packet/`: a bundled packet containing the report, machine-readable summary, coverage, calibrated findings, hash manifest, claim coverage, methodology checklist, unresolved actions, and `author_signoff.yaml`.
+- `missing_materials.csv`, `verified_traceability.csv`, `unresolved_actions.csv`, `resolved_actions.csv`, and `accepted_with_reason.csv`: CSV exports for co-author review.
+- `submission_qc_packet/`: a bundled packet containing the report, machine-readable summary, coverage, calibrated findings, hash manifest, claim coverage, methodology checklist, action trackers, and `author_signoff.yaml`.
 
 These outputs are versioning and review artifacts. They must not be displayed as a pass/fail approval, integrity score, or clean-manuscript certificate.
 

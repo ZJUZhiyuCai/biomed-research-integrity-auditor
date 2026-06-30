@@ -116,6 +116,18 @@ If your `python3` already points to Python 3.10+, you can use `python3` instead
 of `python3.11`. Source-checkout fallback:
 `python scripts/audit_package.py /path/to/my_package --output-dir audit_outputs/my_package`.
 
+Choose a scan profile when speed or depth matters:
+
+```bash
+biomed-audit /path/to/my_package --scan-profile quick --output-dir audit_outputs/quick
+biomed-audit /path/to/my_package --scan-profile standard --output-dir audit_outputs/standard
+biomed-audit /path/to/my_package --scan-profile deep --output-dir audit_outputs/deep
+```
+
+- `quick` is for a first pass. It keeps fast checks and explicitly skips expensive local-patch/copy-move deep image screening and external phrase search.
+- `standard` is the default pre-submission self-audit.
+- `deep` is for focused rechecks or response-to-concern work. It currently preserves all standard screens and marks the run as a deeper review surface.
+
 Outputs land in `audit_outputs/my_package/`:
 
 - `audit-report.md` — the bilingual human-readable report.
@@ -124,7 +136,8 @@ Outputs land in `audit_outputs/my_package/`:
 - `audit_snapshot.json` / `file_hash_manifest.json` — file hashes for the exact package version reviewed.
 - `claim_coverage.json` / `claim_coverage.csv` — claim-to-evidence coverage when `claim_manifest.csv` is supplied.
 - `methodology_checklist.json` / `methodology_checklist.csv` — supporting-material readiness prompts for manual methodology review.
-- `submission_qc_packet/` — a leave-behind packet with unresolved actions, verified traceability,
+- `unresolved_actions.csv`, `resolved_actions.csv`, `accepted_with_reason.csv` — team trackers for the action queue.
+- `submission_qc_packet/` — a leave-behind packet with action trackers, verified traceability,
   missing materials, file hashes, claim coverage, methodology checklist, and an author sign-off template.
 
 ---
@@ -137,7 +150,7 @@ samples with synthetic images — not real data.
 ### Minimal example (fastest)
 
 ```bash
-biomed-audit examples/minimal_package --output-dir audit_outputs/minimal
+biomed-audit examples/minimal_package --scan-profile quick --output-dir audit_outputs/minimal
 ```
 
 What to expect: overall risk **R1**, no findings, and a **Materials Needed / 需要补充的材料**
@@ -170,6 +183,8 @@ The report is bilingual by default. Read the human Markdown sections first; use 
 | Section | What it tells you |
 | --- | --- |
 | **Quick Read / 快速结论** | The top-level risk, number of candidate findings, materials reviewed, missing categories, and the reminder that no findings is not proof of correctness. Start here. |
+| **Submission Readiness / 投稿准备状态** | A workflow status for whether must-resolve actions remain. It is not a pass/fail decision. |
+| **Presubmission Action Queue / 投稿前行动队列** | The practical task queue grouped as must resolve, provide materials, clarify/disclose, and low-priority checks. |
 | **Scope / 范围** | The mode, case ID, and package root. |
 | **Audit Coverage / 本次检查覆盖** | Which detector modules ran, which did not, image panels screened, unreadable image files, detector failures, and the scope note. Use this to know what was actually checked. |
 | **Claim Coverage / 声明-证据覆盖** | Claim-to-evidence completeness when `claim_manifest.csv` is supplied. This is not claim correctness. |
@@ -177,7 +192,7 @@ The report is bilingual by default. Read the human Markdown sections first; use 
 | **Verified Traceability Evidence / 已验证可追溯证据** | Figure-to-raw links the tool confirmed as positive provenance evidence. |
 | **Risk Register / 风险登记** | One row per candidate finding with level, module, location, and type. |
 | **Findings / Evidence Ledger / 发现项与证据台账** | Human-readable finding cards: observation, why it matters, evidence summary, benign explanations, materials needed, and recommended action. |
-| **Action Checklist / 下一步清单** | The practical follow-up list, sorted by risk and missing materials. |
+| **Action Checklist / 下一步清单** | A compact legacy view. Prefer the action queue and tracker CSVs for team follow-up. |
 | **Technical Appendix / 技术附录** | Compact technical details plus pointers to `calibrated_findings.json` and detector outputs. |
 | **Audit JSON Summary / 机器可读摘要** | The same audit summary in one machine-readable fenced JSON block. |
 

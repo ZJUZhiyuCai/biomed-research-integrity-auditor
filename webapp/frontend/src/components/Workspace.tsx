@@ -81,7 +81,7 @@ export function Workspace(props: WorkspaceProps) {
 
       <header className="audit-header">
         <div className="audit-heading">
-          <p className="eyebrow">{audit.mode}</p>
+          <p className="eyebrow">{audit.mode} · {audit.scan_profile}</p>
           <h2 className="mono">{audit.package_path}</h2>
         </div>
         <div className="header-actions">

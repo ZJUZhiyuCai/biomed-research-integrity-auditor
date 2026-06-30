@@ -22,6 +22,21 @@ from typing import Any
 import yaml
 
 
+ACTION_FIELDNAMES = [
+    "action_id",
+    "action_category",
+    "risk_level",
+    "action_type",
+    "location",
+    "required_action",
+    "owner",
+    "status",
+    "human_note",
+    "accepted_with_reason",
+    "source",
+]
+
+
 CLAIM_MANIFEST_CANDIDATES = (
     "claim_manifest.csv",
     "submission_readiness/claim_manifest.csv",
@@ -327,15 +342,52 @@ def unresolved_action_rows(
     audit_summary: dict[str, Any],
     claim_coverage: dict[str, Any],
 ) -> list[dict[str, str]]:
+    action_queue = audit_summary.get("action_queue") or {}
+    categories = action_queue.get("categories") or {}
+    if categories:
+        rows = []
+        for category_rows in categories.values():
+            for row in category_rows or []:
+                rows.append({key: str(row.get(key, "")) for key in ACTION_FIELDNAMES})
+        return rows
+
     rows: list[dict[str, str]] = []
 
+    def owner_for(action_type: str, location: str, action: str) -> str:
+        text = " ".join([action_type, location, action]).lower()
+        if any(token in text for token in ("stat", "p-value", "sem", "sd", "mean", "n consistency")):
+            return "statistician"
+        if any(token in text for token in ("image", "figure", "raw", "blot", "gel", "microscopy", "traceability")):
+            return "figure_preparer"
+        if any(token in text for token in ("source", "data", "claim", "manifest")):
+            return "data_owner"
+        if any(token in text for token in ("ethics", "irb", "consent", "registry", "protocol")):
+            return "corresponding_author"
+        return "first_author"
+
+    def category_for(action_type: str, risk_level: str, location: str, action: str) -> str:
+        text = " ".join([action_type, location, action]).lower()
+        if risk_level in {"R3", "R4"}:
+            return "must_resolve"
+        if any(token in text for token in ("missing", "source", "raw", "traceability", "coverage", "provide", "upload")):
+            return "provide_materials"
+        if risk_level == "R2" or any(token in text for token in ("clarify", "disclose", "explain")):
+            return "clarify_or_disclose"
+        return "low_priority_checks"
+
     def append(action_type: str, risk_level: str, location: str, action: str, source: str) -> None:
+        category = category_for(action_type, risk_level, location, action)
         rows.append({
             "action_id": f"ACT-{len(rows) + 1:04d}",
+            "action_category": category,
             "risk_level": risk_level,
             "action_type": action_type,
             "location": location,
             "required_action": action,
+            "owner": owner_for(action_type, location, action),
+            "status": "unresolved",
+            "human_note": "",
+            "accepted_with_reason": "",
             "source": source,
         })
 
@@ -383,11 +435,17 @@ def unresolved_action_rows(
 
 
 def write_unresolved_actions_csv(path: Path, rows: list[dict[str, str]]) -> None:
-    fieldnames = ["action_id", "risk_level", "action_type", "location", "required_action", "source"]
     with path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer = csv.DictWriter(handle, fieldnames=ACTION_FIELDNAMES)
         writer.writeheader()
-        writer.writerows(rows)
+        for row in rows:
+            writer.writerow({key: row.get(key, "") for key in ACTION_FIELDNAMES})
+
+
+def write_empty_action_tracker_csv(path: Path) -> None:
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=ACTION_FIELDNAMES)
+        writer.writeheader()
 
 
 def author_signoff_template(audit_id: str) -> dict[str, Any]:
@@ -529,6 +587,8 @@ def export_submission_qc_packet(
     write_claim_coverage_csv(packet_dir / "claim_coverage.csv", claim_coverage)
     action_rows = unresolved_action_rows(manifest, audit_summary, claim_coverage)
     write_unresolved_actions_csv(packet_dir / "unresolved_actions.csv", action_rows)
+    write_empty_action_tracker_csv(packet_dir / "resolved_actions.csv")
+    write_empty_action_tracker_csv(packet_dir / "accepted_with_reason.csv")
     (packet_dir / "author_signoff.yaml").write_text(
         yaml.safe_dump(author_signoff_template(str(snapshot.get("audit_id", ""))), sort_keys=False, allow_unicode=True),
         encoding="utf-8",
@@ -554,6 +614,7 @@ def export_submission_qc_packet(
         "- `claim_coverage.*` records claim-to-evidence coverage when a claim manifest was supplied.",
         "- `methodology_checklist.*` records reporting-standard readiness prompts and supporting-material gaps.",
         "- `unresolved_actions.csv` collects remaining completeness gaps, findings, and claim-evidence gaps.",
+        "- `resolved_actions.csv` and `accepted_with_reason.csv` are empty tracker templates for team follow-up.",
         "- `author_signoff.yaml` is a template for internal responsibility review before submission.",
     ]
     if not pdf_written:

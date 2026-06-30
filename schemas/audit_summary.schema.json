@@ -17,6 +17,7 @@
   "properties": {
     "audit_mode": {"type": "string"},
     "case_id": {"type": ["string", "null"]},
+    "scan_profile": {"enum": ["quick", "standard", "deep"]},
     "materials_reviewed": {"type": "array", "items": {"type": "string"}},
     "materials_missing": {"type": "array", "items": {"type": "string"}},
     "overall_risk": {"enum": ["R0", "R1", "R2", "R3", "R4"]},
@@ -87,6 +88,32 @@
           "required_materials_to_resolve": {"type": "array", "items": {"type": "string"}},
           "recommended_action": {"type": "string"}
         }
+      }
+    },
+    "action_queue": {
+      "type": "object",
+      "required": ["categories", "counts", "tracker_fields", "status_options"],
+      "properties": {
+        "categories": {
+          "type": "object",
+          "properties": {
+            "must_resolve": {"type": "array", "items": {"$ref": "#/$defs/action_item"}},
+            "provide_materials": {"type": "array", "items": {"$ref": "#/$defs/action_item"}},
+            "clarify_or_disclose": {"type": "array", "items": {"$ref": "#/$defs/action_item"}},
+            "low_priority_checks": {"type": "array", "items": {"$ref": "#/$defs/action_item"}}
+          }
+        },
+        "counts": {
+          "type": "object",
+          "properties": {
+            "must_resolve": {"type": "integer"},
+            "provide_materials": {"type": "integer"},
+            "clarify_or_disclose": {"type": "integer"},
+            "low_priority_checks": {"type": "integer"}
+          }
+        },
+        "tracker_fields": {"type": "array", "items": {"type": "string"}},
+        "status_options": {"type": "array", "items": {"type": "string"}}
       }
     },
     "claim_coverage": {
@@ -168,6 +195,38 @@
             }
           }
         }
+      }
+    }
+  },
+  "$defs": {
+    "action_item": {
+      "type": "object",
+      "required": [
+        "action_id",
+        "action_category",
+        "risk_level",
+        "action_type",
+        "location",
+        "required_action",
+        "owner",
+        "status",
+        "human_note",
+        "accepted_with_reason",
+        "source"
+      ],
+      "properties": {
+        "action_id": {"type": "string"},
+        "action_category": {"type": "string"},
+        "risk_level": {"enum": ["R0", "R1", "R2", "R3", "R4"]},
+        "action_type": {"type": "string"},
+        "item": {"type": "string"},
+        "location": {"type": "string"},
+        "required_action": {"type": "string"},
+        "owner": {"type": "string"},
+        "status": {"enum": ["unresolved", "resolved", "accepted_with_reason", "false_positive"]},
+        "human_note": {"type": "string"},
+        "accepted_with_reason": {"type": "string"},
+        "source": {"type": "string"}
       }
     }
   }

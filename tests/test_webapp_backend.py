@@ -40,6 +40,7 @@ class WebappBackendTests(unittest.TestCase):
                 response = client.post("/api/audits", json={
                     "package_path": str(ROOT / "examples" / "minimal_package"),
                     "mode": "internal_presubmission",
+                    "scan_profile": "quick",
                     "domains": "wetlab,animal,cell",
                     "external_literature_provider": "none",
                 })
@@ -56,10 +57,12 @@ class WebappBackendTests(unittest.TestCase):
                 )
 
                 self.assertEqual(payload["audit_summary"]["overall_risk"], artifact_summary["overall_risk"])
+                self.assertEqual(payload["audit_summary"]["scan_profile"], "quick")
                 self.assertEqual(payload["audit_summary"]["misconduct_verdict_present"], False)
                 self.assertIn("audit_coverage", payload["audit_summary"])
                 self.assertIn("modules_executed", payload["coverage"])
                 self.assertEqual(payload["pipeline_summary"]["overall_risk"], artifact_summary["overall_risk"])
+                self.assertEqual(payload["pipeline_summary"]["scan_profile"], "quick")
 
                 report_response = client.get(f"/api/audits/{audit_id}/report.md")
                 report_response.raise_for_status()

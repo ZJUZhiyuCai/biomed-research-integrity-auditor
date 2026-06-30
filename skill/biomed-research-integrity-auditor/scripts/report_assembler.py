@@ -74,6 +74,17 @@ MODULE_LABELS = {
     "package_internal_text_overlap": ("Package-internal text-overlap screen", "包内文本重叠筛查"),
     "methodology_readiness_checklist": ("Methodology readiness checklist", "方法学准备度清单"),
 }
+SCAN_PROFILE_LABELS = {
+    "quick": ("Quick scan", "快速扫描"),
+    "standard": ("Standard audit", "标准自查"),
+    "deep": ("Deep audit", "深度审查"),
+}
+ACTION_CATEGORY_LABELS = {
+    "must_resolve": ("Must resolve before submission", "投稿前必须处理"),
+    "provide_materials": ("Provide missing materials", "需要补充材料"),
+    "clarify_or_disclose": ("Clarify or disclose", "需要解释或披露"),
+    "low_priority_checks": ("Low-priority checks", "低优先级复核"),
+}
 MATERIAL_LABELS = {
     "ethics_irb": ("Ethics / IRB records", "伦理/IRB 文件"),
     "figure_assembly": ("Figure assembly files or manifest", "组图工程文件或 manifest"),
@@ -481,6 +492,153 @@ def summary_traceability_gaps(findings: list[dict[str, Any]]) -> list[dict[str, 
     return gaps
 
 
+def action_owner(action_type: str, location: str, action: str) -> str:
+    text = " ".join([action_type, location, action]).lower()
+    if any(token in text for token in ("stat", "p-value", "sem", "sd", "mean", "n consistency")):
+        return "statistician"
+    if any(token in text for token in ("image", "figure", "raw", "blot", "gel", "microscopy", "traceability")):
+        return "figure_preparer"
+    if any(token in text for token in ("source", "data", "claim", "manifest")):
+        return "data_owner"
+    if any(token in text for token in ("ethics", "irb", "consent", "registry", "protocol")):
+        return "corresponding_author"
+    return "first_author"
+
+
+def action_category_for_finding(item: dict[str, Any]) -> str:
+    risk = item.get("risk_level", "R1")
+    text = " ".join(str(item.get(key, "")) for key in ("finding_type", "evidence_type", "recommended_action")).lower()
+    if RISK_ORDER.get(risk, 0) >= RISK_ORDER["R3"]:
+        return "must_resolve"
+    if any(token in text for token in ("missing", "source", "raw", "traceability", "coverage", "provide", "upload")):
+        return "provide_materials"
+    if RISK_ORDER.get(risk, 0) == RISK_ORDER["R2"] or any(token in text for token in ("clarify", "disclose", "explain")):
+        return "clarify_or_disclose"
+    return "low_priority_checks"
+
+
+def empty_action_queue() -> dict[str, Any]:
+    return {
+        "categories": {key: [] for key in ACTION_CATEGORY_LABELS},
+        "counts": {key: 0 for key in ACTION_CATEGORY_LABELS},
+        "tracker_fields": [
+            "action_id",
+            "action_category",
+            "risk_level",
+            "action_type",
+            "location",
+            "required_action",
+            "owner",
+            "status",
+            "human_note",
+            "accepted_with_reason",
+            "source",
+        ],
+        "status_options": ["unresolved", "resolved", "accepted_with_reason", "false_positive"],
+    }
+
+
+def build_action_queue(
+    manifest: dict[str, Any],
+    findings: list[dict[str, Any]],
+    claim_coverage: dict[str, Any] | None = None,
+    methodology_checklist: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    queue = empty_action_queue()
+
+    def append(
+        category: str,
+        risk_level: str,
+        action_type: str,
+        location: str,
+        required_action: str,
+        source: str,
+        item_label: str = "",
+    ) -> None:
+        category = category if category in ACTION_CATEGORY_LABELS else "low_priority_checks"
+        action_id = f"ACT-{sum(queue['counts'].values()) + 1:04d}"
+        row = {
+            "action_id": action_id,
+            "action_category": category,
+            "risk_level": risk_level or "R1",
+            "action_type": action_type,
+            "item": item_label or action_type,
+            "location": location,
+            "required_action": required_action,
+            "owner": action_owner(action_type, location, required_action),
+            "status": "unresolved",
+            "human_note": "",
+            "accepted_with_reason": "",
+            "source": source,
+        }
+        queue["categories"][category].append(row)
+        queue["counts"][category] += 1
+
+    for item in findings:
+        action = item.get("recommended_action") or "Resolve or document this finding before relying on the audit."
+        append(
+            action_category_for_finding(item),
+            item.get("risk_level", "R1"),
+            item.get("finding_type", "finding"),
+            item.get("location", ""),
+            action,
+            "AUDIT_JSON_SUMMARY.findings",
+            item.get("finding_id", ""),
+        )
+
+    for item in manifest.get("missing_materials", []) or []:
+        category = str(item.get("category", ""))
+        append(
+            "provide_materials",
+            item.get("risk_level", "R1"),
+            "missing_material",
+            category,
+            f"Provide or document why this material is unavailable: {item.get('reason', category)}",
+            "manifest",
+            missing_material_label(category),
+        )
+
+    claim_coverage = claim_coverage or {}
+    if not claim_coverage.get("supplied"):
+        append(
+            "provide_materials",
+            "R1",
+            "claim_manifest_missing",
+            "claim_manifest.csv",
+            "Add a claim_manifest.csv before using this as a complete submission QC packet.",
+            "claim_coverage",
+            "claim_manifest.csv",
+        )
+    for item in claim_coverage.get("unresolved_claims", []) or []:
+        append(
+            "provide_materials",
+            "R1",
+            "claim_evidence_gap",
+            item.get("manuscript_location") or item.get("figure_or_table") or item.get("claim_id", ""),
+            "; ".join(item.get("gap_reasons", []) or ["Resolve claim-to-evidence gap."]),
+            "claim_coverage",
+            item.get("claim_id", ""),
+        )
+
+    methodology_checklist = methodology_checklist or {}
+    for module in methodology_checklist.get("modules", []) or []:
+        if not module.get("requested"):
+            continue
+        for check in module.get("checks", []) or []:
+            if check.get("status") not in {"supporting_material_missing", "partial_supporting_materials_manual_review_limited"}:
+                continue
+            append(
+                "provide_materials",
+                "R1",
+                "methodology_supporting_material",
+                str(check.get("check_id", module.get("module_id", ""))),
+                str(check.get("recommended_action_en") or "Add supporting material for methodology review."),
+                "methodology_checklist",
+                str(module.get("label_en", module.get("module_id", "Methodology"))),
+            )
+    return queue
+
+
 def build_summary(
     mode: str,
     case_id: str | None,
@@ -490,6 +648,7 @@ def build_summary(
     coverage: dict[str, Any] | None = None,
     claim_coverage: dict[str, Any] | None = None,
     methodology_checklist: dict[str, Any] | None = None,
+    scan_profile: str = "standard",
 ) -> dict[str, Any]:
     caps = []
     normalized = normalized_mode(mode)
@@ -499,9 +658,11 @@ def build_summary(
         caps.append("Missing materials are completeness gaps, not evidence of misconduct.")
     for item in findings:
         caps.extend(item.get("risk_caps_applied", []) or [])
+    action_queue = build_action_queue(manifest, findings, claim_coverage, methodology_checklist)
     return {
         "audit_mode": normalized,
         "case_id": case_id,
+        "scan_profile": scan_profile,
         "materials_reviewed": reviewed_materials(manifest),
         "materials_missing": missing_materials(manifest),
         "overall_risk": overall_risk(findings, manifest),
@@ -510,6 +671,7 @@ def build_summary(
         "positive_provenance": summary_positive_provenance(positive_evidence or []),
         "traceability_gaps": summary_traceability_gaps(findings),
         "findings": [summary_finding(item) for item in findings],
+        "action_queue": action_queue,
         **({"audit_coverage": coverage} if coverage else {}),
         **({"claim_coverage": claim_coverage} if claim_coverage else {}),
         **({"methodology_checklist": methodology_checklist} if methodology_checklist else {}),
@@ -709,19 +871,24 @@ def render_quick_read(
     findings: list[dict[str, Any]],
     coverage: dict[str, Any] | None,
     mode: str,
+    scan_profile: str,
 ) -> list[str]:
     missing_count = len(manifest.get("missing_materials", []) or [])
     finding_count = len(findings)
     reviewed_count = len(summary.get("materials_reviewed", []) or [])
     coverage_gap = bool((coverage or {}).get("audit_coverage_gap"))
+    action_counts = (summary.get("action_queue") or {}).get("counts", {})
     lines = [
         "## Quick Read / 快速结论",
         "",
         table([
             ["Item / 项目", "Result / 结果"],
             ["Mode / 模式", label_pair(mode, MODE_LABELS)],
+            ["Scan profile / 扫描档位", label_pair(scan_profile, SCAN_PROFILE_LABELS)],
             ["Overall risk / 总体风险", risk_label(summary.get("overall_risk", "R1"))],
             ["Candidate findings / 候选发现", str(finding_count)],
+            ["Must-resolve actions / 必须处理项", str(action_counts.get("must_resolve", 0))],
+            ["Missing-material actions / 补材料项", str(action_counts.get("provide_materials", 0))],
             ["Materials reviewed / 已审材料", f"{reviewed_count} {file_count_word(reviewed_count)}"],
             ["Missing material categories / 缺失材料类别", str(missing_count)],
             ["Coverage gap / 覆盖缺口", "yes / 是" if coverage_gap else "no / 否"],
@@ -756,6 +923,89 @@ def render_quick_read(
         "",
         "> Important / 重要：This report does not prove the study, figures, or data are correct. It only describes the supplied scope and current screening results.",
         "> 本报告不证明研究、图像或数据正确；它只描述本次所供材料范围和当前筛查结果。",
+        "",
+    ]
+    return lines
+
+
+def render_submission_readiness(summary: dict[str, Any]) -> list[str]:
+    queue = summary.get("action_queue") or empty_action_queue()
+    counts = queue.get("counts", {})
+    must_resolve = int(counts.get("must_resolve", 0) or 0)
+    provide_materials = int(counts.get("provide_materials", 0) or 0)
+    clarify = int(counts.get("clarify_or_disclose", 0) or 0)
+    low_priority = int(counts.get("low_priority_checks", 0) or 0)
+    direct_conflicts = sum(1 for item in summary.get("findings", []) or [] if item.get("risk_level") == "R4")
+
+    if must_resolve:
+        readiness_en = "Do not submit yet; resolve the must-resolve actions or document an accepted reason first."
+        readiness_zh = "当前不建议直接投稿；请先处理必须处理项，或记录可接受理由。"
+    elif provide_materials:
+        readiness_en = "No must-resolve action is listed, but missing-material actions limit the audit scope."
+        readiness_zh = "当前没有必须处理项，但补材料项仍限制本次自查范围。"
+    else:
+        readiness_en = "No high-priority unresolved concern was detected in the provided materials."
+        readiness_zh = "在所供材料范围内，未检出高优先级未处理关注。"
+
+    return [
+        "## Submission Readiness / 投稿准备状态",
+        "",
+        readiness_en,
+        "",
+        readiness_zh,
+        "",
+        table([
+            ["Readiness item / 准备度项目", "Count / 数量"],
+            ["Direct high-risk inconsistencies / 直接高风险不一致", str(direct_conflicts)],
+            ["Must resolve before submission / 投稿前必须处理", str(must_resolve)],
+            ["Provide missing materials / 需要补充材料", str(provide_materials)],
+            ["Clarify or disclose / 需要解释或披露", str(clarify)],
+            ["Low-priority checks / 低优先级复核", str(low_priority)],
+        ]),
+        "> This is a workflow status, not a pass/fail decision or misconduct verdict.",
+        "> 这是修复工作流状态，不是通过/不通过结论，也不是学术不端判断。",
+        "",
+    ]
+
+
+def render_action_queue(summary: dict[str, Any]) -> list[str]:
+    queue = summary.get("action_queue") or empty_action_queue()
+    categories = queue.get("categories", {})
+    lines = ["## Presubmission Action Queue / 投稿前行动队列", ""]
+    if not any(categories.get(key) for key in ACTION_CATEGORY_LABELS):
+        lines += [
+            "- No unresolved action was generated. Preserve the audit snapshot for future comparison.",
+            "- 未生成未处理行动项。请保存本次 audit snapshot 以便后续复审对比。",
+            "",
+        ]
+        return lines
+
+    for key, (label_en, label_zh) in ACTION_CATEGORY_LABELS.items():
+        rows = categories.get(key, []) or []
+        lines += [f"### {label_en} / {label_zh}", ""]
+        if not rows:
+            lines += ["- None currently listed / 当前无", ""]
+            continue
+        table_rows = [["ID", "Risk / 风险", "Item / 项目", "Required action / 所需动作", "Owner / 负责人", "Status / 状态"]]
+        for row in rows[:8]:
+            item = row.get("item") or row.get("action_type", "")
+            location = row.get("location", "")
+            if location:
+                item = f"{item} (`{location}`)"
+            table_rows.append([
+                row.get("action_id", ""),
+                row.get("risk_level", ""),
+                item,
+                row.get("required_action", ""),
+                row.get("owner", "unassigned"),
+                row.get("status", "unresolved"),
+            ])
+        lines += [table(table_rows)]
+        if len(rows) > 8:
+            lines += [f"_Additional actions in this category are in `unresolved_actions.csv`: {len(rows) - 8}._", ""]
+    lines += [
+        "Tracker fields / 跟踪字段: `unresolved`, `resolved`, `accepted_with_reason`, `false_positive`.",
+        "Use `unresolved_actions.csv`, `resolved_actions.csv`, and `accepted_with_reason.csv` for team review.",
         "",
     ]
     return lines
@@ -822,6 +1072,14 @@ def render_findings(findings: list[dict[str, Any]]) -> list[str]:
 
 def render_action_checklist(summary: dict[str, Any], manifest: dict[str, Any], findings: list[dict[str, Any]]) -> list[str]:
     lines = ["## Action Checklist / 下一步清单", ""]
+    queue = summary.get("action_queue") or {}
+    if queue.get("counts"):
+        lines += [
+            "Use the Presubmission Action Queue above as the primary tracker. This short checklist preserves the older compact view.",
+            "",
+            "请以上方“投稿前行动队列”为主要跟踪表；本节保留旧版简短清单视图。",
+            "",
+        ]
     actions: list[tuple[str, str, str]] = []
     for item in findings:
         action = item.get("recommended_action", "")
@@ -899,6 +1157,7 @@ def render_report(
     coverage: dict[str, Any] | None = None,
     claim_coverage: dict[str, Any] | None = None,
     methodology_checklist: dict[str, Any] | None = None,
+    scan_profile: str = "standard",
 ) -> str:
     normalized = normalized_mode(mode)
     title = REPORT_TITLES.get(normalized, REPORT_TITLES["internal_presubmission"])
@@ -912,13 +1171,17 @@ def render_report(
         coverage,
         claim_coverage,
         methodology_checklist,
+        scan_profile,
     )
     validate_instance(summary, SUMMARY_SCHEMA, "audit summary")
     lines = [f"# {title}", ""]
-    lines += render_quick_read(summary, manifest, findings, coverage, normalized)
+    lines += render_quick_read(summary, manifest, findings, coverage, normalized, scan_profile)
+    lines += render_submission_readiness(summary)
+    lines += render_action_queue(summary)
     lines += ["## Scope / 范围", ""]
     lines += [
         f"- Mode / 模式: {label_pair(normalized, MODE_LABELS)} (`{mode}`)",
+        f"- Scan profile / 扫描档位: {label_pair(scan_profile, SCAN_PROFILE_LABELS)} (`{scan_profile}`)",
         f"- Case ID / 案例编号: `{case_id or 'not supplied'}`",
         f"- Package root / 材料目录: `{manifest.get('root', 'not supplied')}`",
         "",
@@ -1012,6 +1275,7 @@ def main() -> int:
     parser.add_argument("--coverage", type=Path)
     parser.add_argument("--claim-coverage", type=Path)
     parser.add_argument("--methodology-checklist", type=Path)
+    parser.add_argument("--scan-profile", choices=["quick", "standard", "deep"], default="standard")
     parser.add_argument("--case-id")
     parser.add_argument("--output", type=Path, default=Path("audit-report.md"))
     args = parser.parse_args()
@@ -1034,6 +1298,7 @@ def main() -> int:
             coverage,
             claim_coverage,
             methodology_checklist,
+            args.scan_profile,
         ),
         encoding="utf-8",
     )

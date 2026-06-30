@@ -32,6 +32,7 @@ from pydantic import BaseModel, Field
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_RUNS_ROOT = ROOT / "audit_outputs" / "webapp"
 MODES = {"internal_presubmission", "external_public_material", "response_to_concern"}
+SCAN_PROFILES = {"quick", "standard", "deep"}
 EXTERNAL_PROVIDERS = {"auto", "none", "fixture", "europepmc", "crossref"}
 MAX_ZIP_BYTES = 250 * 1024 * 1024
 MAX_ZIP_MEMBERS = 5000
@@ -65,6 +66,7 @@ SOURCE_DATA_SUFFIXES = {".csv", ".tsv", ".xlsx"}
 class AuditCreateRequest(BaseModel):
     package_path: Optional[str] = Field(default=None, description="Local package directory to audit.")
     mode: str = "internal_presubmission"
+    scan_profile: str = "standard"
     domains: str = "wetlab,animal,cell"
     external_literature_provider: str = "auto"
 
@@ -106,6 +108,7 @@ class AuditJob:
     status: str
     package_path: str
     mode: str
+    scan_profile: str
     domains: str
     external_literature_provider: str
     output_dir: str
@@ -162,7 +165,7 @@ def create_app(output_root: Optional[Path] = None) -> FastAPI:
         package = Path(request.package_path).expanduser().resolve()
         if not package.exists() or not package.is_dir():
             raise HTTPException(status_code=404, detail=f"Package directory not found: {package}")
-        job = prepare_job(settings, package, request.mode, request.domains, request.external_literature_provider)
+        job = prepare_job(settings, package, request.mode, request.scan_profile, request.domains, request.external_literature_provider)
         save_job(settings, job)
         threading.Thread(target=run_job, args=(settings, job.audit_id), daemon=True).start()
         return job_response(settings, job)
@@ -171,6 +174,7 @@ def create_app(output_root: Optional[Path] = None) -> FastAPI:
     async def create_audit_from_zip(
         file: UploadFile = File(...),
         mode: str = Form("internal_presubmission"),
+        scan_profile: str = Form("standard"),
         domains: str = Form("wetlab,animal,cell"),
         external_literature_provider: str = Form("auto"),
     ) -> dict[str, Any]:
@@ -199,6 +203,7 @@ def create_app(output_root: Optional[Path] = None) -> FastAPI:
             settings,
             package,
             mode,
+            scan_profile,
             domains,
             external_literature_provider,
             audit_id=audit_id,
@@ -486,9 +491,11 @@ def validate_package_relative_file(package: Path, value: str, field: str) -> str
     return relative.as_posix()
 
 
-def validate_mode_and_provider(mode: str, provider: str) -> None:
+def validate_mode_profile_and_provider(mode: str, scan_profile: str, provider: str) -> None:
     if mode not in MODES:
         raise HTTPException(status_code=400, detail=f"Unsupported mode: {mode}")
+    if scan_profile not in SCAN_PROFILES:
+        raise HTTPException(status_code=400, detail=f"Unsupported scan profile: {scan_profile}")
     if provider not in EXTERNAL_PROVIDERS:
         raise HTTPException(status_code=400, detail=f"Unsupported external literature provider: {provider}")
 
@@ -502,12 +509,13 @@ def prepare_job(
     settings: WebappSettings,
     package: Path,
     mode: str,
+    scan_profile: str,
     domains: str,
     external_literature_provider: str,
     audit_id: Optional[str] = None,
     uploaded_package_dir: Optional[Path] = None,
 ) -> AuditJob:
-    validate_mode_and_provider(mode, external_literature_provider)
+    validate_mode_profile_and_provider(mode, scan_profile, external_literature_provider)
     audit_id = audit_id or new_audit_id(package.name)
     output_dir = (settings.audits_dir / audit_id).resolve()
     output_dir.mkdir(parents=True, exist_ok=False)
@@ -517,6 +525,8 @@ def prepare_job(
         str(package),
         "--mode",
         mode,
+        "--scan-profile",
+        scan_profile,
         "--output-dir",
         str(output_dir),
         "--domains",
@@ -532,6 +542,7 @@ def prepare_job(
         status="queued",
         package_path=str(package),
         mode=mode,
+        scan_profile=scan_profile,
         domains=domains,
         external_literature_provider=external_literature_provider,
         output_dir=str(output_dir),
@@ -560,6 +571,7 @@ def load_job(settings: WebappSettings, audit_id: str) -> Optional[AuditJob]:
     if not path.is_file():
         return None
     payload = json.loads(path.read_text(encoding="utf-8"))
+    payload.setdefault("scan_profile", "standard")
     return AuditJob(**payload)
 
 
@@ -609,6 +621,7 @@ def job_response(settings: WebappSettings, job: AuditJob) -> dict[str, Any]:
         "audit_id": job.audit_id,
         "status": job.status,
         "mode": job.mode,
+        "scan_profile": job.scan_profile,
         "domains": job.domains,
         "external_literature_provider": job.external_literature_provider,
         "package_path": job.package_path,

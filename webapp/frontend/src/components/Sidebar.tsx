@@ -16,6 +16,7 @@ interface SidebarProps {
   theme: Theme;
   packagePath: string;
   mode: string;
+  scanProfile: string;
   domains: string;
   provider: string;
   onLanguage: (l: Language) => void;
@@ -24,6 +25,7 @@ interface SidebarProps {
   onRefresh: () => void;
   onPackagePath: (v: string) => void;
   onMode: (v: string) => void;
+  onScanProfile: (v: string) => void;
   onDomains: (v: string) => void;
   onProvider: (v: string) => void;
   onRun: () => void;
@@ -98,6 +100,14 @@ export function Sidebar(props: SidebarProps) {
             <option value="internal_presubmission">internal_presubmission</option>
             <option value="external_public_material">external_public_material</option>
             <option value="response_to_concern">response_to_concern</option>
+          </select>
+        </label>
+        <label>
+          <span>{t.scanProfile}</span>
+          <select value={props.scanProfile} onChange={(e) => props.onScanProfile(e.target.value)}>
+            <option value="quick">quick</option>
+            <option value="standard">standard</option>
+            <option value="deep">deep</option>
           </select>
         </label>
         <label>

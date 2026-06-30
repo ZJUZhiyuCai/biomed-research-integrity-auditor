@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import builtins
+import csv
 import importlib.util
 import json
 import re
@@ -1568,7 +1569,11 @@ class EndToEndTests(unittest.TestCase):
             self.assertIn("methodology_checklist.json", packet["files"])
             self.assertIn("methodology_checklist.csv", packet["files"])
             self.assertIn("unresolved_actions.csv", packet["files"])
+            self.assertIn("resolved_actions.csv", packet["files"])
+            self.assertIn("accepted_with_reason.csv", packet["files"])
             self.assertTrue((out / "unresolved_actions.csv").is_file())
+            self.assertTrue((out / "resolved_actions.csv").is_file())
+            self.assertTrue((out / "accepted_with_reason.csv").is_file())
             self.assertTrue((out / "missing_materials.csv").is_file())
             self.assertTrue((out / "methodology_checklist.csv").is_file())
             self.assertTrue((out / "verified_traceability.csv").is_file())
@@ -1697,6 +1702,62 @@ class EndToEndTests(unittest.TestCase):
             self.assertNotIn("`{\"", body)
             summary = json.loads((out / "AUDIT_JSON_SUMMARY.json").read_text(encoding="utf-8"))
             self.assertEqual(summary["overall_risk"], "R3")
+
+    def test_report_includes_presubmission_action_queue_and_trackers(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "case004"
+            run([
+                PYTHON,
+                "scripts/audit_package.py",
+                "evals/cases/case_004",
+                "--output-dir",
+                str(out),
+                "--case-id",
+                "case_004",
+            ])
+            report = (out / "audit-report.md").read_text(encoding="utf-8")
+            self.assertIn("## Submission Readiness / 投稿准备状态", report)
+            self.assertIn("## Presubmission Action Queue / 投稿前行动队列", report)
+            self.assertIn("Must resolve before submission / 投稿前必须处理", report)
+            summary = json.loads((out / "AUDIT_JSON_SUMMARY.json").read_text(encoding="utf-8"))
+            self.assertEqual(summary["scan_profile"], "standard")
+            self.assertGreaterEqual(summary["action_queue"]["counts"]["must_resolve"], 1)
+            self.assertIn("resolved", summary["action_queue"]["status_options"])
+
+            with (out / "unresolved_actions.csv").open(encoding="utf-8") as handle:
+                unresolved_rows = list(csv.DictReader(handle))
+            self.assertGreaterEqual(len(unresolved_rows), summary["action_queue"]["counts"]["must_resolve"])
+            self.assertIn("owner", unresolved_rows[0])
+            self.assertIn("status", unresolved_rows[0])
+            self.assertIn("human_note", unresolved_rows[0])
+            self.assertIn("accepted_with_reason", unresolved_rows[0])
+            self.assertTrue((out / "resolved_actions.csv").is_file())
+            self.assertTrue((out / "accepted_with_reason.csv").is_file())
+
+    def test_quick_scan_profile_skips_local_patch_and_records_scope(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "quick"
+            run([
+                PYTHON,
+                "scripts/audit_package.py",
+                "evals/cases/case_004",
+                "--scan-profile",
+                "quick",
+                "--output-dir",
+                str(out),
+                "--case-id",
+                "case_004_quick",
+            ])
+            pipeline = json.loads((out / "pipeline_summary.json").read_text(encoding="utf-8"))
+            self.assertEqual(pipeline["scan_profile"], "quick")
+            self.assertFalse(any("local_patch" in path for path in pipeline["detector_outputs"]))
+            summary = json.loads((out / "AUDIT_JSON_SUMMARY.json").read_text(encoding="utf-8"))
+            self.assertEqual(summary["scan_profile"], "quick")
+            coverage = summary["audit_coverage"]
+            self.assertEqual(coverage["scan_profile"], "quick")
+            self.assertIn("image_global_near_duplicate", coverage["modules_executed"])
+            self.assertTrue(any("local patch" in item for item in coverage["modules_not_executed"]))
+            self.assertIn("Quick scan / 快速扫描", (out / "audit-report.md").read_text(encoding="utf-8"))
 
     def test_coverage_reports_unreadable_image_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

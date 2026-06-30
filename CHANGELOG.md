@@ -3,6 +3,14 @@
 ## Unreleased
 
 ### Added
+- Scan profiles for the default audit entrypoint: `--scan-profile quick|standard|deep`.
+  Quick runs skip expensive local-patch/copy-move deep image screening and external phrase search,
+  and coverage records those scope limits explicitly.
+- Presubmission action queue in the human report and `AUDIT_JSON_SUMMARY`, grouping follow-up
+  work as must-resolve, missing-material, clarify/disclose, and low-priority review items.
+- Team correction tracker exports: `resolved_actions.csv` and `accepted_with_reason.csv`, plus
+  owner/status/human-note/accepted-reason fields in `unresolved_actions.csv`.
+- Webapp scan-profile selection wired through to the local CLI backend.
 - Product-facing console entry points: `biomed-audit`, `biomed-audit-diff`, and
   `biomed-audit-web`, while retaining existing script/module fallbacks.
 - Expanded the public-data smoke benchmark to download all current ORI public image-forensics

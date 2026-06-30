@@ -33,6 +33,7 @@ from scripts.submission_qc import (  # noqa: E402
     pyproject_version,
     unresolved_action_rows,
     write_claim_coverage_csv,
+    write_empty_action_tracker_csv,
     write_missing_materials_csv,
     write_json as write_qc_json,
     write_re_audit_diff_csv,
@@ -49,6 +50,7 @@ IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp"}
 SOURCE_EXTS = {".csv", ".tsv", ".xlsx"}
 TEXT_EXTS = {".txt", ".md", ".pdf"}
 MODES = ("internal_presubmission", "external_public_material", "response_to_concern")
+SCAN_PROFILES = ("quick", "standard", "deep")
 EXTERNAL_LITERATURE_PROVIDERS = ("auto", "none", "fixture", "europepmc", "crossref")
 EXTERNAL_LITERATURE_FIXTURE_NAMES = (
     "external_literature_fixture.json",
@@ -329,7 +331,7 @@ def run_source_detectors(package: Path, output_dir: Path) -> list[Path]:
     return outputs
 
 
-def run_image_detector(package: Path, output_dir: Path, provenance_graph: Path) -> list[Path]:
+def run_image_detector(package: Path, output_dir: Path, provenance_graph: Path, scan_profile: str = "standard") -> list[Path]:
     if not has_files(package, IMAGE_EXTS):
         return []
 
@@ -360,6 +362,9 @@ def run_image_detector(package: Path, output_dir: Path, provenance_graph: Path) 
         outputs.append(contextual_result.output)
     else:
         outputs.append(global_result.output)
+
+    if scan_profile == "quick":
+        return outputs
 
     local_patch_output = output_dir / "local_patch_candidates.json"
     local_patch_result = run_detector("local_patch", package, output_dir, [
@@ -501,6 +506,7 @@ def build_coverage(
     output_dir: Path,
     detector_outputs: list[Path],
     external_provider: str | None,
+    scan_profile: str = "standard",
 ) -> dict[str, Any]:
     """Summarize what the audit actually screened so a clean report is not mistaken for a clean paper."""
 
@@ -517,6 +523,7 @@ def build_coverage(
         "detector_failures": [],
         "audit_coverage_gap": False,
         "external_literature_provider": external_provider,
+        "scan_profile": scan_profile,
         "scope_note": (
             "A module with no findings means no candidate was detected within the current detector "
             "scope and supplied materials; it is not a guarantee of correctness. Methodology and "
@@ -527,17 +534,21 @@ def build_coverage(
     }
 
     if has_files(package, IMAGE_EXTS):
-        coverage["modules_executed"].extend([
-            "image_global_near_duplicate",
-            "image_local_patch_and_same_image_copy_move",
-        ])
+        coverage["modules_executed"].append("image_global_near_duplicate")
+        if scan_profile == "quick":
+            coverage["modules_not_executed"].append(
+                "local patch / same-image copy-move deep image screening (skipped by quick scan profile)"
+            )
+        else:
+            coverage["modules_executed"].append("image_local_patch_and_same_image_copy_move")
         global_payload = load_safe("global_image_candidates.json")
         if global_payload:
             coverage["image_panels_screened"] = int(global_payload.get("images_screened", 0) or 0)
             coverage["image_files_unreadable"] += len(global_payload.get("errors", []) or [])
-        local_payload = load_safe("local_patch_candidates.json")
-        if local_payload:
-            coverage["image_files_unreadable"] += len(local_payload.get("errors", []) or [])
+        if scan_profile != "quick":
+            local_payload = load_safe("local_patch_candidates.json")
+            if local_payload:
+                coverage["image_files_unreadable"] += len(local_payload.get("errors", []) or [])
     else:
         coverage["modules_not_executed"].append("image screening (no image files supplied)")
 
@@ -554,7 +565,9 @@ def build_coverage(
     else:
         coverage["modules_not_executed"].append("text-overlap screening (no manuscript/text supplied)")
 
-    if external_provider:
+    if scan_profile == "quick":
+        coverage["modules_not_executed"].append("external literature phrase search (skipped by quick scan profile)")
+    elif external_provider:
         coverage["modules_executed"].append(f"external_literature_search ({external_provider})")
     else:
         coverage["modules_not_executed"].append(
@@ -628,6 +641,7 @@ def run_report(
     coverage: Path | None = None,
     claim_coverage: Path | None = None,
     methodology_checklist: Path | None = None,
+    scan_profile: str = "standard",
 ) -> Path:
     report = output_dir / "audit-report.md"
     cmd = [
@@ -650,6 +664,7 @@ def run_report(
         cmd.extend(["--claim-coverage", str(claim_coverage)])
     if methodology_checklist is not None:
         cmd.extend(["--methodology-checklist", str(methodology_checklist)])
+    cmd.extend(["--scan-profile", scan_profile])
     if case_id:
         cmd.extend(["--case-id", case_id])
     run(cmd)
@@ -672,6 +687,7 @@ def run_pipeline(
     output_dir: Path,
     domains: str,
     case_id: str | None,
+    scan_profile: str = "standard",
     external_literature_provider: str = "auto",
     external_literature_fixture: Path | None = None,
     claim_manifest: Path | None = None,
@@ -702,12 +718,13 @@ def run_pipeline(
     provenance_graph = build_provenance(package, manifest, output_dir)
     detector_outputs = []
     detector_outputs.extend(run_source_detectors(package, output_dir))
-    detector_outputs.extend(run_image_detector(package, output_dir, provenance_graph))
+    detector_outputs.extend(run_image_detector(package, output_dir, provenance_graph, scan_profile))
+    effective_external_provider = "none" if scan_profile == "quick" else external_literature_provider
     detector_outputs.extend(run_text_detectors(
         package,
         output_dir,
         mode,
-        external_literature_provider,
+        effective_external_provider,
         external_literature_fixture,
     ))
     if not detector_outputs:
@@ -715,10 +732,10 @@ def run_pipeline(
     calibrated = run_calibrator(detector_outputs, mode, output_dir)
     resolved_provider = resolve_external_literature_provider(
         mode,
-        external_literature_provider,
+        effective_external_provider,
         external_literature_fixture or find_external_literature_fixture(package),
     )
-    coverage = build_coverage(package, output_dir, detector_outputs, resolved_provider)
+    coverage = build_coverage(package, output_dir, detector_outputs, resolved_provider, scan_profile)
     coverage_path = output_dir / "coverage.json"
     write_json(coverage_path, coverage)
     report = run_report(
@@ -731,6 +748,7 @@ def run_pipeline(
         coverage_path,
         claim_coverage_path,
         methodology_checklist_path,
+        scan_profile,
     )
     audit_summary = extract_audit_summary(report)
     audit_summary_path = output_dir / "AUDIT_JSON_SUMMARY.json"
@@ -744,6 +762,10 @@ def run_pipeline(
         unresolved_actions_csv,
         unresolved_action_rows(manifest_payload, audit_summary, claim_coverage),
     )
+    resolved_actions_csv = output_dir / "resolved_actions.csv"
+    accepted_with_reason_csv = output_dir / "accepted_with_reason.csv"
+    write_empty_action_tracker_csv(resolved_actions_csv)
+    write_empty_action_tracker_csv(accepted_with_reason_csv)
 
     re_audit_diff: dict[str, Any] | None = None
     re_audit_diff_path: Path | None = None
@@ -770,6 +792,7 @@ def run_pipeline(
     result = {
         "package": str(package),
         "mode": mode,
+        "scan_profile": scan_profile,
         "output_dir": str(output_dir),
         "manifest": str(manifest),
         "audit_snapshot": str(snapshot_path),
@@ -781,6 +804,8 @@ def run_pipeline(
         "missing_materials_csv": str(missing_materials_csv),
         "verified_traceability_csv": str(verified_traceability_csv),
         "unresolved_actions_csv": str(unresolved_actions_csv),
+        "resolved_actions_csv": str(resolved_actions_csv),
+        "accepted_with_reason_csv": str(accepted_with_reason_csv),
         "provenance_graph": str(provenance_graph),
         "detector_outputs": [str(path) for path in detector_outputs],
         "calibrated_findings": str(calibrated),
@@ -809,6 +834,15 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("package_dir", type=Path)
     parser.add_argument("--mode", choices=MODES, default="internal_presubmission")
+    parser.add_argument(
+        "--scan-profile",
+        choices=SCAN_PROFILES,
+        default="standard",
+        help=(
+            "Runtime depth. quick keeps fast presentation-layer screens and skips expensive local-patch "
+            "and external phrase search; standard is the default presubmission audit; deep preserves all current screens."
+        ),
+    )
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--domains", default="wetlab,animal,cell")
     parser.add_argument("--case-id")
@@ -854,6 +888,7 @@ def main() -> int:
         output_dir,
         args.domains,
         args.case_id or package.name,
+        args.scan_profile,
         args.external_literature_provider,
         args.external_literature_fixture.expanduser().resolve() if args.external_literature_fixture else None,
         claim_manifest,
