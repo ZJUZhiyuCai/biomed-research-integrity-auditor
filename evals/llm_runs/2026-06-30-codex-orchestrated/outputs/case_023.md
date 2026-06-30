@@ -1,0 +1,98 @@
+# Biomedical Research Integrity Pre-submission Audit
+
+## Scope
+
+- Mode: internal_presubmission
+- Package root: /Users/rosscai/Documents/biomed-research-integrity-auditor/evals/cases/case_023
+
+## Audit Coverage
+
+Modules executed in this run:
+
+- image_global_near_duplicate
+- image_local_patch_and_same_image_copy_move
+- statistics_consistency
+- pseudoreplication
+- package_internal_text_overlap
+
+Modules not executed in this run:
+
+- external literature phrase search (offline: private internal audit, or no provider/fixture)
+- methodology/reporting-standard compliance (ARRIVE/CONSORT/ICMJE/MIFlowCyt/omics accession): guided checklist, not auto-screened
+
+- Image panels screened: 2
+- Source-data tables screened: 1
+
+> A module with no findings means no candidate was detected within the current detector scope and supplied materials; it is not a guarantee of correctness. Methodology and reporting-standard compliance (ARRIVE/CONSORT/ICMJE/MIFlowCyt/omics accession) and exhaustive external plagiarism-database search are not performed automatically and require human review.
+
+## Missing Materials Matrix
+
+| Category | Risk | Reason |
+| --- | --- | --- |
+| ethics_irb | R1 | No files classified as ethics_irb. |
+| figure_assembly | R1 | No files classified as figure_assembly. |
+| protocols | R1 | No files classified as protocols. |
+| raw_images | R1 | No files classified as raw_images. |
+| supplementary | R1 | No files classified as supplementary. |
+
+## Risk Register
+
+No structured findings supplied.
+
+## Evidence Ledger
+
+## Boundary
+
+This report identifies research-integrity risks and completeness gaps. It does not determine misconduct, intent, or author guilt.
+
+## Audit JSON Summary
+
+```json AUDIT_JSON_SUMMARY
+{
+  "audit_mode": "internal_presubmission",
+  "case_id": "case_023",
+  "materials_reviewed": [
+    "PACKAGE_NOTE.txt",
+    "figure_assembly/assembly_manifest.csv",
+    "figures/Figure_5A.png",
+    "figures/Figure_5B.png",
+    "manuscript.pdf",
+    "source_data/Figure_5_source.csv"
+  ],
+  "materials_missing": [
+    "ethics irb",
+    "figure assembly",
+    "protocols",
+    "raw images",
+    "supplementary"
+  ],
+  "overall_risk": "R1",
+  "misconduct_verdict_present": false,
+  "risk_caps_applied": [
+    "Missing materials are completeness gaps, not evidence of misconduct."
+  ],
+  "positive_provenance": [],
+  "traceability_gaps": [],
+  "findings": [],
+  "audit_coverage": {
+    "modules_executed": [
+      "image_global_near_duplicate",
+      "image_local_patch_and_same_image_copy_move",
+      "statistics_consistency",
+      "pseudoreplication",
+      "package_internal_text_overlap"
+    ],
+    "modules_not_executed": [
+      "external literature phrase search (offline: private internal audit, or no provider/fixture)",
+      "methodology/reporting-standard compliance (ARRIVE/CONSORT/ICMJE/MIFlowCyt/omics accession): guided checklist, not auto-screened"
+    ],
+    "image_panels_screened": 2,
+    "image_files_unreadable": 0,
+    "source_tables_screened": 1,
+    "detector_failures": [],
+    "audit_coverage_gap": false,
+    "external_literature_provider": null,
+    "scope_note": "A module with no findings means no candidate was detected within the current detector scope and supplied materials; it is not a guarantee of correctness. Methodology and reporting-standard compliance (ARRIVE/CONSORT/ICMJE/MIFlowCyt/omics accession) and exhaustive external plagiarism-database search are not performed automatically and require human review."
+  }
+}
+```

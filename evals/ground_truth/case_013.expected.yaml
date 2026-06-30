@@ -9,10 +9,10 @@
   },
   "required_findings": [
     {
-      "finding_type": "forensic",
+      "finding_type": "weak triage signal",
       "expected_risk_range": ["R1", "R2"],
-      "locations_should_include": ["source"],
-      "evidence_should_include": ["terminal", "rounding", "mean", "SD"],
+      "locations_should_include": ["Figure_7"],
+      "evidence_should_include": ["terminal", "effective_min_count"],
       "required_materials_should_include": ["raw"],
       "benign_explanations_should_include_any": ["instrument", "rounding", "normalization", "pooled"]
     }

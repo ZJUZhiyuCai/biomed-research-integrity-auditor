@@ -82,6 +82,34 @@ def undirected_pair(left: str, right: str) -> tuple[str, str]:
     return tuple(sorted((left, right)))
 
 
+def bounds_to_region(bounds: tuple[int, int, int, int]) -> dict[str, int]:
+    return {
+        "x": bounds[0],
+        "y": bounds[1],
+        "width": bounds[2] - bounds[0],
+        "height": bounds[3] - bounds[1],
+    }
+
+
+def bounds_overlap(left: tuple[int, int, int, int], right: tuple[int, int, int, int], padding: int = 0) -> bool:
+    return not (
+        left[2] + padding <= right[0]
+        or right[2] + padding <= left[0]
+        or left[3] + padding <= right[1]
+        or right[3] + padding <= left[1]
+    )
+
+
+def distinct_within_image_regions(
+    left: tuple[int, int, int, int],
+    right: tuple[int, int, int, int],
+    min_gap: int,
+) -> bool:
+    if left == right:
+        return False
+    return not bounds_overlap(left, right, max(0, min_gap))
+
+
 def load_provenance(path: Path | None) -> dict[str, Any]:
     if path is None or not path.exists():
         return {"edges": []}
@@ -321,18 +349,8 @@ def scan_pair(
                 continue
             seen_regions.add(key)
             hits.append({
-                "region_a": {
-                    "x": left_tile["bounds"][0],
-                    "y": left_tile["bounds"][1],
-                    "width": left_tile["bounds"][2] - left_tile["bounds"][0],
-                    "height": left_tile["bounds"][3] - left_tile["bounds"][1],
-                },
-                "region_b": {
-                    "x": right_tile["bounds"][0],
-                    "y": right_tile["bounds"][1],
-                    "width": right_tile["bounds"][2] - right_tile["bounds"][0],
-                    "height": right_tile["bounds"][3] - right_tile["bounds"][1],
-                },
+                "region_a": bounds_to_region(left_tile["bounds"]),
+                "region_b": bounds_to_region(right_tile["bounds"]),
                 "best_transform": best["best_transform"],
                 "score": round(float(best["score"]), 6),
                 "hash_distance": int(best["hash_distance"]),
@@ -341,6 +359,47 @@ def scan_pair(
                 "tile_stddev_b": right_tile["stddev"],
             })
     if hits and merged_region_fraction(hits, left["image"].size, right["image"].size) > max_region_fraction:
+        return []
+    return hits
+
+
+def scan_within_image(
+    image: dict[str, Any],
+    hash_threshold: int,
+    hash_size: int,
+    ncc_threshold: float,
+    max_region_fraction: float,
+    min_gap: int,
+    min_tile_hits: int,
+) -> list[dict[str, Any]]:
+    hits: list[dict[str, Any]] = []
+    seen_regions: set[tuple[tuple[int, int, int, int], tuple[int, int, int, int], str]] = set()
+    tiles = image["tiles"]
+    for left_index, left_tile in enumerate(tiles):
+        for right_tile in tiles[left_index + 1:]:
+            if not distinct_within_image_regions(left_tile["bounds"], right_tile["bounds"], min_gap):
+                continue
+            best = best_tile_match(left_tile, right_tile, hash_threshold, hash_size)
+            if not best or best["score"] < ncc_threshold:
+                continue
+            ordered_bounds = tuple(sorted((left_tile["bounds"], right_tile["bounds"])))
+            key = (ordered_bounds[0], ordered_bounds[1], best["best_transform"])
+            if key in seen_regions:
+                continue
+            seen_regions.add(key)
+            hits.append({
+                "region_a": bounds_to_region(left_tile["bounds"]),
+                "region_b": bounds_to_region(right_tile["bounds"]),
+                "best_transform": best["best_transform"],
+                "score": round(float(best["score"]), 6),
+                "hash_distance": int(best["hash_distance"]),
+                "hash_distances": best["hash_distances"],
+                "tile_stddev_a": left_tile["stddev"],
+                "tile_stddev_b": right_tile["stddev"],
+            })
+    if len(hits) < min_tile_hits:
+        return []
+    if hits and merged_region_fraction(hits, image["image"].size, image["image"].size) > max_region_fraction:
         return []
     return hits
 
@@ -354,8 +413,9 @@ def candidate_from_hits(
     idx: int,
     tile_size: int,
     stride: int,
+    same_image: bool = False,
 ) -> dict[str, Any]:
-    candidate_id = f"LOCALPATCH-{idx:04d}"
+    candidate_id = f"{'COPYMOVE' if same_image else 'LOCALPATCH'}-{idx:04d}"
     best_hit = max(hits, key=lambda item: (item["score"], -item["hash_distance"]))
     region_a = union_region([
         (
@@ -376,10 +436,12 @@ def candidate_from_hits(
         for hit in hits
     ])
     evidence_paths = save_evidence_crops(root, evidence_dir, candidate_id, left, right, region_a, region_b)
+    similarity_scope = "same_image_copy_move" if same_image else "local_patch"
     edge = {
         "left": left["path"],
         "right": right["path"],
-        "similarity_scope": "local_patch",
+        "similarity_scope": similarity_scope,
+        "same_image": same_image,
         "region_a": region_a,
         "region_b": region_b,
         "tile_hits": hits,
@@ -389,11 +451,14 @@ def candidate_from_hits(
         "hash_distance": best_hit["hash_distance"],
         "evidence_crops": evidence_paths,
     }
+    risk_tags = ["image_similarity_candidate", "local_patch_reuse"]
+    if same_image:
+        risk_tags.append("same_image_copy_move")
     return {
         "candidate_id": candidate_id,
         "detector": "image.local_patch_reuse",
-        "candidate_type": "local_patch_reuse",
-        "locations": [left["path"], right["path"]],
+        "candidate_type": "same_image_copy_move" if same_image else "local_patch_reuse",
+        "locations": [left["path"]] if same_image else [left["path"], right["path"]],
         "evidence": {
             "edges": [edge],
             "representative_edge": edge,
@@ -402,9 +467,10 @@ def candidate_from_hits(
         },
         "evidence_strength": "candidate",
         "risk_suggestion": "R3_possible",
-        "risk_cap_tags": ["image_similarity_candidate", "local_patch_reuse"],
+        "risk_cap_tags": risk_tags,
         "benign_explanations": [
             "same raw field, channel, membrane, or crop may be intentionally reused with disclosure",
+            "same-image local similarities can arise from repeated biological structures or image registration artifacts",
             "image registration, compression, or downsampling may create local similarities",
             "source/raw records are needed before escalation",
         ],
@@ -430,6 +496,9 @@ def scan(
     ncc_threshold: float,
     min_stddev: float,
     max_region_fraction: float,
+    within_image_ncc_threshold: float,
+    within_image_min_gap: int,
+    within_image_min_tile_hits: int,
 ) -> dict[str, Any]:
     try:
         from PIL import Image
@@ -455,6 +524,34 @@ def scan(
             errors.append({"path": str(path.relative_to(root)), "error": str(exc)})
 
     candidates = []
+    same_image_candidate_count = 0
+    for image in images:
+        if not image["tiles"]:
+            continue
+        hits = scan_within_image(
+            image,
+            hash_threshold,
+            hash_size,
+            max(ncc_threshold, within_image_ncc_threshold),
+            max_region_fraction,
+            within_image_min_gap,
+            within_image_min_tile_hits,
+        )
+        if not hits:
+            continue
+        same_image_candidate_count += 1
+        candidates.append(candidate_from_hits(
+            root,
+            evidence_dir,
+            image,
+            image,
+            hits,
+            len(candidates) + 1,
+            tile_size,
+            stride,
+            same_image=True,
+        ))
+
     excluded_pair_count = 0
     for i, left in enumerate(images):
         for right in images[i + 1:]:
@@ -490,10 +587,14 @@ def scan(
             "ncc_threshold": ncc_threshold,
             "min_stddev": min_stddev,
             "max_region_fraction": max_region_fraction,
+            "within_image_ncc_threshold": within_image_ncc_threshold,
+            "within_image_min_gap": within_image_min_gap,
+            "within_image_min_tile_hits": within_image_min_tile_hits,
             "transforms": list(TRANSFORMS),
         },
         "images_screened": len(images),
         "candidate_pair_count": len(candidates),
+        "same_image_candidate_count": same_image_candidate_count,
         "excluded_expected_traceability_pairs": excluded_pair_count,
         "candidates": candidates,
         "errors": errors,
@@ -511,6 +612,9 @@ def main() -> int:
     parser.add_argument("--ncc-threshold", type=float, default=0.985)
     parser.add_argument("--min-stddev", type=float, default=8.0)
     parser.add_argument("--max-region-fraction", type=float, default=0.65)
+    parser.add_argument("--within-image-ncc-threshold", type=float, default=0.995)
+    parser.add_argument("--within-image-min-gap", type=int, default=16)
+    parser.add_argument("--within-image-min-tile-hits", type=int, default=2)
     parser.add_argument("--evidence-dir", type=Path)
     parser.add_argument("--output", type=Path, default=Path("local_patch_candidates.json"))
     args = parser.parse_args()
@@ -531,12 +635,16 @@ def main() -> int:
         args.ncc_threshold,
         args.min_stddev,
         args.max_region_fraction,
+        args.within_image_ncc_threshold,
+        args.within_image_min_gap,
+        args.within_image_min_tile_hits,
     )
     output.write_text(json.dumps(result, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     print(json.dumps({
         "output": str(output),
         "images_screened": result["images_screened"],
         "candidates": len(result["candidates"]),
+        "same_image_candidates": result["same_image_candidate_count"],
         "excluded_expected_traceability_pairs": result["excluded_expected_traceability_pairs"],
         "errors": len(result["errors"]),
     }, indent=2))

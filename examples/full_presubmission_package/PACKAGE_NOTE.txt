@@ -1,0 +1,26 @@
+Example package: FULL PRE-SUBMISSION (teaching sample).
+
+This is a teaching example, not a real audit and not a real manuscript. The images are
+synthetic textures, not real microscopy or blots. The package shows a realistic folder
+layout for a pre-submission self-audit:
+
+  manuscript.pdf
+  figures/                 presentation-layer figure panels
+  raw_images/              raw acquisitions the figures were exported from
+  figure_assembly/         a structured manifest declaring figure -> raw links
+  source_data/             numeric summaries behind the figures
+  protocols/               sample map and methods notes
+  statistics_code/         analysis notes
+
+What you should expect in the report:
+- Verified traceability: each figure panel is declared to come from a raw acquisition,
+  and the image screen confirms the panel matches that raw file. This appears as
+  positive provenance, not a reuse concern.
+- Completeness gaps (R1): some expected materials (for example supplementary files and
+  ethics/IACUC records for animal work) are not included, so the audit cannot be called
+  complete.
+- An Audit Coverage section listing what ran and what did not.
+
+This example is deliberately "clean but incomplete". A clean automated result here does
+NOT mean the study is proven correct; it means nothing was flagged within the supplied
+materials and the current detector scope.

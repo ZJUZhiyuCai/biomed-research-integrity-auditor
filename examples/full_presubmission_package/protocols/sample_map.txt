@@ -1,0 +1,11 @@
+Sample map (teaching sample)
+
+Figure 1A microscopy:
+- Control group: animals C1-C4, acquisition_001 field 1
+- Treatment group: animals T1-T4, acquisition_001 field 2
+
+Figure 2A immunoblot:
+- Target protein and loading control run on the same membrane (full_membrane_002).
+- Lanes 1-4 control, lanes 5-8 treatment.
+
+This is a stand-in sample map for the example, not real experimental records.

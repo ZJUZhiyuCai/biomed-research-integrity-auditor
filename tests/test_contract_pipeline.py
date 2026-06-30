@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 import yaml
@@ -129,6 +130,41 @@ def write_local_patch_package(package: Path, raw_pair: bool = False, manifest: s
         (package / "figure_assembly/assembly_manifest.csv").write_text(manifest, encoding="utf-8")
 
 
+def write_same_image_copy_move_package(package: Path) -> None:
+    (package / "figures").mkdir(parents=True)
+    write_minimal_source(package)
+    image = textured_image(808, size=(576, 576))
+    patch = image.crop((64, 64, 256, 256))
+    image.paste(patch, (320, 320))
+    write_png(package / "figures/Figure_6A.png", image)
+    (package / "manuscript.pdf").write_text(
+        "Figure 6A is a microscopy panel. The submitted package includes this exported panel for image-integrity screening.\n",
+        encoding="utf-8",
+    )
+
+
+def write_manifest_suppression_attack_package(package: Path) -> None:
+    """Two whole-image flipped duplicates declared as same-field channels.
+
+    A manifest line alone must not clear a verifiable whole-image duplicate.
+    """
+    (package / "figures").mkdir(parents=True)
+    write_minimal_source(package)
+    base = textured_image(909, size=(256, 256))
+    write_png(package / "figures/Figure_2B.png", base)
+    write_png(package / "figures/Figure_4D.png", base.transpose(Image.Transpose.FLIP_LEFT_RIGHT))
+    (package / "manuscript.pdf").write_text(
+        "Figure 2B and Figure 4D are presented as separate microscopy fields.\n",
+        encoding="utf-8",
+    )
+    (package / "figure_assembly").mkdir(parents=True)
+    (package / "figure_assembly/assembly_manifest.csv").write_text(
+        "figure_panel,source_record,relation_type,modality,notes\n"
+        "figures/Figure_2B.png,figures/Figure_4D.png,same_field_different_channel,microscopy,same field declared across channels\n",
+        encoding="utf-8",
+    )
+
+
 METHODS_BOILERPLATE = (
     "Cells were seeded in six well plates and maintained in dulbecco modified eagle medium with ten percent fetal bovine serum. "
     "After overnight attachment, cultures were treated with vehicle or compound for twenty four hours, washed with phosphate buffered saline, "
@@ -199,7 +235,36 @@ def write_text_package(package: Path, scenario: str) -> None:
         raise ValueError(scenario)
 
 
+def write_external_fixture_package(package: Path) -> None:
+    package.mkdir(parents=True, exist_ok=True)
+    (package / "manuscript.pdf").write_text(f"Results\n\n{RESULTS_OVERLAP}\n", encoding="utf-8")
+    (package / "external_literature_fixture.json").write_text(json.dumps({
+        "queries": {
+            "the treatment group showed a sustained increase in nuclear signal intensity across all": [
+                {
+                    "title": "External fixture article with overlapping results language",
+                    "doi": "10.5555/fixture.001",
+                    "year": 2024,
+                    "source": "fixture",
+                    "url": "https://example.org/fixture.001",
+                }
+            ]
+        }
+    }), encoding="utf-8")
+
+
 class ContractPipelineTests(unittest.TestCase):
+    def test_archived_codex_eval_scorecard_is_present(self) -> None:
+        run_dir = ROOT / "evals" / "llm_runs" / "2026-06-30-codex-orchestrated"
+        manifest = json.loads((run_dir / "run_manifest.json").read_text(encoding="utf-8"))
+        self.assertEqual(manifest["run_kind"], "codex_orchestrated_skill_eval")
+        self.assertIn("not an independently blinded external LLM run", " ".join(manifest["important_limitations"]))
+
+        scorecard = run_dir / "scorecards" / "scorecard.csv"
+        rows = scorecard.read_text(encoding="utf-8").strip().splitlines()
+        self.assertEqual(len(rows), 31)
+        self.assertTrue(all(",True," in row for row in rows[1:]))
+
     def test_project_version_has_changelog_entry(self) -> None:
         pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
         match = re.search(r'^version\s*=\s*"([^"]+)"', pyproject, flags=re.M)
@@ -275,7 +340,7 @@ class ContractPipelineTests(unittest.TestCase):
             self.assertGreater(len(weak), 0)
             self.assertTrue(all(item["evidence_strength"] == "weak_signal" for item in weak))
             self.assertTrue(all(item["risk_suggestion"] == "R2_max" for item in weak))
-            self.assertTrue(any(item["evidence"].get("effective_min_count") == 3 for item in weak))
+            self.assertTrue(any(item["evidence"].get("effective_min_count") == 8 for item in weak))
 
     def test_stats_detector_reads_xlsx_source_tables(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -333,6 +398,84 @@ class ContractPipelineTests(unittest.TestCase):
             validate_instance(payload, ROOT / "schemas" / "detector_output.schema.json", "censored stats detector")
             self.assertEqual(payload["candidates"], [])
 
+    def test_sd_sem_tolerance_is_reporting_precision_aware(self) -> None:
+        stats = load_stats_consistency_check()
+        # sd=0.3, sem=0.1, n=4 -> nominal expected SD 0.2, but both are rounded to one
+        # decimal, so the difference is within reporting precision and must not flag.
+        rounded = [{"group": "A", "mean": "1.2", "sd": "0.3", "sem": "0.1", "n": "4"}]
+        rounded_msgs = [item["finding_type"] for item in stats.check_rows(Path("t.csv"), rounded, 1e-3)]
+        self.assertNotIn("SD is not consistent with SEM * sqrt(n)", rounded_msgs)
+        # A genuinely large SD/SEM contradiction must still fire.
+        inconsistent = [{"group": "A", "mean": "10.0", "sd": "5.0", "sem": "1.0", "n": "4"}]
+        inconsistent_msgs = [item["finding_type"] for item in stats.check_rows(Path("t.csv"), inconsistent, 1e-3)]
+        self.assertIn("SD is not consistent with SEM * sqrt(n)", inconsistent_msgs)
+
+    def test_terminal_digit_screens_require_default_minimum_count(self) -> None:
+        stats = load_stats_consistency_check()
+        columns = {
+            "value": [
+                (2, "1.50", 1.5),
+                (3, "2.50", 2.5),
+                (4, "3.50", 3.5),
+                (5, "4.50", 4.5),
+            ]
+        }
+        terminal = stats.check_terminal_digits(Path("small.csv"), columns, None, 0.65)
+        rounding = stats.check_rounding_patterns(Path("small.csv"), columns, None, 0.85)
+        self.assertEqual(terminal, [])
+        self.assertEqual(rounding, [])
+
+        enough = {
+            "value": [
+                (idx, f"{idx}.50", float(idx) + 0.5)
+                for idx in range(2, 10)
+            ]
+        }
+        terminal_enough = stats.check_terminal_digits(Path("enough.csv"), enough, None, 0.65)
+        self.assertTrue(terminal_enough)
+        self.assertEqual(terminal_enough[0]["evidence"]["effective_min_count"], 8)
+
+    def test_digit_preservation_uses_explicit_pair_threshold(self) -> None:
+        stats = load_stats_consistency_check()
+        rows = [
+            {"sample_id": f"S{idx:02d}", "control": f"{idx}.4", "treatment": f"{idx + 10}.4"}
+            for idx in range(1, 9)
+        ]
+        findings = stats.check_table_forensics(
+            Path("digits.csv"),
+            rows,
+            min_pairs=4,
+            min_digit_count=None,
+            min_digit_pairs=None,
+            digit_dominance=0.65,
+            rounding_share=0.85,
+            residual_tolerance=1e-9,
+        )
+        self.assertTrue(any(item["finding_type"] == "Digit positions are preserved across paired columns" for item in findings))
+
+    def test_integer_count_feasibility_has_small_n_and_precision_gates(self) -> None:
+        stats = load_stats_consistency_check()
+        tiny_n = [{"outcome": "cell_count", "mean": "2.5", "sd": "1.0", "n": "5"}]
+        tiny_msgs = [item["finding_type"] for item in stats.check_rows(Path("tiny.csv"), tiny_n, 1e-3)]
+        self.assertNotIn("Integer-count mean/SD/n combination appears mathematically incompatible", tiny_msgs)
+
+        rounded_possible = [{"outcome": "cell_count", "mean": "2.3", "sd": "1.0", "n": "10"}]
+        possible_msgs = [item["finding_type"] for item in stats.check_rows(Path("possible.csv"), rounded_possible, 1e-3)]
+        self.assertNotIn("Integer-count mean/SD/n combination appears mathematically incompatible", possible_msgs)
+
+        impossible = [{"outcome": "cell_count", "mean": "2.25", "sd": "1.0", "n": "6"}]
+        impossible_msgs = [item["finding_type"] for item in stats.check_rows(Path("impossible.csv"), impossible, 1e-3)]
+        self.assertIn("Integer-count mean/SD/n combination appears mathematically incompatible", impossible_msgs)
+
+    def test_stats_time_token_requires_word_boundary(self) -> None:
+        stats = load_stats_consistency_check()
+        # Immunology/marker columns must not be misread as longitudinal timepoints.
+        for marker in ("cd4", "cd8", "cd3", "cd45"):
+            self.assertIsNone(stats.time_token(marker))
+        # Genuine time tokens still parse.
+        self.assertEqual(stats.time_token("tumor_day4"), "day4")
+        self.assertEqual(stats.time_token("value_w2"), "w2")
+
     def test_pseudoreplication_detector_reads_xlsx_source_tables(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             source_dir = Path(tmp) / "source_data"
@@ -388,6 +531,35 @@ class ContractPipelineTests(unittest.TestCase):
             edge = candidate["evidence"]["edges"][0]
             self.assertGreater(edge["tile_hit_count"], 1)
             self.assertGreaterEqual(edge["score"], 0.985)
+            self.assertTrue(Path(edge["evidence_crops"]["side_by_side"]).exists())
+
+    def test_local_patch_detector_finds_same_image_copy_move(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "pkg"
+            write_same_image_copy_move_package(package)
+            output = Path(tmp) / "local_patch.json"
+            evidence_dir = Path(tmp) / "evidence"
+            run([
+                PYTHON,
+                "detectors/image/local_patch_reuse.py",
+                str(package),
+                "--evidence-dir",
+                str(evidence_dir),
+                "--output",
+                str(output),
+            ])
+            payload = json.loads(output.read_text(encoding="utf-8"))
+            validate_instance(payload, ROOT / "schemas" / "detector_output.schema.json", "same-image copy-move detector")
+            same_image = [item for item in payload["candidates"] if item["candidate_type"] == "same_image_copy_move"]
+            self.assertTrue(same_image)
+            candidate = same_image[0]
+            self.assertIn("same_image_copy_move", candidate["risk_cap_tags"])
+            self.assertEqual(candidate["locations"], ["figures/Figure_6A.png"])
+            edge = candidate["evidence"]["edges"][0]
+            self.assertTrue(edge["same_image"])
+            self.assertEqual(edge["left"], edge["right"])
+            self.assertEqual(edge["similarity_scope"], "same_image_copy_move")
+            self.assertGreaterEqual(edge["tile_hit_count"], 2)
             self.assertTrue(Path(edge["evidence_crops"]["side_by_side"]).exists())
 
     def test_local_patch_detector_excludes_declared_traceability_pair(self) -> None:
@@ -735,6 +907,7 @@ class RiskCapTests(unittest.TestCase):
             "unresolved_fig_raw_similarity",
             "cross_context_reuse_candidate",
             "local_patch_cross_context",
+            "same_image_copy_move",
             "local_patch_within_declared_raw_source",
             "local_patch_direct_source_conflict",
             "text_overlap_candidate",
@@ -744,6 +917,7 @@ class RiskCapTests(unittest.TestCase):
             "abstract_conclusion_overlap",
             "external_text_search_candidate",
             "external_text_match_candidate",
+            "external_literature_search_gap",
             "manifest_conflict",
             "disclosed_legitimate_reuse",
             "disclosed_unjustified_reuse",
@@ -759,11 +933,21 @@ class RiskCapTests(unittest.TestCase):
         self.assertEqual(detector_caps["audit_coverage_gap"]["max"], "R1")
         self.assertEqual(detector_caps["local_patch_reuse"]["max"], "R3")
         self.assertTrue(detector_caps["local_patch_reuse"]["unless_r4_requirement"])
+        self.assertEqual(detector_caps["same_image_copy_move"]["max"], "R3")
+        self.assertEqual(detector_caps["external_literature_search_gap"]["max"], "R1")
         self.assertEqual(detector_caps["methods_boilerplate_overlap"]["max"], "R2")
         self.assertEqual(detector_caps["disclosed_prior_text_overlap"]["max"], "R2")
         self.assertEqual(detector_caps["weak_statistical_signal"]["max"], "R2")
         self.assertIn("local_patch_direct_source_conflict", rules["r4_requirements"])
         self.assertIn("source_to_figure_conflict", rules["r4_requirements"])
+
+    def test_risk_rules_do_not_cap_unimplemented_screens(self) -> None:
+        # No detector emits Benford-style or p-value-clustering tags, so the rules
+        # must not configure caps for them (which would imply unimplemented coverage).
+        rules = load_rules(ROOT / "schemas" / "risk_rules.yaml")
+        detector_caps = rules["detector_caps"]
+        for unimplemented_tag in ("benford_style", "p_value_clustering"):
+            self.assertNotIn(unimplemented_tag, detector_caps)
 
     def test_local_patch_r4_requires_direct_contradiction_tag(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1052,6 +1236,61 @@ class EndToEndTests(unittest.TestCase):
             self.assertTrue(any(item["calibrated_risk_level"] == "R3" for item in local_findings))
             self.assertTrue((out / "evidence" / "local_patch").exists())
 
+    def test_same_image_copy_move_reaches_r3_in_pipeline(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "copy_move_case"
+            write_same_image_copy_move_package(package)
+            out = Path(tmp) / "out"
+            run([
+                PYTHON,
+                "scripts/audit_package.py",
+                str(package),
+                "--output-dir",
+                str(out),
+                "--case-id",
+                "copy_move_case",
+            ])
+            local_payload = json.loads((out / "local_patch_contextual_candidates.json").read_text(encoding="utf-8"))
+            same_image_candidates = [
+                item for item in local_payload["candidates"]
+                if item["candidate_type"] == "same_image_copy_move"
+            ]
+            self.assertTrue(same_image_candidates)
+            contextual_edges = same_image_candidates[0]["evidence"]["contextual_edges"]
+            self.assertTrue(any(edge["contextual_tag"] == "same_image_copy_move" for edge in contextual_edges))
+            calibrated = json.loads((out / "calibrated_findings.json").read_text(encoding="utf-8"))
+            findings = [item for item in calibrated["findings"] if item["finding_type"] == "same_image_copy_move"]
+            self.assertTrue(findings)
+            self.assertTrue(any(item["calibrated_risk_level"] == "R3" for item in findings))
+
+    def test_manifest_cannot_suppress_whole_image_duplicate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "attack_case"
+            write_manifest_suppression_attack_package(package)
+            out = Path(tmp) / "out"
+            run([
+                PYTHON,
+                "scripts/audit_package.py",
+                str(package),
+                "--output-dir",
+                str(out),
+                "--case-id",
+                "attack_case",
+            ])
+            summary = json.loads((out / "AUDIT_JSON_SUMMARY.json").read_text(encoding="utf-8"))
+            # An unverifiable manifest line claiming two flipped duplicates are the
+            # "same field, different channel" must not clear the whole-image
+            # duplication or fabricate positive provenance.
+            self.assertEqual(summary["overall_risk"], "R3")
+            self.assertEqual(summary["positive_provenance"], [])
+            calibrated = json.loads((out / "calibrated_findings.json").read_text(encoding="utf-8"))
+            conflicts = [
+                item for item in calibrated["findings"]
+                if "manifest_conflict" in (item.get("source_candidate_tags", []) or [])
+            ]
+            self.assertTrue(conflicts)
+            self.assertEqual(conflicts[0]["calibrated_risk_level"], "R3")
+
     def test_local_patch_unmapped_fig_raw_caps_at_r1_in_pipeline(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             package = Path(tmp) / "local_patch_raw_case"
@@ -1099,6 +1338,180 @@ class EndToEndTests(unittest.TestCase):
                 and risk_value(item["calibrated_risk_level"]) >= risk_value("R3")
                 for item in calibrated["findings"]
             ))
+
+    def test_default_pipeline_runs_external_literature_fixture_with_provenance(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "external_fixture_case"
+            write_external_fixture_package(package)
+            out = Path(tmp) / "out"
+            run([
+                PYTHON,
+                "scripts/audit_package.py",
+                str(package),
+                "--output-dir",
+                str(out),
+                "--case-id",
+                "external_fixture_case",
+            ])
+            summary = json.loads((out / "pipeline_summary.json").read_text(encoding="utf-8"))
+            self.assertEqual(summary["external_literature_provider"], "fixture")
+            self.assertTrue(any(path.endswith("external_literature_candidates.json") for path in summary["detector_outputs"]))
+
+            external = json.loads((out / "external_literature_candidates.json").read_text(encoding="utf-8"))
+            validate_instance(external, ROOT / "schemas" / "detector_output.schema.json", "pipeline external detector")
+            self.assertTrue(external["external_search_provenance"])
+            candidate = external["candidates"][0]
+            self.assertEqual(candidate["candidate_type"], "external_text_match_candidate")
+            evidence = candidate["evidence"]
+            self.assertEqual(evidence["query_provenance"]["provider_endpoint"], "local fixture file")
+            record_provenance = evidence["results"][0]["external_record_provenance"]
+            self.assertEqual(record_provenance["provider"], "fixture")
+            self.assertIn("10.5555/fixture.001", record_provenance["source_id"])
+
+            calibrated = json.loads((out / "calibrated_findings.json").read_text(encoding="utf-8"))
+            external_findings = [
+                item for item in calibrated["findings"]
+                if item["finding_type"] == "external_text_match_candidate"
+            ]
+            self.assertTrue(external_findings)
+            self.assertLessEqual(risk_value(external_findings[0]["calibrated_risk_level"]), risk_value("R3"))
+
+    def test_external_search_reports_gap_on_partial_provider_failure(self) -> None:
+        from detectors.text import external_literature_search as els
+
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "partial_case"
+            package.mkdir(parents=True)
+            (package / "manuscript.pdf").write_text(
+                "Results\n\n"
+                "The treatment group showed a sustained increase in nuclear signal intensity "
+                "across all quantified fields after twenty four hours of exposure to the compound.\n\n"
+                "The control group remained at a stable baseline level throughout the entire "
+                "observation window without any measurable change in the recorded signal intensity.\n",
+                encoding="utf-8",
+            )
+
+            calls: list[str] = []
+
+            def fake_search(provider, query, rows, timeout, fixture):
+                calls.append(query)
+                if len(calls) == 1:
+                    raise RuntimeError("provider unavailable")
+                return [{"title": "partial hit", "doi": "10.5555/partial", "url": "https://example.org/partial"}]
+
+            with mock.patch.object(els, "search_provider", side_effect=fake_search):
+                result = els.scan(package, "crossref", None, 5, 5, 1.0, 8, 5, 8)
+
+            validate_instance(result, ROOT / "schemas" / "detector_output.schema.json", "partial external search")
+            types = [item["candidate_type"] for item in result["candidates"]]
+            # A coverage gap must be reported even though another query returned a match.
+            self.assertIn("external_text_match_candidate", types)
+            self.assertIn("external_literature_search_gap", types)
+            gap = next(item for item in result["candidates"] if item["candidate_type"] == "external_literature_search_gap")
+            self.assertEqual(gap["risk_suggestion"], "R1_max")
+            self.assertIn("external_literature_search_gap", gap["risk_cap_tags"])
+
+    def test_example_packages_run_with_coverage_and_no_verdict(self) -> None:
+        for name in ("minimal_package", "full_presubmission_package"):
+            with tempfile.TemporaryDirectory() as tmp:
+                out = Path(tmp) / "out"
+                run([
+                    PYTHON,
+                    "scripts/audit_package.py",
+                    f"examples/{name}",
+                    "--output-dir",
+                    str(out),
+                    "--case-id",
+                    name,
+                ])
+                summary = json.loads((out / "AUDIT_JSON_SUMMARY.json").read_text(encoding="utf-8"))
+                self.assertFalse(summary["misconduct_verdict_present"])
+                # Teaching samples must stay honest: completeness/scope limited, never a clean verdict.
+                self.assertIn(summary["overall_risk"], {"R1", "R2"})
+                coverage = summary["audit_coverage"]
+                self.assertTrue(coverage["modules_executed"])
+                self.assertTrue(coverage["scope_note"])
+                report = (out / "audit-report.md").read_text(encoding="utf-8")
+                self.assertIn("## Audit Coverage", report)
+                if name == "full_presubmission_package":
+                    # The full example demonstrates verified figure-to-raw traceability.
+                    self.assertGreaterEqual(len(summary["positive_provenance"]), 2)
+                    self.assertEqual(coverage["image_files_unreadable"], 0)
+
+    def test_report_includes_audit_coverage_scope(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "pkg"
+            package.mkdir(parents=True)
+            write_minimal_source(package)
+            (package / "manuscript.pdf").write_text(
+                "Results\n\nNeutral results text supplied for package-internal screening only.\n",
+                encoding="utf-8",
+            )
+            out = Path(tmp) / "out"
+            run([
+                PYTHON,
+                "scripts/audit_package.py",
+                str(package),
+                "--output-dir",
+                str(out),
+                "--case-id",
+                "coverage_case",
+            ])
+            report = (out / "audit-report.md").read_text(encoding="utf-8")
+            self.assertIn("## Audit Coverage", report)
+            summary = json.loads((out / "AUDIT_JSON_SUMMARY.json").read_text(encoding="utf-8"))
+            coverage = summary["audit_coverage"]
+            self.assertIn("statistics_consistency", coverage["modules_executed"])
+            self.assertTrue(any("image" in item for item in coverage["modules_not_executed"]))
+            self.assertTrue(any("methodology" in item for item in coverage["modules_not_executed"]))
+            self.assertTrue(coverage["scope_note"])
+
+    def test_coverage_reports_unreadable_image_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "pkg"
+            (package / "figures").mkdir(parents=True)
+            write_png(package / "figures/Figure_1A.png", textured_image(11))
+            (package / "figures/Figure_broken.png").write_bytes(b"this is not a valid PNG image")
+            (package / "manuscript.pdf").write_text("Methods\n\nNeutral text for screening.\n", encoding="utf-8")
+            out = Path(tmp) / "out"
+            run([
+                PYTHON,
+                "scripts/audit_package.py",
+                str(package),
+                "--output-dir",
+                str(out),
+                "--case-id",
+                "broken_image_case",
+            ])
+            summary = json.loads((out / "AUDIT_JSON_SUMMARY.json").read_text(encoding="utf-8"))
+            coverage = summary["audit_coverage"]
+            # An unreadable image must be surfaced, not silently dropped from coverage.
+            self.assertGreaterEqual(coverage["image_files_unreadable"], 1)
+            self.assertEqual(coverage["image_panels_screened"], 1)
+            self.assertIn("could not be read", (out / "audit-report.md").read_text(encoding="utf-8"))
+
+    def test_coverage_reports_detector_payload_errors(self) -> None:
+        audit_package = load_audit_package()
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "pkg"
+            source_dir = package / "source_data"
+            source_dir.mkdir(parents=True)
+            (source_dir / "broken.csv").write_text("group,mean\nA,1.0\n", encoding="utf-8")
+            out = Path(tmp) / "out"
+            out.mkdir()
+            stats_output = out / "stats_consistency_candidates.json"
+            stats_output.write_text(json.dumps({
+                "detector_name": "stats.consistency_check",
+                "detector_version": "test",
+                "input": {"path": str(source_dir)},
+                "files_screened": [str(source_dir / "broken.csv")],
+                "candidates": [],
+                "errors": [{"path": str(source_dir / "broken.csv"), "error": "synthetic parse failure"}],
+            }), encoding="utf-8")
+
+            coverage = audit_package.build_coverage(package, out, [stats_output], None)
+            self.assertTrue(any("stats.consistency_check" in item for item in coverage["detector_failures"]))
+            self.assertTrue(any("broken.csv" in item for item in coverage["detector_failures"]))
 
     def test_case001_clean_expected_traceability_no_r3(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

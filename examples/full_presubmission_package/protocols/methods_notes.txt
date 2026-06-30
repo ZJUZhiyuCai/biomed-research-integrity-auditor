@@ -1,0 +1,9 @@
+Methods notes (teaching sample)
+
+- Randomization: block random number table.
+- Blinding: outcome scoring performed blinded to group.
+- Exclusions: criteria defined before analysis; none excluded in this example.
+- Replicates: n reported per group in source-data tables.
+- Imaging: identical exposure settings across groups (stand-in note for the example).
+
+These notes are illustrative and do not describe a real experiment.

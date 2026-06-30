@@ -72,7 +72,9 @@ Use when the user is responding to reviewer, journal, or PubPeer-style concerns.
    - The orchestrator runs `detectors/image/global_near_duplicate.py`, `detectors/image/local_patch_reuse.py`, and `calibrators/contextual_joiner.py` when raw or exported images are available.
    - Figure-panel similarity to a declared raw/source image is positive traceability evidence, not an image-reuse concern.
    - Figure-panel similarity to a raw/source image without a machine-readable provenance link is an R1 traceability gap, not R3.
+   - A manifest line alone does not clear an image-reuse concern. If two figure panels are declared as same-field/same-membrane but are detected as a whole-image near-duplicate, treat it as an unverifiable `manifest_conflict` (R3) requiring raw images and acquisition metadata, not as cleared traceability.
    - Local patch similarity is a region-level candidate only. Declared traceability, same-field different-channel relationships, and same-membrane/reprobe relationships must be checked through provenance before treating patch similarity as a risk.
+   - Same-image copy-move screening compares non-overlapping regions within each image. Treat it as a coordinate-level candidate requiring raw-image and processing-history review, not proof of manipulation.
    - Evidence crops from local patch screening are written under `audit_outputs/<case>/evidence/local_patch/`.
    - `scripts/image_similarity_screen.py` is a deprecated compatibility wrapper only; it delegates to the global near-duplicate detector and should not be the recommended workflow.
    - High-bit-depth grayscale inputs such as 16-bit TIFFs are contrast-normalized for screening before hashing or tile comparison.
@@ -87,7 +89,8 @@ Use when the user is responding to reviewer, journal, or PubPeer-style concerns.
    - Methods/protocol boilerplate is capped at R2; disclosed thesis/preprint-derived text is capped at R2 unless supplied materials create a direct contradiction.
    - Undisclosed results, abstract, or conclusion overlap may justify R2/R3 review depending on section, score, disclosure, and journal-policy context.
    - For every text-overlap finding, request prior drafts/source documents, disclosure or citation trail, and relevant journal policy before escalation.
-   - Run `detectors/text/external_literature_search.py <package_dir> --provider europepmc|crossref` only when explicit external phrase-search triage is needed. Treat results as candidates, not plagiarism-database matches or misconduct evidence.
+   - The orchestrator can run `detectors/text/external_literature_search.py` as part of the default path. In `external_public_material` mode, `--external-literature-provider auto` uses Europe PMC; in private internal mode it stays offline unless an external-literature fixture is supplied or a provider is explicitly requested.
+   - External search output must include query/result provenance. Treat results as candidates, not plagiarism-database matches or misconduct evidence.
 
 6. Check numerical and statistical consistency.
    - Run `scripts/stats_consistency_check.py <csv-tsv-xlsx-or-folder>` on source-data tables or exported numerical summaries.
@@ -95,6 +98,8 @@ Use when the user is responding to reviewer, journal, or PubPeer-style concerns.
    - Prefer direct reproducibility checks over weak distributional tests.
    - Screen for terminal-digit preference, preserved last/ones/tenths digits across paired groups, abnormal rounding, precision mixing, repeated mean/SD pairs, whole-column add/subtract shifts, time-stratified shifts, whole-column multiply/divide scaling, identical rank order, highly correlated residual/noise patterns, adjacent-timepoint linear shifts, over-smooth longitudinal trajectories, repeated per-animal increment patterns, cross-table/cross-figure numeric-sequence reuse, and integer-count mean/SD/n feasibility.
    - Treat terminal-digit, p-value range, repeated-noise, linear-transform, over-smoothing, implausible-correlation, precision-mixing, and sequence-reuse patterns as weak triage signals unless they directly conflict with supplied raw/source records.
+   - Do not over-read tiny samples: terminal-digit, rounding, precision, and digit-preservation screens require at least 8 comparable values by default; integer-count mean/SD/n feasibility checks require n >= 6 and account for reported mean/SD precision.
+   - Only p-value range/validity is screened automatically. Benford-style first-digit distribution analysis and p-value clustering/distribution tests are not implemented as detectors; treat them as manual statistical checks, not tool outputs, and do not claim them as automated coverage.
    - Run `detectors/stats/pseudoreplication_screen.py <source_data_dir>` when source tables include animal, patient, field, well, section, cell, or technical-replicate IDs.
 
 7. Audit methodology and compliance gaps.
@@ -116,6 +121,7 @@ Use when the user is responding to reviewer, journal, or PubPeer-style concerns.
    - Use `templates/external-concern-triage.md` for external mode.
    - Use `templates/evidence-ledger.md` for each finding.
    - Run `scripts/report_assembler.py --mode internal_presubmission --manifest manifest.json --findings calibrated_findings.json --output audit-report.md` when structured JSON is available.
+   - Always state audit coverage: which modules ran, which did not (offline external search, and the manual methodology/reporting-standard checks), how many image panels were screened, and any unreadable image files. An empty finding list within scope is not a clean-manuscript verdict. The default orchestrator records this as an `audit_coverage` block.
    - End every report with exactly one fenced JSON block labeled `AUDIT_JSON_SUMMARY`; follow `templates/audit-json-summary.schema.json`.
 
 ## Risk Scale
@@ -181,6 +187,7 @@ Do not let weak triage signals drive the conclusion.
 
 Load only what the task needs:
 
+- `../../docs/self-audit-guide.md`: non-developer guide for authors running a pre-submission self-audit; point users here, and to `../../examples/minimal_package` and `../../examples/full_presubmission_package`, when they ask how to start.
 - `references/policy-anchors.md`: misconduct boundary, image policies, reporting-standard anchors, external-source links.
 - `references/reporting-standards.md`: ARRIVE, clinical/ICMJE/CONSORT-oriented checks, MIFlowCyt, omics repository expectations.
 - `references/biomed-module-checklists.md`: practical audit checklist by module.
@@ -199,9 +206,9 @@ Scripts are screening aids. Read or patch them before relying on them in unfamil
 - `scripts/stats_consistency_check.py`: check CSV/XLSX numerical summaries for SEM/SD/n consistency and weak anomalies.
 - `scripts/report_assembler.py`: assemble a Markdown audit report from manifest and findings JSON.
 - `../../detectors/image/global_near_duplicate.py`: multi-hash plus D4 transform global image candidate detector.
-- `../../detectors/image/local_patch_reuse.py`: overlapping-tile local patch candidate detector with evidence crop export.
+- `../../detectors/image/local_patch_reuse.py`: overlapping-tile local patch and same-image copy-move candidate detector with evidence crop export.
 - `../../detectors/text/text_overlap_screen.py`: package-internal paragraph overlap candidate detector; no web-scale plagiarism search.
-- `../../detectors/text/external_literature_search.py`: opt-in external phrase-search triage against Europe PMC, Crossref, or a deterministic fixture.
+- `../../detectors/text/external_literature_search.py`: external phrase-search triage against Europe PMC, Crossref, or a deterministic fixture; wired into the default orchestrator through `--external-literature-provider`.
 - `../../benchmarks/true_pdf/run_true_pdf_benchmark.py`: true binary-PDF benchmark that verifies compressed machine text can be extracted for package-internal overlap screening.
 - `../../benchmarks/scanned_pdf/run_scanned_pdf_benchmark.py`: image-only PDF OCR benchmark; requires OCR runtime unless run with skip mode.
 - `../../benchmarks/real_image/run_real_image_benchmark.py`: real public-domain microscopy-image duplicate benchmark.

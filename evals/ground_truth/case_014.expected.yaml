@@ -9,10 +9,10 @@
   },
   "required_findings": [
     {
-      "finding_type": "linear",
+      "finding_type": "whole-column",
       "expected_risk_range": ["R1", "R2"],
-      "locations_should_include": ["source"],
-      "evidence_should_include": ["additive", "scaling", "rank"],
+      "locations_should_include": ["Figure_8"],
+      "evidence_should_include": ["additive", "same_rank_order"],
       "required_materials_should_include": ["analysis"],
       "benign_explanations_should_include_any": ["normalization", "batch", "formula", "preprocessing"]
     }

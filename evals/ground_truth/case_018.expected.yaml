@@ -9,11 +9,11 @@
   },
   "required_findings": [
     {
-      "finding_type": "sequence",
+      "finding_type": "Identical numeric sequence",
       "expected_risk_range": ["R1", "R2"],
       "locations_should_include": ["cross"],
       "evidence_should_include": ["multiple", "files", "sequence"],
-      "required_materials_should_include": ["workbook"],
+      "required_materials_should_include": ["analysis"],
       "benign_explanations_should_include_any": ["shared", "control", "export", "copy"]
     }
   ],

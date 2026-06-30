@@ -29,6 +29,11 @@ IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp"}
 SOURCE_EXTS = {".csv", ".tsv", ".xlsx"}
 TEXT_EXTS = {".txt", ".md", ".pdf"}
 MODES = ("internal_presubmission", "external_public_material", "response_to_concern")
+EXTERNAL_LITERATURE_PROVIDERS = ("auto", "none", "fixture", "europepmc", "crossref")
+EXTERNAL_LITERATURE_FIXTURE_NAMES = (
+    "external_literature_fixture.json",
+    "external_literature/fixture.json",
+)
 
 
 @dataclass(frozen=True)
@@ -43,6 +48,30 @@ def run(cmd: list[str]) -> None:
 
 def has_files(path: Path, suffixes: set[str]) -> bool:
     return path.exists() and any(item.is_file() and item.suffix.lower() in suffixes for item in path.rglob("*"))
+
+
+def find_external_literature_fixture(package: Path) -> Path | None:
+    for name in EXTERNAL_LITERATURE_FIXTURE_NAMES:
+        candidate = package / name
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def resolve_external_literature_provider(mode: str, requested: str, fixture_path: Path | None) -> str | None:
+    if requested == "none":
+        return None
+    if requested == "fixture":
+        if fixture_path is None:
+            raise SystemExit("--external-literature-provider fixture requires --external-literature-fixture or a package fixture")
+        return "fixture"
+    if requested in {"europepmc", "crossref"}:
+        return requested
+    if fixture_path is not None:
+        return "fixture"
+    if mode == "external_public_material":
+        return "europepmc"
+    return None
 
 
 def read_json(path: Path) -> dict[str, Any]:
@@ -345,9 +374,16 @@ def run_image_detector(package: Path, output_dir: Path, provenance_graph: Path) 
     return outputs
 
 
-def run_text_detectors(package: Path, output_dir: Path) -> list[Path]:
+def run_text_detectors(
+    package: Path,
+    output_dir: Path,
+    mode: str,
+    external_literature_provider: str,
+    external_literature_fixture: Path | None,
+) -> list[Path]:
     if not has_files(package, TEXT_EXTS):
         return []
+    outputs: list[Path] = []
     text_output = output_dir / "text_overlap_candidates.json"
     result = run_detector("text_overlap", package, output_dir, [
         PYTHON,
@@ -356,7 +392,29 @@ def run_text_detectors(package: Path, output_dir: Path) -> list[Path]:
         "--output",
         str(text_output),
     ], text_output)
-    return [result.output]
+    outputs.append(result.output)
+
+    fixture_path = external_literature_fixture or find_external_literature_fixture(package)
+    provider = resolve_external_literature_provider(mode, external_literature_provider, fixture_path)
+    if provider is None:
+        return outputs
+
+    external_output = output_dir / "external_literature_candidates.json"
+    cmd = [
+        PYTHON,
+        "detectors/text/external_literature_search.py",
+        str(package),
+        "--provider",
+        provider,
+        "--output",
+        str(external_output),
+    ]
+    if provider == "fixture":
+        assert fixture_path is not None
+        cmd.extend(["--fixture", str(fixture_path)])
+    external_result = run_detector("external_literature_search", package, output_dir, cmd, external_output)
+    outputs.append(external_result.output)
+    return outputs
 
 
 def write_audit_coverage_gap(package: Path, output_dir: Path) -> Path:
@@ -418,6 +476,93 @@ def write_audit_coverage_gap(package: Path, output_dir: Path) -> Path:
     return output
 
 
+def build_coverage(
+    package: Path,
+    output_dir: Path,
+    detector_outputs: list[Path],
+    external_provider: str | None,
+) -> dict[str, Any]:
+    """Summarize what the audit actually screened so a clean report is not mistaken for a clean paper."""
+
+    def load_safe(name: str) -> dict[str, Any] | None:
+        path = output_dir / name
+        return read_json(path) if path.exists() else None
+
+    coverage: dict[str, Any] = {
+        "modules_executed": [],
+        "modules_not_executed": [],
+        "image_panels_screened": 0,
+        "image_files_unreadable": 0,
+        "source_tables_screened": 0,
+        "detector_failures": [],
+        "audit_coverage_gap": False,
+        "external_literature_provider": external_provider,
+        "scope_note": (
+            "A module with no findings means no candidate was detected within the current detector "
+            "scope and supplied materials; it is not a guarantee of correctness. Methodology and "
+            "reporting-standard compliance (ARRIVE/CONSORT/ICMJE/MIFlowCyt/omics accession) and "
+            "exhaustive external plagiarism-database search are not performed automatically and require "
+            "human review."
+        ),
+    }
+
+    if has_files(package, IMAGE_EXTS):
+        coverage["modules_executed"].extend([
+            "image_global_near_duplicate",
+            "image_local_patch_and_same_image_copy_move",
+        ])
+        global_payload = load_safe("global_image_candidates.json")
+        if global_payload:
+            coverage["image_panels_screened"] = int(global_payload.get("images_screened", 0) or 0)
+            coverage["image_files_unreadable"] += len(global_payload.get("errors", []) or [])
+        local_payload = load_safe("local_patch_candidates.json")
+        if local_payload:
+            coverage["image_files_unreadable"] += len(local_payload.get("errors", []) or [])
+    else:
+        coverage["modules_not_executed"].append("image screening (no image files supplied)")
+
+    if has_files(package / "source_data", SOURCE_EXTS):
+        coverage["modules_executed"].extend(["statistics_consistency", "pseudoreplication"])
+        stats_payload = load_safe("stats_consistency_candidates.json")
+        if stats_payload:
+            coverage["source_tables_screened"] = len(stats_payload.get("files_screened", []) or [])
+    else:
+        coverage["modules_not_executed"].append("statistics screening (no source_data CSV/TSV/XLSX supplied)")
+
+    if has_files(package, TEXT_EXTS):
+        coverage["modules_executed"].append("package_internal_text_overlap")
+    else:
+        coverage["modules_not_executed"].append("text-overlap screening (no manuscript/text supplied)")
+
+    if external_provider:
+        coverage["modules_executed"].append(f"external_literature_search ({external_provider})")
+    else:
+        coverage["modules_not_executed"].append(
+            "external literature phrase search (offline: private internal audit, or no provider/fixture)"
+        )
+
+    coverage["modules_not_executed"].append(
+        "methodology/reporting-standard compliance (ARRIVE/CONSORT/ICMJE/MIFlowCyt/omics accession): guided checklist, not auto-screened"
+    )
+
+    for path in detector_outputs:
+        payload = read_json(path)
+        for error in payload.get("errors", []) or []:
+            stage = payload.get("detector_name") or path.stem
+            error_path = error.get("path") if isinstance(error, dict) else None
+            label = f"{stage}: {error_path}" if error_path else str(stage)
+            coverage["detector_failures"].append(label)
+        for candidate in payload.get("candidates", []) or []:
+            candidate_type = candidate.get("candidate_type")
+            if candidate_type == "detector_execution_failure":
+                stage = candidate.get("evidence", {}).get("stage") or candidate.get("candidate_id", "detector")
+                coverage["detector_failures"].append(str(stage))
+            elif candidate_type == "audit_coverage_gap":
+                coverage["audit_coverage_gap"] = True
+
+    return coverage
+
+
 def write_empty_calibrated(mode: str, output: Path) -> None:
     payload = {
         "mode": mode,
@@ -452,7 +597,15 @@ def run_calibrator(detector_outputs: list[Path], mode: str, output_dir: Path) ->
     return calibrated
 
 
-def run_report(manifest: Path, calibrated: Path, positive_sources: list[Path], mode: str, case_id: str | None, output_dir: Path) -> Path:
+def run_report(
+    manifest: Path,
+    calibrated: Path,
+    positive_sources: list[Path],
+    mode: str,
+    case_id: str | None,
+    output_dir: Path,
+    coverage: Path | None = None,
+) -> Path:
     report = output_dir / "audit-report.md"
     cmd = [
         PYTHON,
@@ -468,6 +621,8 @@ def run_report(manifest: Path, calibrated: Path, positive_sources: list[Path], m
     ]
     for path in positive_sources:
         cmd.extend(["--positive-evidence", str(path)])
+    if coverage is not None:
+        cmd.extend(["--coverage", str(coverage)])
     if case_id:
         cmd.extend(["--case-id", case_id])
     run(cmd)
@@ -484,18 +639,40 @@ def extract_audit_summary(report: Path) -> dict[str, Any]:
     return summary
 
 
-def run_pipeline(package: Path, mode: str, output_dir: Path, domains: str, case_id: str | None) -> dict[str, Any]:
+def run_pipeline(
+    package: Path,
+    mode: str,
+    output_dir: Path,
+    domains: str,
+    case_id: str | None,
+    external_literature_provider: str = "auto",
+    external_literature_fixture: Path | None = None,
+) -> dict[str, Any]:
     output_dir.mkdir(parents=True, exist_ok=True)
     manifest = build_manifest(package, mode, domains, output_dir)
     provenance_graph = build_provenance(package, manifest, output_dir)
     detector_outputs = []
     detector_outputs.extend(run_source_detectors(package, output_dir))
     detector_outputs.extend(run_image_detector(package, output_dir, provenance_graph))
-    detector_outputs.extend(run_text_detectors(package, output_dir))
+    detector_outputs.extend(run_text_detectors(
+        package,
+        output_dir,
+        mode,
+        external_literature_provider,
+        external_literature_fixture,
+    ))
     if not detector_outputs:
         detector_outputs.append(write_audit_coverage_gap(package, output_dir))
     calibrated = run_calibrator(detector_outputs, mode, output_dir)
-    report = run_report(manifest, calibrated, detector_outputs, mode, case_id, output_dir)
+    resolved_provider = resolve_external_literature_provider(
+        mode,
+        external_literature_provider,
+        external_literature_fixture or find_external_literature_fixture(package),
+    )
+    coverage = build_coverage(package, output_dir, detector_outputs, resolved_provider)
+    coverage_path = output_dir / "coverage.json"
+    write_json(coverage_path, coverage)
+    report = run_report(manifest, calibrated, detector_outputs, mode, case_id, output_dir, coverage_path)
     audit_summary = extract_audit_summary(report)
     audit_summary_path = output_dir / "AUDIT_JSON_SUMMARY.json"
     write_json(audit_summary_path, audit_summary)
@@ -513,6 +690,8 @@ def run_pipeline(package: Path, mode: str, output_dir: Path, domains: str, case_
         "candidate_count": read_json(calibrated).get("candidate_count", 0),
         "finding_count": len(read_json(calibrated).get("findings", [])),
         "overall_risk": audit_summary.get("overall_risk"),
+        "external_literature_provider": resolved_provider,
+        "coverage": str(coverage_path),
     }
     positive_count = 0
     for path in detector_outputs:
@@ -530,13 +709,35 @@ def main() -> int:
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--domains", default="wetlab,animal,cell")
     parser.add_argument("--case-id")
+    parser.add_argument(
+        "--external-literature-provider",
+        choices=EXTERNAL_LITERATURE_PROVIDERS,
+        default="auto",
+        help=(
+            "External phrase-search provider. auto uses package fixtures when present, "
+            "runs Europe PMC for external_public_material mode, and skips external search for private internal packages."
+        ),
+    )
+    parser.add_argument(
+        "--external-literature-fixture",
+        type=Path,
+        help="Deterministic fixture JSON for external_literature_search.py.",
+    )
     args = parser.parse_args()
 
     package = args.package_dir.expanduser().resolve()
     if not package.exists() or not package.is_dir():
         raise SystemExit(f"Package directory not found: {package}")
     output_dir = (args.output_dir or (ROOT / "audit_outputs" / package.name)).expanduser().resolve()
-    result = run_pipeline(package, args.mode, output_dir, args.domains, args.case_id or package.name)
+    result = run_pipeline(
+        package,
+        args.mode,
+        output_dir,
+        args.domains,
+        args.case_id or package.name,
+        args.external_literature_provider,
+        args.external_literature_fixture.expanduser().resolve() if args.external_literature_fixture else None,
+    )
     print(json.dumps(result, indent=2, ensure_ascii=False))
     return 0
 

@@ -7,15 +7,11 @@
     "min_overall_risk": "R1",
     "max_overall_risk": "R3"
   },
-  "required_findings": [
-    {
-      "finding_type": "public",
-      "expected_risk_range": ["R1", "R3"],
-      "locations_should_include": ["PDF"],
-      "evidence_should_include": ["public"],
-      "required_materials_should_include": ["source"],
-      "benign_explanations_should_include_any": ["not publicly available", "author-supplied"]
-    }
+  "required_findings": [],
+  "required_report_terms": [
+    "Mode: external_public_material",
+    "external_literature_search (europepmc)",
+    "Public or presentation-layer materials only"
   ],
   "forbidden_outputs": ["misconduct confirmed", "实锤", "造假成立", "学术不端成立"],
   "risk_caps": {

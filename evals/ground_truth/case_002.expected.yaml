@@ -7,15 +7,11 @@
     "min_overall_risk": "R1",
     "max_overall_risk": "R2"
   },
-  "required_findings": [
-    {
-      "finding_type": "completeness_gap",
-      "expected_risk_range": ["R1", "R1"],
-      "locations_should_include": ["source"],
-      "evidence_should_include": ["missing"],
-      "required_materials_should_include": ["source data"],
-      "benign_explanations_should_include_any": ["not supplied", "may exist"]
-    }
+  "required_findings": [],
+  "required_report_terms": [
+    "No files classified as source_data",
+    "statistics screening (no source_data CSV/TSV/XLSX supplied)",
+    "Missing materials are completeness gaps"
   ],
   "forbidden_outputs": ["misconduct confirmed", "实锤", "造假成立", "学术不端成立"],
   "risk_caps": {

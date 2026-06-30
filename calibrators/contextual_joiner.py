@@ -177,6 +177,14 @@ def edge_paths(edge: dict[str, Any]) -> tuple[str, str]:
     return str(edge.get("left", "")), str(edge.get("right", ""))
 
 
+def is_same_image_copy_move_edge(edge: dict[str, Any]) -> bool:
+    left, right = edge_paths(edge)
+    return bool(left and left == right) and (
+        edge.get("same_image") is True
+        or edge.get("similarity_scope") == "same_image_copy_move"
+    )
+
+
 def classify_similarity_edge(
     edge: dict[str, Any],
     context: dict[str, Any],
@@ -191,15 +199,52 @@ def classify_similarity_edge(
     classified["right_role"] = right_role
     is_local_patch = edge.get("similarity_scope") == "local_patch"
 
+    if is_same_image_copy_move_edge(edge):
+        classified.update({
+            "contextual_tag": "same_image_copy_move",
+            "reportable_as_risk": True,
+            "positive_evidence": False,
+            "risk_suggestion": "R3_possible",
+            "required_materials_to_resolve": [
+                "original image file",
+                "raw acquisition metadata",
+                "image-processing or figure-assembly history",
+            ],
+        })
+        return classified
+
     pair = undirected_pair(left, right)
     provenance_edge = provenance_edge_for_pair(left, right, provenance)
     if pair in declared_pairs:
+        declared_edge = declared_pairs[pair]
+        figure_figure_declared = left_role == "figure_panel" and right_role == "figure_panel"
+        # A declared same-field/same-membrane relationship between two presented
+        # panels is plausible for a shared local region, but it cannot be verified
+        # from the manifest alone. A whole-image near-duplicate (global scope, not a
+        # local patch) contradicts a "different channel" or "reprobed membrane"
+        # claim, so an unverifiable manifest line must not silently clear it. Keep it
+        # as a manifest_conflict that still requires raw-record review.
+        if figure_figure_declared and not is_local_patch:
+            classified.update({
+                "contextual_tag": "manifest_conflict",
+                "reportable_as_risk": True,
+                "positive_evidence": False,
+                "risk_suggestion": "R3_possible",
+                "declared_relation_unverified": True,
+                "provenance_edge": declared_edge,
+                "required_materials_to_resolve": [
+                    "raw image files for both declared panels",
+                    "per-channel or per-reprobe acquisition metadata",
+                    "figure assembly history demonstrating the declared relationship",
+                ],
+            })
+            return classified
         classified.update({
             "contextual_tag": "expected_traceability",
             "reportable_as_risk": False,
             "positive_evidence": True,
             "risk_suggestion": "R0_positive_traceability",
-            "provenance_edge": declared_pairs[pair],
+            "provenance_edge": declared_edge,
         })
         return classified
     if provenance_edge:
@@ -255,6 +300,7 @@ def risk_edges_for_cluster(classified_edges: list[dict[str, Any]]) -> list[dict[
         "disclosed_legitimate_reuse",
         "disclosed_unjustified_reuse",
         "manifest_conflict",
+        "same_image_copy_move",
     }
     reuse_edges = [edge for edge in classified_edges if edge.get("contextual_tag") in reuse_tags]
     if reuse_edges:
@@ -272,6 +318,14 @@ def candidate_from_edges(candidate: dict[str, Any], risk_edges: list[dict[str, A
 
     if "local_patch_cross_context" in tags:
         candidate_type = "local_patch_reuse"
+        risk_suggestion = "R3_possible"
+        evidence_strength = "candidate"
+    elif "same_image_copy_move" in tags:
+        candidate_type = "same_image_copy_move"
+        risk_suggestion = "R3_possible"
+        evidence_strength = "candidate"
+    elif "manifest_conflict" in tags:
+        candidate_type = "image_reuse_cluster"
         risk_suggestion = "R3_possible"
         evidence_strength = "candidate"
     elif "cross_context_reuse_candidate" in tags:
@@ -322,6 +376,20 @@ def candidate_from_edges(candidate: dict[str, Any], risk_edges: list[dict[str, A
             "raw image metadata",
         ]
         item["recommended_action"] = "Document the figure-to-raw/source relationship before treating the image similarity as a reuse concern."
+    if "manifest_conflict" in tags:
+        item["benign_explanations"] = [
+            "the panels may genuinely share a field or membrane, but the manifest claim cannot be verified from supplied materials",
+            "whole-image similarity could come from an export or figure-assembly error rather than reuse",
+        ]
+        item["required_materials"] = [
+            "raw image files for both declared panels",
+            "per-channel or per-reprobe acquisition metadata",
+            "figure assembly history demonstrating the declared relationship",
+        ]
+        item["recommended_action"] = (
+            "Verify the declared same-field/same-membrane relationship against raw images and acquisition metadata; "
+            "a manifest declaration alone does not resolve a whole-image duplication candidate."
+        )
     return item
 
 

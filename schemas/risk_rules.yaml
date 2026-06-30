@@ -16,14 +16,15 @@ detector_caps:
     max: R2
   terminal_digit:
     max: R2
-  p_value_clustering:
-    max: R2
-  benford_style:
-    max: R2
   precision_mixing:
     max: R2
   cross_file_sequence_reuse:
     max: R2
+  # Future candidate screens only; intentionally NOT configured because no detector
+  # emits them. Benford-style first-digit distribution analysis and p-value
+  # clustering/distribution tests are not implemented. Do not add caps for these
+  # tags until a detector actually produces them, so the rules never imply coverage
+  # that does not exist.
 
   image_similarity_candidate:
     max: R3
@@ -35,6 +36,9 @@ detector_caps:
     max: R3
     unless_r4_requirement: true
   local_patch_reuse:
+    max: R3
+    unless_r4_requirement: true
+  same_image_copy_move:
     max: R3
     unless_r4_requirement: true
   local_patch_cross_context:
@@ -79,6 +83,8 @@ detector_caps:
     max: R3
   external_text_match_candidate:
     max: R3
+  external_literature_search_gap:
+    max: R1
 
 contextual_caps:
   disclosed_legitimate_reuse:

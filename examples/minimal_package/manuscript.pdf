@@ -1,0 +1,13 @@
+Title: Example Minimal Study (teaching sample, not a real manuscript)
+
+Summary
+
+This short text stands in for a manuscript so the auditor has a document to read.
+Figure 1 reports a control versus treatment comparison. The quantitative summary
+for Figure 1 is provided in source_data/Figure_1_source.csv.
+
+Methods (abbreviated)
+
+Group means, standard deviations, standard errors, and sample sizes are reported in
+the supplied source-data table. Raw images, full protocols, and statistical code are
+not included in this minimal example.

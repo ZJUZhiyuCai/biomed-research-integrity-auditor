@@ -1,0 +1,26 @@
+Title: Example Pre-submission Study (teaching sample, not a real manuscript)
+
+Abstract
+
+This text stands in for a manuscript so the auditor has a document to read. It describes
+a control versus treatment comparison shown in Figure 1A (microscopy) and a protein-level
+comparison shown in Figure 2A (immunoblot).
+
+Figures and sources
+
+Figure 1A is exported from the raw acquisition in raw_images/acquisition_001.png. Figure 2A
+is cropped from the full membrane image in raw_images/full_membrane_002.png. The structured
+manifest in figure_assembly/assembly_manifest.csv records these figure-to-raw relationships.
+Quantitative summaries are in source_data/Figure_1_source.csv and source_data/Figure_2_source.csv.
+
+Methods (abbreviated)
+
+Group assignment used a block random number table. Outcome scoring was blinded. Exclusion
+criteria were defined before analysis. Sample sizes, means, standard deviations, standard
+errors, and p-values are reported in the supplied source-data tables. A sample map and
+methods notes are included under protocols/, and analysis notes are under statistics_code/.
+
+Not included in this example
+
+Supplementary files and ethics/IACUC approval records are intentionally omitted so the
+audit demonstrates how missing materials are reported as completeness gaps.

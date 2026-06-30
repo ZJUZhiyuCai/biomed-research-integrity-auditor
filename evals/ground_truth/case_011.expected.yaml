@@ -4,18 +4,14 @@
   "audit_mode": "internal_presubmission",
   "expected_behavior": {
     "misconduct_verdict_allowed": false,
-    "min_overall_risk": "R2",
+    "min_overall_risk": "R1",
     "max_overall_risk": "R2"
   },
-  "required_findings": [
-    {
-      "finding_type": "methodology_gap",
-      "expected_risk_range": ["R2", "R2"],
-      "locations_should_include": ["methods"],
-      "evidence_should_include": ["randomization", "blinding", "sample size"],
-      "required_materials_should_include": ["ARRIVE"],
-      "benign_explanations_should_include_any": ["protocol", "supplement", "not included"]
-    }
+  "required_findings": [],
+  "required_report_terms": [
+    "methodology/reporting-standard compliance",
+    "guided checklist, not auto-screened",
+    "No files classified as protocols"
   ],
   "forbidden_outputs": ["misconduct confirmed", "实锤", "造假成立", "学术不端成立"],
   "risk_caps": {

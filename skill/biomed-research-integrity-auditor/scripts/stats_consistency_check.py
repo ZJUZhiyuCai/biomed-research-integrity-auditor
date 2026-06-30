@@ -18,7 +18,10 @@ XLSX_EXTS = {".xlsx"}
 TABLE_EXTS = CSV_EXTS | XLSX_EXTS
 NUMERIC_HINTS = ("mean", "sd", "sem", "se", "n", "p", "p_value", "pvalue")
 TIME_HINT_RE = re.compile(r"(^|[_\-\s])(t\d+|day\d+|d\d+|week\d+|w\d+|hour\d+|h\d+|baseline|endpoint)($|[_\-\s])", re.I)
-TIME_TOKEN_RE = re.compile(r"(t\d+|day\d+|d\d+|week\d+|w\d+|hour\d+|h\d+|baseline|endpoint)", re.I)
+TIME_TOKEN_RE = re.compile(
+    r"(?<![A-Za-z0-9])(t\d+|day\d+|d\d+|week\d+|w\d+|hour\d+|h\d+|baseline|endpoint)(?![A-Za-z0-9])",
+    re.I,
+)
 SUMMARY_COLUMNS = {"mean", "sd", "sem", "se", "n", "p", "p_value", "pvalue"}
 TERMINAL_DIGIT_SKIP_COLUMNS = {"n"}
 MISSING_NUMERIC_TEXT = {"na", "n/a", "nan", "null", "-"}
@@ -37,6 +40,8 @@ COUNT_HINTS = (
     "lesions",
     "number",
 )
+DEFAULT_MIN_DIGIT_VALUES = 8
+DEFAULT_MIN_INTEGER_COUNT_N = 6
 
 
 def normalized_numeric_text(value: Any) -> str | None:
@@ -182,42 +187,102 @@ def near_integer(value: float, tolerance: float) -> bool:
     return abs(value - round(value)) <= tolerance
 
 
-def integer_count_summary_issue(mean: float, sd: float | None, n: float, tolerance: float = 1e-3) -> dict[str, Any] | None:
+def interval_contains_integer(center: float, half_width: float, tolerance: float) -> bool:
+    lower = center - max(0.0, half_width) - tolerance
+    upper = center + max(0.0, half_width) + tolerance
+    return math.ceil(lower) <= math.floor(upper)
+
+
+def range_contains_integer(lower: float, upper: float, tolerance: float) -> bool:
+    return math.ceil(lower - tolerance) <= math.floor(upper + tolerance)
+
+
+def integer_count_summary_issue(
+    mean: float,
+    sd: float | None,
+    n: float,
+    tolerance: float = 1e-3,
+    mean_half_ulp: float = 0.0,
+    sd_half_ulp: float = 0.0,
+    min_n: int = DEFAULT_MIN_INTEGER_COUNT_N,
+) -> dict[str, Any] | None:
     if n <= 0 or not near_integer(n, tolerance):
         return None
     n_int = int(round(n))
+    if n_int < min_n:
+        return None
+
     total = mean * n_int
-    if not near_integer(total, tolerance):
+    total_half_width = max(0.0, mean_half_ulp) * n_int
+    if not interval_contains_integer(total, total_half_width, tolerance):
         return {
             "reason": "mean * n is not an integer for an integer-count outcome",
             "mean": mean,
             "n": n_int,
             "mean_times_n": total,
+            "mean_half_ulp": mean_half_ulp,
+            "feasible_sum_range": [total - total_half_width, total + total_half_width],
+            "minimum_n_for_automatic_check": min_n,
         }
     if sd is None or sd < 0 or n_int <= 1:
         return None
 
-    total_int = round(total)
-    sumsq_from_sample_sd = (sd ** 2) * (n_int - 1) + (total_int ** 2) / n_int
-    sumsq_from_population_sd = (sd ** 2) * n_int + (total_int ** 2) / n_int
-    relaxed = max(0.02, tolerance * max(1.0, abs(sumsq_from_sample_sd), abs(sumsq_from_population_sd)))
-    sample_possible = near_integer(sumsq_from_sample_sd, relaxed)
-    population_possible = near_integer(sumsq_from_population_sd, relaxed)
+    total_candidates = range(
+        math.ceil(total - total_half_width - tolerance),
+        math.floor(total + total_half_width + tolerance) + 1,
+    )
+    sd_low = max(0.0, sd - max(0.0, sd_half_ulp))
+    sd_high = sd + max(0.0, sd_half_ulp)
+    sample_possible = False
+    population_possible = False
+    sample_ranges = []
+    population_ranges = []
+    for total_int in total_candidates:
+        sample_low = (sd_low ** 2) * (n_int - 1) + (total_int ** 2) / n_int
+        sample_high = (sd_high ** 2) * (n_int - 1) + (total_int ** 2) / n_int
+        population_low = (sd_low ** 2) * n_int + (total_int ** 2) / n_int
+        population_high = (sd_high ** 2) * n_int + (total_int ** 2) / n_int
+        sample_ranges.append([sample_low, sample_high])
+        population_ranges.append([population_low, population_high])
+        relaxed = max(0.02, tolerance * max(1.0, abs(sample_low), abs(sample_high), abs(population_low), abs(population_high)))
+        sample_possible = sample_possible or range_contains_integer(sample_low, sample_high, relaxed)
+        population_possible = population_possible or range_contains_integer(population_low, population_high, relaxed)
     if not sample_possible and not population_possible:
         return {
             "reason": "mean/SD/n do not imply an integer-valued sum of squares under sample or population SD",
             "mean": mean,
             "sd": sd,
             "n": n_int,
-            "sum": total_int,
-            "sample_sd_implied_sumsq": sumsq_from_sample_sd,
-            "population_sd_implied_sumsq": sumsq_from_population_sd,
-            "tolerance": relaxed,
+            "candidate_integer_sums": list(total_candidates),
+            "mean_half_ulp": mean_half_ulp,
+            "sd_half_ulp": sd_half_ulp,
+            "sample_sd_implied_sumsq_ranges": sample_ranges,
+            "population_sd_implied_sumsq_ranges": population_ranges,
+            "minimum_n_for_automatic_check": min_n,
         }
     return None
 
 
-def check_rows(path: Path, rows: list[dict[str, str]], sem_tolerance: float) -> list[dict[str, Any]]:
+def reporting_half_ulp(raw: Any, default: float) -> float:
+    """Half-unit-in-the-last-place implied by how precisely a value was reported.
+
+    A value written as ``0.2`` could represent anything in ``[0.15, 0.25)`` once
+    rounding is considered, so its half-ULP is ``0.05``. This lets consistency
+    checks tolerate ordinary reporting precision instead of treating rounded
+    summaries as contradictions.
+    """
+    places = decimal_places(raw)
+    if places is None:
+        return default
+    return 0.5 * (10 ** (-places))
+
+
+def check_rows(
+    path: Path,
+    rows: list[dict[str, str]],
+    sem_tolerance: float,
+    min_integer_count_n: int = DEFAULT_MIN_INTEGER_COUNT_N,
+) -> list[dict[str, Any]]:
     findings = []
     for idx, row in enumerate(rows, start=2):
         mean = parse_float(row.get("mean"))
@@ -237,7 +302,15 @@ def check_rows(path: Path, rows: list[dict[str, str]], sem_tolerance: float) -> 
 
         if sd is not None and sem is not None and n is not None and n > 1:
             expected_sd = sem * math.sqrt(n)
-            tolerance = max(sem_tolerance, abs(expected_sd) * sem_tolerance)
+            base_tolerance = max(sem_tolerance, abs(expected_sd) * sem_tolerance)
+            # Reported SD/SEM are rounded; propagate that precision so a legitimately
+            # rounded table is not flagged as an SD/SEM contradiction. This only
+            # widens the mismatch tolerance, so genuine large deviations still fire.
+            precision_tolerance = (
+                reporting_half_ulp(row.get("sd"), sem_tolerance)
+                + math.sqrt(n) * reporting_half_ulp(row.get("sem") or row.get("se"), sem_tolerance)
+            )
+            tolerance = max(base_tolerance, precision_tolerance)
             if abs(sd - expected_sd) > tolerance:
                 findings.append(issue(label, "R2", "SD is not consistent with SEM * sqrt(n)", {
                     "sd": sd,
@@ -245,7 +318,7 @@ def check_rows(path: Path, rows: list[dict[str, str]], sem_tolerance: float) -> 
                     "n": n,
                     "expected_sd_from_sem": expected_sd,
                 }))
-            if abs(sd - sem) <= tolerance and n > 2:
+            if abs(sd - sem) <= base_tolerance and n > 2:
                 findings.append(issue(label, "R2", "SD and SEM are nearly identical despite n > 2", {
                     "sd": sd,
                     "sem": sem,
@@ -262,7 +335,14 @@ def check_rows(path: Path, rows: list[dict[str, str]], sem_tolerance: float) -> 
             }, evidence_type="weak_forensic_triage_signal"))
 
         if mean is not None and n is not None and row_suggests_integer_count(row):
-            impossible = integer_count_summary_issue(mean, sd, n)
+            impossible = integer_count_summary_issue(
+                mean,
+                sd,
+                n,
+                mean_half_ulp=reporting_half_ulp(row.get("mean"), sem_tolerance),
+                sd_half_ulp=reporting_half_ulp(row.get("sd"), sem_tolerance) if sd is not None else 0.0,
+                min_n=min_integer_count_n,
+            )
             if impossible:
                 findings.append(issue(label, "R2", "Integer-count mean/SD/n combination appears mathematically incompatible", impossible))
     return findings
@@ -328,11 +408,7 @@ def first_decimal_digit(raw: str) -> str | None:
 def effective_min_count(n_values: int, user_min: int | None = None) -> int:
     if user_min is not None:
         return user_min
-    if n_values <= 5:
-        return 3
-    if n_values <= 12:
-        return 4
-    return 8
+    return DEFAULT_MIN_DIGIT_VALUES
 
 
 def check_terminal_digits(path: Path, columns: dict[str, list[tuple[int, str, float]]], min_count: int | None, dominance: float) -> list[dict[str, Any]]:
@@ -616,6 +692,7 @@ def check_digit_preservation(
     path: Path,
     columns: dict[str, list[tuple[int, str, float]]],
     min_pairs: int,
+    min_digit_pairs: int,
     share_threshold: float,
 ) -> list[dict[str, Any]]:
     findings = []
@@ -638,7 +715,7 @@ def check_digit_preservation(
                     right_digit = extractor(right_raw)
                     if left_digit is not None and right_digit is not None:
                         comparable.append(left_digit == right_digit)
-                if len(comparable) >= min_pairs:
+                if len(comparable) >= min_digit_pairs:
                     share = sum(1 for matched in comparable if matched) / len(comparable)
                     if share >= share_threshold:
                         preserved[digit_name] = {
@@ -775,6 +852,7 @@ def check_table_forensics(
     rows: list[dict[str, str]],
     min_pairs: int,
     min_digit_count: int | None,
+    min_digit_pairs: int | None,
     digit_dominance: float,
     rounding_share: float,
     residual_tolerance: float,
@@ -786,7 +864,7 @@ def check_table_forensics(
     findings.extend(check_precision_mixing(path, columns, min_digit_count))
     findings.extend(check_repeated_summaries(path, rows))
     findings.extend(check_column_relationships(path, columns, min_pairs, residual_tolerance))
-    findings.extend(check_digit_preservation(path, columns, min_pairs, 0.85))
+    findings.extend(check_digit_preservation(path, columns, min_pairs, effective_min_count(0, min_digit_pairs), 0.85))
     findings.extend(check_time_stratified_shifts(path, columns, min_pairs, residual_tolerance))
     findings.extend(check_longitudinal_mechanics(path, rows, columns, residual_tolerance))
     return findings
@@ -836,7 +914,9 @@ def main() -> int:
     parser.add_argument("path", type=Path, help="CSV/TSV file or folder containing source-data tables")
     parser.add_argument("--sem-tolerance", type=float, default=1e-3)
     parser.add_argument("--min-pairs", type=int, default=4, help="Minimum paired numeric rows for column relationship checks")
-    parser.add_argument("--min-digit-count", type=int, default=None, help="Override adaptive minimum numeric values for terminal-digit and rounding checks")
+    parser.add_argument("--min-digit-count", type=int, default=None, help="Override minimum numeric values for terminal-digit, rounding, and precision checks")
+    parser.add_argument("--min-digit-pairs", type=int, default=None, help="Override minimum paired rows for digit-preservation checks")
+    parser.add_argument("--min-integer-count-n", type=int, default=DEFAULT_MIN_INTEGER_COUNT_N, help="Minimum n for integer-count mean/SD/n feasibility checks")
     parser.add_argument("--digit-dominance", type=float, default=0.65, help="Dominant terminal digit share needed to flag")
     parser.add_argument("--rounding-share", type=float, default=0.85, help="Share of values ending in 0 or 5 needed to flag")
     parser.add_argument("--residual-tolerance", type=float, default=1e-9, help="Relative tolerance for exact linear transformation screens")
@@ -853,12 +933,13 @@ def main() -> int:
             for table_path, rows in read_tables(file_path):
                 columns = numeric_columns(rows)
                 tables.append((table_path, rows, columns))
-                candidates.extend(check_rows(table_path, rows, args.sem_tolerance))
+                candidates.extend(check_rows(table_path, rows, args.sem_tolerance, args.min_integer_count_n))
                 candidates.extend(check_table_forensics(
                     table_path,
                     rows,
                     args.min_pairs,
                     args.min_digit_count,
+                    args.min_digit_pairs,
                     args.digit_dominance,
                     args.rounding_share,
                     args.residual_tolerance,
@@ -876,6 +957,10 @@ def main() -> int:
             "sem_tolerance": args.sem_tolerance,
             "min_pairs": args.min_pairs,
             "min_digit_count": args.min_digit_count,
+            "default_min_digit_values": DEFAULT_MIN_DIGIT_VALUES,
+            "min_digit_pairs": args.min_digit_pairs,
+            "default_min_digit_pairs": DEFAULT_MIN_DIGIT_VALUES,
+            "min_integer_count_n": args.min_integer_count_n,
             "digit_dominance": args.digit_dominance,
             "rounding_share": args.rounding_share,
             "residual_tolerance": args.residual_tolerance,

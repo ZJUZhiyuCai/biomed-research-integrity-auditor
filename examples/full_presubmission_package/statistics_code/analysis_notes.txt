@@ -1,0 +1,7 @@
+Analysis notes (teaching sample)
+
+- Group summaries (mean, SD, SEM, n) computed from per-sample values.
+- SEM = SD / sqrt(n); the supplied tables are internally consistent on this relation.
+- p-values reported per comparison in the source-data tables.
+
+This is a stand-in for analysis code/notes, not a real script.

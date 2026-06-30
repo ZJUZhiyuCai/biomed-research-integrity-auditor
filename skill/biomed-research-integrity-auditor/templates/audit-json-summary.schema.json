@@ -36,5 +36,15 @@
       "required_materials_to_resolve": ["specific source/raw/protocol materials needed"],
       "recommended_action": "specific correction or neutral clarification"
     }
-  ]
+  ],
+  "audit_coverage": {
+    "modules_executed": ["detector modules that actually ran"],
+    "modules_not_executed": ["modules not run, including offline external search and manual methodology/reporting-standard compliance checks"],
+    "image_panels_screened": 0,
+    "image_files_unreadable": 0,
+    "source_tables_screened": 0,
+    "detector_failures": ["modules whose detector failed; results are partial"],
+    "audit_coverage_gap": false,
+    "scope_note": "no findings in a module is not a guarantee of correctness; methodology compliance and exhaustive plagiarism search require human review"
+  }
 }

@@ -30,7 +30,7 @@ def write(path: Path, text: str) -> None:
 def write_csv(path: Path, rows: list[dict[str, object]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", newline="", encoding="utf-8") as fh:
-        writer = csv.DictWriter(fh, fieldnames=list(rows[0].keys()))
+        writer = csv.DictWriter(fh, fieldnames=list(rows[0].keys()), lineterminator="\n")
         writer.writeheader()
         writer.writerows(rows)
 
@@ -242,6 +242,10 @@ Figure 4B summarizes a set of exploratory comparisons. The source table contains
         {"comparison": "A_vs_C", "mean": 1.30, "sd": 0.20, "sem": 0.10, "n": 4, "p_value": 0.050},
         {"comparison": "A_vs_D", "mean": 1.40, "sd": 0.20, "sem": 0.10, "n": 4, "p_value": 0.050},
         {"comparison": "A_vs_E", "mean": 1.50, "sd": 0.20, "sem": 0.10, "n": 4, "p_value": 0.050},
+        {"comparison": "A_vs_F", "mean": 1.60, "sd": 0.20, "sem": 0.10, "n": 4, "p_value": 0.050},
+        {"comparison": "A_vs_G", "mean": 1.70, "sd": 0.20, "sem": 0.10, "n": 4, "p_value": 0.050},
+        {"comparison": "A_vs_H", "mean": 1.80, "sd": 0.20, "sem": 0.10, "n": 4, "p_value": 0.050},
+        {"comparison": "A_vs_I", "mean": 1.90, "sd": 0.20, "sem": 0.10, "n": 4, "p_value": 0.050},
     ])
     write(root / "statistics_code/export_notes.txt", "Instrument output rounds to two decimals; exploratory p values are shown as exported.")
 
@@ -448,7 +452,7 @@ Title: Synthetic Study S
 Figure 11 reports integer cell-count outcomes summarized as mean, SD, and n. The manuscript states that each row summarizes integer counts from individual fields.
 """)
     write_csv(root / "source_data/Figure_11_integer_count_summary.csv", [
-        {"outcome": "cell_count", "group": "Control", "mean": 2.5, "sd": 1.0, "n": 5},
+        {"outcome": "cell_count", "group": "Control", "mean": 2.25, "sd": 1.0, "n": 6},
         {"outcome": "cell_count", "group": "Treatment", "mean": 4.0, "sd": 1.3, "n": 4},
     ])
     write(root / "statistics_code/analysis_notes.txt", "Only summary values are supplied; raw integer counts are not included.")

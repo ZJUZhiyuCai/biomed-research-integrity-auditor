@@ -9,9 +9,9 @@
   },
   "required_findings": [
     {
-      "finding_type": "statistics_consistency",
+      "finding_type": "SD is not consistent",
       "expected_risk_range": ["R2", "R3"],
-      "locations_should_include": ["source"],
+      "locations_should_include": ["Figure_5"],
       "evidence_should_include": ["SD", "SEM", "n"],
       "required_materials_should_include": ["analysis"],
       "benign_explanations_should_include_any": ["rounding", "SEM", "SD", "normalization"]

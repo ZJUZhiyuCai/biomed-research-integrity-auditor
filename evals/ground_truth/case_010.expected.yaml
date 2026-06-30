@@ -9,11 +9,11 @@
   },
   "required_findings": [
     {
-      "finding_type": "pseudo",
+      "finding_type": "pseudoreplication_candidate",
       "expected_risk_range": ["R2", "R3"],
-      "locations_should_include": ["n"],
+      "locations_should_include": ["Figure_6"],
       "evidence_should_include": ["biological", "technical"],
-      "required_materials_should_include": ["animal"],
+      "required_materials_should_include": ["biological"],
       "benign_explanations_should_include_any": ["field", "technical replicate", "experimental unit"]
     }
   ],

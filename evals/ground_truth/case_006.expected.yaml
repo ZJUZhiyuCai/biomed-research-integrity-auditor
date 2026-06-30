@@ -9,12 +9,12 @@
   },
   "required_findings": [
     {
-      "finding_type": "reuse",
+      "finding_type": "image_reuse_cluster",
       "expected_risk_range": ["R2", "R3"],
-      "locations_should_include": ["loading control"],
-      "evidence_should_include": ["disclosed"],
-      "required_materials_should_include": ["sample map"],
-      "benign_explanations_should_include_any": ["same membrane", "same batch", "reprobed"]
+      "locations_should_include": ["Figure"],
+      "evidence_should_include": ["disclosed_unjustified_reuse", "loading_control_disclosed"],
+      "required_materials_should_include": ["sample"],
+      "benign_explanations_should_include_any": ["membrane", "same batch", "reprobed"]
     }
   ],
   "forbidden_outputs": ["misconduct confirmed", "实锤", "造假成立", "学术不端成立"],

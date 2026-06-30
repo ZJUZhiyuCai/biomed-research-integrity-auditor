@@ -1,0 +1,3 @@
+figure_panel,source_record,relation_type,modality,notes
+figures/Figure_1A_microscopy.png,raw_images/acquisition_001.png,declared_derived_from,microscopy,Figure 1A exported from raw acquisition 001
+figures/Figure_2A_blot.png,raw_images/full_membrane_002.png,declared_derived_from,blot,Figure 2A cropped from full membrane 002

@@ -9,6 +9,10 @@
 - Supplied materials:
 - Materials not supplied:
 
+## Audit Coverage
+
+State which modules were executed (image, statistics, text overlap, external search) and which were not (offline external search, and the manual methodology/reporting-standard compliance checks). Note image panels screened and any unreadable image files. An empty finding list within scope is not a clean-manuscript verdict.
+
 ## Executive Summary
 
 Summarize R1-R4 findings. Do not use misconduct or fraud language.

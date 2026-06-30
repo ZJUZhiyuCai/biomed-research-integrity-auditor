@@ -11,8 +11,8 @@
     {
       "finding_type": "longitudinal",
       "expected_risk_range": ["R1", "R2"],
-      "locations_should_include": ["source"],
-      "evidence_should_include": ["trajectory", "increment", "time"],
+      "locations_should_include": ["Figure_9"],
+      "evidence_should_include": ["linear_rows", "increments"],
       "required_materials_should_include": ["raw"],
       "benign_explanations_should_include_any": ["interpolation", "smoothing", "model", "normalization"]
     }

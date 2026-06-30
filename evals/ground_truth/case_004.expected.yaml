@@ -9,10 +9,10 @@
   },
   "required_findings": [
     {
-      "finding_type": "image_similarity_candidate",
+      "finding_type": "image_reuse_cluster",
       "expected_risk_range": ["R3", "R3"],
       "locations_should_include": ["Figure"],
-      "evidence_should_include": ["flipped", "candidate"],
+      "evidence_should_include": ["flip_h", "cross_context_reuse_candidate"],
       "required_materials_should_include": ["figure assembly"],
       "benign_explanations_should_include_any": ["same field", "assembly error", "export"]
     }

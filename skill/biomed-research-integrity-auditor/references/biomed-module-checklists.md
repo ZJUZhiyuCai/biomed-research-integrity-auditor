@@ -85,10 +85,14 @@ Weak triage checks:
 - Identical numeric sequences reused across different source tables, figures, groups, or time points.
 - Integer count summaries where reported mean, SD, and n cannot arise from integer raw values.
 - Very small variance.
-- P value clustering near thresholds.
 - Implausibly high correlations between supposedly independent conditions.
 
-Weak checks should not drive R4 findings.
+Manual statistical checks (not automated detector outputs):
+
+- P value clustering near significance thresholds.
+- Benford-style first-digit distribution analysis.
+
+These distributional tests are intentionally not run by the default detectors; they require manual review and are statistically meaningful only with enough values. Treat them as human prompts, not tool findings. Weak checks should not drive R4 findings.
 
 ## 5. Methodology and Compliance Audit
 

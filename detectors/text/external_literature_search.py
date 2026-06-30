@@ -19,6 +19,11 @@ from detectors.text.text_overlap_screen import Paragraph, collect_text_files, no
 
 
 PROVIDERS = {"fixture", "europepmc", "crossref"}
+PROVIDER_ENDPOINTS = {
+    "fixture": "local fixture file",
+    "europepmc": "https://www.ebi.ac.uk/europepmc/webservices/rest/search",
+    "crossref": "https://api.crossref.org/works",
+}
 
 
 def anchor_phrase(text: str, words: int) -> str | None:
@@ -110,6 +115,31 @@ def crossref_search(query: str, rows: int, timeout: float) -> list[dict[str, Any
     return results
 
 
+def result_source_id(provider: str, result: dict[str, Any], index: int) -> str:
+    for key in ("doi", "pmcid", "pmid", "url", "title"):
+        value = result.get(key)
+        if value:
+            return f"{provider}:{key}:{value}"
+    return f"{provider}:result:{index}"
+
+
+def result_with_provenance(provider: str, result: dict[str, Any], index: int) -> dict[str, Any]:
+    item = dict(result)
+    item["external_record_provenance"] = {
+        "source_id": result_source_id(provider, result, index),
+        "provider": provider,
+        "provider_endpoint": PROVIDER_ENDPOINTS.get(provider, provider),
+        "result_index": index,
+        "retrieval_basis": "exact phrase bibliographic search",
+        "title": result.get("title"),
+        "doi": result.get("doi"),
+        "pmid": result.get("pmid"),
+        "pmcid": result.get("pmcid"),
+        "url": result.get("url"),
+    }
+    return item
+
+
 def search_provider(provider: str, query: str, rows: int, timeout: float, fixture: dict[str, Any] | None) -> list[dict[str, Any]]:
     if provider == "fixture":
         if fixture is None:
@@ -137,12 +167,24 @@ def candidate_from_results(
         "evidence": {
             "provider": provider,
             "query": query,
+            "query_provenance": {
+                "query_source": "supplied_package_text",
+                "source_document": paragraph.path,
+                "section": paragraph.section,
+                "paragraph_id": paragraph.paragraph_id,
+                "anchor_strategy": "first sentence or paragraph prefix after normalization",
+                "provider_endpoint": PROVIDER_ENDPOINTS.get(provider, provider),
+                "search_mode": "exact phrase triage",
+            },
             "document": paragraph.path,
             "section": paragraph.section,
             "paragraph_id": paragraph.paragraph_id,
             "text_snippet": paragraph.text[:360],
             "result_count": len(results),
-            "results": results[:5],
+            "results": [
+                result_with_provenance(provider, result, index)
+                for index, result in enumerate(results[:5], start=1)
+            ],
         },
         "evidence_strength": "candidate",
         "risk_suggestion": "R2_or_R3_pending_context",
@@ -158,6 +200,41 @@ def candidate_from_results(
             "journal text-reuse policy",
         ],
         "recommended_action": "Manually compare the external result with the supplied manuscript text before escalation.",
+        "requires_contextual_calibration": True,
+    }
+
+
+def candidate_from_search_errors(provider: str, errors: list[dict[str, Any]], idx: int) -> dict[str, Any]:
+    locations = sorted({str(item.get("paragraph_id", "")) for item in errors if item.get("paragraph_id")})
+    return {
+        "candidate_id": f"EXTTEXT-GAP-{idx:04d}",
+        "detector": "text.external_literature_search",
+        "candidate_type": "external_literature_search_gap",
+        "locations": locations or ["external_literature_search"],
+        "evidence": {
+            "provider": provider,
+            "provider_endpoint": PROVIDER_ENDPOINTS.get(provider, provider),
+            "message": "External phrase-search triage did not complete for the selected query set; do not treat this as clean external coverage.",
+            "failed_query_count": len(errors),
+            "errors": errors[:5],
+            "provenance": {
+                "query_source": "supplied_package_text",
+                "retrieval_basis": "exact phrase bibliographic search",
+                "coverage_effect": "external literature search coverage gap",
+            },
+        },
+        "evidence_strength": "weak_signal",
+        "risk_suggestion": "R1_max",
+        "risk_cap_tags": ["external_literature_search_gap", "audit_coverage_gap", "completeness_gap"],
+        "benign_explanations": [
+            "the external provider may have been unavailable, rate-limited, or unreachable",
+            "the supplied text may require manual search in publisher or institutional databases",
+        ],
+        "required_materials": [
+            "successful external search logs or manually reviewed external-source records",
+            "citation and disclosure context for any later manual matches",
+        ],
+        "recommended_action": "Repeat or manually document external literature search before treating external text coverage as complete.",
         "requires_contextual_calibration": True,
     }
 
@@ -178,6 +255,7 @@ def scan(
     candidates: list[dict[str, Any]] = []
     errors: list[dict[str, Any]] = []
     queries = []
+    search_provenance = []
     for paragraph in paragraphs:
         query = anchor_phrase(paragraph.text, phrase_words)
         if not query:
@@ -187,13 +265,37 @@ def scan(
             results = search_provider(provider, query, rows, timeout, fixture)
         except Exception as exc:  # noqa: BLE001 - external search failure is a coverage limitation, not a verdict.
             errors.append({"paragraph_id": paragraph.paragraph_id, "provider": provider, "query": query, "error": str(exc)})
+            search_provenance.append({
+                "paragraph_id": paragraph.paragraph_id,
+                "provider": provider,
+                "provider_endpoint": PROVIDER_ENDPOINTS.get(provider, provider),
+                "query": query,
+                "status": "error",
+                "result_count": 0,
+            })
             continue
+        search_provenance.append({
+            "paragraph_id": paragraph.paragraph_id,
+            "provider": provider,
+            "provider_endpoint": PROVIDER_ENDPOINTS.get(provider, provider),
+            "query": query,
+            "status": "ok",
+            "result_count": len(results),
+            "result_source_ids": [
+                result_source_id(provider, result, index)
+                for index, result in enumerate(results[:5], start=1)
+            ],
+        })
         if results:
             candidates.append(candidate_from_results(paragraph, query, provider, results, len(candidates) + 1))
+    # Any failed query is a coverage limitation. Emit it even when other queries
+    # returned matches, so partial external coverage is never reported as complete.
+    if errors:
+        candidates.append(candidate_from_search_errors(provider, errors, len(candidates) + 1))
 
     return {
         "detector_name": "text.external_literature_search",
-        "detector_version": "0.1.0",
+        "detector_version": "0.2.0",
         "input": {
             "root": str(root),
             "provider": provider,
@@ -205,6 +307,7 @@ def scan(
             "scope": "external_literature_phrase_search_triage",
         },
         "queries": queries,
+        "external_search_provenance": search_provenance,
         "candidates": candidates,
         "errors": errors,
     }

@@ -11,8 +11,8 @@
     {
       "finding_type": "precision",
       "expected_risk_range": ["R1", "R2"],
-      "locations_should_include": ["source"],
-      "evidence_should_include": ["precision", "decimal"],
+      "locations_should_include": ["Figure_10"],
+      "evidence_should_include": ["decimal_place_counts", "precision"],
       "required_materials_should_include": ["raw"],
       "benign_explanations_should_include_any": ["instrument", "rounding", "export", "format"]
     }

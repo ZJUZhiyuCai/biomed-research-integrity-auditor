@@ -195,6 +195,7 @@ def build_summary(
     manifest: dict[str, Any],
     findings: list[dict[str, Any]],
     positive_evidence: list[dict[str, Any]] | None = None,
+    coverage: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     caps = []
     normalized = normalized_mode(mode)
@@ -215,7 +216,34 @@ def build_summary(
         "positive_provenance": summary_positive_provenance(positive_evidence or []),
         "traceability_gaps": summary_traceability_gaps(findings),
         "findings": [summary_finding(item) for item in findings],
+        **({"audit_coverage": coverage} if coverage else {}),
     }
+
+
+def render_coverage(coverage: dict[str, Any] | None) -> list[str]:
+    if not coverage:
+        return []
+    lines = ["## Audit Coverage", ""]
+    lines += ["Modules executed in this run:", ""]
+    executed = coverage.get("modules_executed", []) or ["(none)"]
+    lines += [f"- {item}" for item in executed]
+    lines += ["", "Modules not executed in this run:", ""]
+    not_executed = coverage.get("modules_not_executed", []) or ["(none)"]
+    lines += [f"- {item}" for item in not_executed]
+    lines += [""]
+    lines += [f"- Image panels screened: {coverage.get('image_panels_screened', 0)}"]
+    if coverage.get("image_files_unreadable"):
+        lines += [f"- Image files that could not be read and were excluded from screening: {coverage['image_files_unreadable']}"]
+    lines += [f"- Source-data tables screened: {coverage.get('source_tables_screened', 0)}"]
+    if coverage.get("detector_failures"):
+        lines += [f"- Detector execution failures (results partial for these modules): {', '.join(coverage['detector_failures'])}"]
+    if coverage.get("audit_coverage_gap"):
+        lines += ["- No detector could run on the supplied materials; this is a completeness gap, not a clean result."]
+    scope_note = coverage.get("scope_note")
+    if scope_note:
+        lines += ["", f"> {scope_note}"]
+    lines += [""]
+    return lines
 
 
 def render_report(
@@ -224,15 +252,17 @@ def render_report(
     findings: list[dict[str, Any]],
     case_id: str | None,
     positive_evidence: list[dict[str, Any]] | None = None,
+    coverage: dict[str, Any] | None = None,
 ) -> str:
     normalized = normalized_mode(mode)
     title = "Biomedical Research Integrity Pre-submission Audit" if normalized == "internal_presubmission" else "Biomedical Literature Concern Triage"
     positive_evidence = positive_evidence or []
-    summary = build_summary(mode, case_id, manifest, findings, positive_evidence)
+    summary = build_summary(mode, case_id, manifest, findings, positive_evidence, coverage)
     validate_instance(summary, SUMMARY_SCHEMA, "audit summary")
     lines = [f"# {title}", ""]
     lines += ["## Scope", ""]
     lines += [f"- Mode: {mode}", f"- Package root: {manifest.get('root', 'not supplied')}", ""]
+    lines += render_coverage(coverage)
 
     lines += ["## Missing Materials Matrix", ""]
     missing_rows = [["Category", "Risk", "Reason"]]
@@ -309,6 +339,7 @@ def main() -> int:
     parser.add_argument("--manifest", type=Path)
     parser.add_argument("--findings", type=Path, action="append", default=[])
     parser.add_argument("--positive-evidence", type=Path, action="append", default=[])
+    parser.add_argument("--coverage", type=Path)
     parser.add_argument("--case-id")
     parser.add_argument("--output", type=Path, default=Path("audit-report.md"))
     args = parser.parse_args()
@@ -318,7 +349,11 @@ def main() -> int:
     positive_payloads = [load_json(path, {}) for path in args.positive_evidence]
     findings = normalize_findings(finding_payloads)
     positive_evidence = normalize_positive_evidence(positive_payloads)
-    args.output.write_text(render_report(args.mode, manifest, findings, args.case_id, positive_evidence), encoding="utf-8")
+    coverage = load_json(args.coverage, None) if args.coverage else None
+    args.output.write_text(
+        render_report(args.mode, manifest, findings, args.case_id, positive_evidence, coverage),
+        encoding="utf-8",
+    )
     print(json.dumps({"output": str(args.output), "findings": len(findings)}, indent=2))
     return 0
 

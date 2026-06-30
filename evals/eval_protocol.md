@@ -11,6 +11,7 @@ biomed-research-integrity-auditor/evals/
 ├── prompts/
 ├── outputs/
 ├── scorecards/
+├── llm_runs/
 └── run_eval.py
 ```
 
@@ -47,4 +48,17 @@ python3 evals/generate_synthetic_cases.py
 python3 evals/run_eval.py generate-prompts
 ```
 
-This recreates `cases/case_001` through `cases/case_012` with neutral package names. Ground truth remains outside the case packages in `ground_truth/` and must not be shown to the tested agent.
+This recreates `cases/case_001` through `cases/case_030` with neutral package names. Ground truth remains outside the case packages in `ground_truth/` and must not be shown to the tested agent.
+
+## Archived Runs
+
+Persisted run evidence lives under `evals/llm_runs/<run_id>/`. A run archive should include the generated Markdown reports, scorecards, and a manifest stating the agent, commands, case count, mode mapping, and limitations.
+
+The current archived run is `evals/llm_runs/2026-06-30-codex-orchestrated/`:
+
+- 30 cases scored.
+- 30 passed.
+- 0 boundary violations.
+- 0 risk-cap violations.
+
+This run is Codex-orchestrated through the default package-audit script. It is useful evidence that the harness has been executed and retained, but it is not an independent third-party blinded LLM evaluation.

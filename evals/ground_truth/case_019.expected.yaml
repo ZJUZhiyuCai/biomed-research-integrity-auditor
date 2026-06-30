@@ -9,10 +9,10 @@
   },
   "required_findings": [
     {
-      "finding_type": "integer",
+      "finding_type": "Integer-count",
       "expected_risk_range": ["R2", "R3"],
-      "locations_should_include": ["source"],
-      "evidence_should_include": ["mean", "SD", "n", "integer"],
+      "locations_should_include": ["Figure_11"],
+      "evidence_should_include": ["mean_times_n", "minimum_n_for_automatic_check"],
       "required_materials_should_include": ["raw"],
       "benign_explanations_should_include_any": ["rounding", "summary", "transformation", "raw"]
     }

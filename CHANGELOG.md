@@ -4,9 +4,26 @@
 
 ### Added
 - 16-bit TIFF real-image benchmark coverage for microscopy-derived duplicate detection.
+- Required CI OCR gate: GitHub Actions installs `tesseract-ocr` and runs the scanned-PDF benchmark without skip mode.
+- Same-image copy-move screening in the local patch detector, including coordinate evidence crops and contextual calibration.
+- Default-orchestrator external literature phrase-search integration with deterministic fixture auto-detection, external-public Europe PMC auto mode, query/result provenance, and R1 provider-gap reporting.
+- Audit Coverage / scope reporting: every report and `AUDIT_JSON_SUMMARY` now records which modules executed, which were not run (including methodology compliance and offline external search), how many image panels were screened, how many image files were unreadable, and a scope note stating that no findings in a module is not a guarantee of correctness.
+- User self-audit onboarding: `docs/self-audit-guide.md` (non-developer guide to preparing materials, running the audit, reading the report, and which conclusions are not permitted), two runnable example packages under `examples/` (`minimal_package/` and `full_presubmission_package/`) with a deterministic image generator, and entry-point links from the README, SKILL, and architecture docs. A regression test asserts both examples run, expose an Audit Coverage block, carry no misconduct verdict, and (for the full package) show verified figure-to-raw traceability.
+- Archived Codex-orchestrated eval evidence under `evals/llm_runs/2026-06-30-codex-orchestrated/`: 30 synthetic cases scored, 30 passed, 0 boundary violations, and 0 risk-cap violations, with a manifest that states this is not an independent third-party blinded LLM run.
 
 ### Changed
 - Image detectors now normalize high-bit-depth grayscale inputs before hashing or tile screening, preserving contrast instead of relying on default PIL RGB conversion.
+- The live skill, README, and architecture docs now describe same-image copy-move coverage and privacy-aware external literature search through `scripts/audit_package.py`.
+- Implementation-boundary alignment for statistics: removed the `benford_style` and `p_value_clustering` caps from `schemas/risk_rules.yaml` because no detector emits them, and updated README, SKILL, architecture, and the module checklist to state explicitly that Benford-style first-digit analysis and p-value clustering/distribution tests are manual checks, not automated detector outputs. Only p-value range/validity is screened automatically.
+- Statistical weak-signal calibration is more conservative for small samples: terminal-digit, rounding, precision, and digit-preservation screens now require at least 8 comparable values by default, and integer-count mean/SD/n feasibility checks require n >= 6 and respect reported mean/SD precision. Synthetic weak-statistics cases were updated so evals no longer depend on tiny-n triggers.
+
+### Fixed
+- Digit-preservation statistical screening now passes the shared-pair threshold explicitly instead of referencing an undefined name, restoring linear-transform/time-stratified synthetic detections after the small-sample threshold update.
+- Detector JSON `errors` are now surfaced in `audit_coverage.detector_failures`, so a detector that emits a contract-valid payload with per-file errors is reported as partial coverage rather than silently appearing clean.
+- Manifest suppression hardening: an author-declared figure-to-figure same-field/same-membrane relationship can no longer clear a verifiable whole-image near-duplicate. Such pairs are now flagged as an unverifiable `manifest_conflict` (R3) requiring raw-record review, instead of being downgraded to a positive-traceability completeness gap. Declared figure-to-raw/source links and genuine local-patch same-field pairs are unaffected.
+- External literature phrase-search now reports an `external_literature_search_gap` R1 coverage finding whenever any query fails, even if other queries returned matches, so partial external coverage is never presented as complete.
+- Statistical time-column detection no longer matches time tokens inside unrelated identifiers (for example `CD4`, `CD8`, `CD3`, `CD45`), preventing immunology/marker columns from being misread as longitudinal timepoints.
+- SD-versus-SEM consistency screening now tolerates ordinary reporting precision: the mismatch tolerance accounts for the rounding half-ULP of the reported SD and SEM, so legitimately rounded summary tables are no longer flagged as SD/SEM contradictions while genuine large deviations still fire.
 
 ## v0.4.2 - OCR, Real-Image, and External-Search Benchmarks
 

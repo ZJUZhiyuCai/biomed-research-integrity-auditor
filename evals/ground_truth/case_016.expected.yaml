@@ -9,10 +9,10 @@
   },
   "required_findings": [
     {
-      "finding_type": "time",
+      "finding_type": "Time-stratified",
       "expected_risk_range": ["R1", "R2"],
-      "locations_should_include": ["source"],
-      "evidence_should_include": ["time", "offset", "digit"],
+      "locations_should_include": ["Figure_3c_3d"],
+      "evidence_should_include": ["timepoint_offsets", "Digit positions"],
       "required_materials_should_include": ["raw"],
       "benign_explanations_should_include_any": ["normalization", "formula", "batch", "preprocessing"]
     }

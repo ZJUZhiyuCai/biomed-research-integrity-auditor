@@ -1,0 +1,10 @@
+Example package: MINIMAL.
+
+This is a teaching example, not a real audit and not a real manuscript. It contains
+only a short manuscript text and one source-data table so a new user can run the
+auditor in a few minutes and read the report.
+
+Because it has no figures, raw images, protocols, or ethics records, the audit will
+report completeness gaps (R1). That is expected: a small package can only be checked
+within its small scope. "No issue found" here means "nothing detected in these few
+files", not "the study is correct".

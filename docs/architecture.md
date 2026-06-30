@@ -32,6 +32,8 @@ python3 scripts/audit_package.py <package_dir> --mode internal_presubmission --o
 
 The orchestrator runs package inventory, provenance graph construction, source-data detectors, image detectors, contextual joining, risk calibration, calibrated-finding validation, report assembly, and audit-summary validation. Individual detector scripts remain useful for debugging and unit tests, but should not be the default workflow.
 
+For a first-time, non-developer walkthrough see `docs/self-audit-guide.md`, and the runnable `examples/minimal_package` and `examples/full_presubmission_package` packages.
+
 ## Provenance-First Negative Calibration
 
 Similarity is not risk by itself. `provenance/build_resource_graph.py` creates resource nodes and declared provenance edges from `package_manifest.json`, `figure_source_map.json`, and `figure_assembly/assembly_manifest.csv`, `.yaml`, or `.txt`.
@@ -44,9 +46,11 @@ The image contextual joiner classifies each similarity edge before calibration:
 - `unresolved_fig_raw_similarity`: a figure-panel to raw/source similarity without a machine-readable provenance link. This is an R1 traceability gap.
 - `cross_context_reuse_candidate`: a figure-panel to figure-panel similarity across presented panels without a disclosed/justified reuse context. This can remain R3.
 - `local_patch_cross_context`: a region-level patch similarity across figure panels. This can remain R3, but it is still a candidate requiring raw/source review.
+- `same_image_copy_move`: a region-level similarity between non-overlapping locations inside the same image. This can remain R3, but it requires raw-image and processing-history review.
+- `manifest_conflict`: a figure-to-figure pair declared as same-field/same-membrane that the detectors also flag as a whole-image near-duplicate. Different channels or reprobed membranes are not whole-image duplicates, so the unverifiable declaration cannot clear it. This remains R3 and requires raw-record review.
 - disclosed loading-control reuse is capped according to the contextual tags in `schemas/risk_rules.yaml`.
 
-Author-supplied assembly manifests are not treated as truth. Ordinary figure-to-figure `declared_derived_from` rows are retained as context but do not clear cross-context image reuse. Figure-to-figure positive traceability is limited to explicit same-field or same-membrane relation types.
+Author-supplied assembly manifests are not treated as truth. Ordinary figure-to-figure `declared_derived_from` rows are retained as context but do not clear cross-context image reuse. Figure-to-figure positive traceability is limited to explicit same-field or same-membrane relation types, and even those cannot clear a verifiable whole-image near-duplicate: such a pair becomes a `manifest_conflict` requiring raw images and acquisition metadata, because a manifest line alone is not verifiable. Declared figure-to-raw/source links and genuine local-patch same-field relationships (shared region, not whole-image duplication) remain positive or excluded as before.
 
 This layer is designed to reduce high-risk false positives in clean-control and prompt-injection packages.
 
@@ -63,11 +67,15 @@ The detector normalizes paragraph text, assigns coarse sections, builds word n-g
 
 Text overlap candidates are never plagiarism findings. Human review must check citation, prior-publication policy, thesis/preprint disclosure, journal requirements, and whether the overlap is standard methods language.
 
-## Explicit External Literature Search
+## Default External Literature Search
 
-`detectors/text/external_literature_search.py` is an opt-in detector for external phrase-search triage. It can query Europe PMC or Crossref, or use a fixture file for deterministic tests. It is deliberately not part of the default package audit pipeline because routine audits must not depend on live network availability or external search-engine behavior.
+`detectors/text/external_literature_search.py` provides external phrase-search triage. It can query Europe PMC or Crossref, or use a fixture file for deterministic tests. The default orchestrator now wires it in with a privacy-aware `auto` policy:
 
-External search candidates are capped and reported as `external_text_match_candidate` observations. They are not plagiarism findings; they require manual comparison, disclosure/citation review, and journal-policy context.
+- package fixtures such as `external_literature_fixture.json` are used automatically for deterministic audits and tests;
+- `external_public_material` mode defaults to Europe PMC phrase search;
+- private `internal_presubmission` mode stays offline unless a fixture is present or a provider is explicitly requested with `--external-literature-provider`.
+
+External search candidates are capped and reported as `external_text_match_candidate` observations with query and result provenance. Provider failures can emit an `external_literature_search_gap` R1 coverage finding rather than being treated as clean external coverage. These outputs are not plagiarism findings; they require manual comparison, disclosure/citation review, and journal-policy context.
 
 ## True-PDF Benchmark
 
@@ -87,7 +95,7 @@ Scanned or image-only PDFs still require OCR. Figure and caption extraction are 
 
 `benchmarks/scanned_pdf/` creates an image-only PDF whose text is not recoverable from raw PDF bytes or pypdf machine-text extraction. When PyMuPDF, pytesseract, and the `tesseract` binary are available, the text detector renders the PDF page and OCRs it before overlap screening.
 
-Local validation skips this benchmark if the OCR runtime is unavailable. Running `benchmarks/scanned_pdf/run_scanned_pdf_benchmark.py` without `--skip-if-unavailable` makes the OCR runtime a hard requirement.
+Local validation skips this benchmark if the OCR runtime is unavailable. CI installs `tesseract-ocr` and runs `benchmarks/scanned_pdf/run_scanned_pdf_benchmark.py` without `--skip-if-unavailable`, so OCR extraction is a required gate on pull requests and pushes.
 
 ## Real-Image Benchmark
 
@@ -138,8 +146,9 @@ Reports end with exactly one `AUDIT_JSON_SUMMARY` block. In addition to calibrat
 
 - `positive_provenance`: declared figure-to-raw/source traceability entries such as `expected_traceability`.
 - `traceability_gaps`: unresolved figure-to-raw/source similarities capped as R1 completeness gaps.
+- `audit_coverage`: which detector modules executed, which modules were not run (including offline external search and the always-manual methodology/reporting-standard compliance checks), image panels screened, unreadable image files, source tables screened, detector failures, and a scope note. This lets a reader separate "screened and clean within scope" from "not screened", so an empty finding list is not mistaken for a verified-correct manuscript.
 
-Positive provenance is not proof of authenticity; it only records traceability within supplied materials.
+Positive provenance is not proof of authenticity; it only records traceability within supplied materials. Audit coverage is descriptive scope, not a quality score.
 
 ## Risk Calibration
 
@@ -150,20 +159,23 @@ Positive provenance is not proof of authenticity; it only records traceability w
 - external public-material triage maxes out at R3;
 - disclosed legitimate loading-control reuse with same-membrane/source context caps at R2;
 - R4 requires a direct contradiction tag such as `source_to_figure_conflict` or `raw_record_conflict`;
-- local patch similarity alone is capped at R3; `local_patch_direct_source_conflict` is required before a local patch path can reach R4;
+- local patch and same-image copy-move similarity alone are capped at R3; `local_patch_direct_source_conflict` is required before a local patch path can reach R4;
 - package-internal text overlap is capped at R3; methods boilerplate and disclosed thesis/preprint overlap are capped at R2;
 - R3/R4 findings must include benign explanations, required materials, and a recommended action.
 
 ## P0 Detectors
 
 - `detectors/image/global_near_duplicate.py`: global image near-duplicate clusters using average hash, dHash, pHash-style DCT, and D4 transforms.
-- `detectors/image/local_patch_reuse.py`: conservative overlapping-tile local patch reuse candidates with D4 confirmation, normalized cross-correlation, and evidence crop export.
+- `detectors/image/local_patch_reuse.py`: conservative overlapping-tile local patch reuse and same-image copy-move candidates with D4 confirmation, normalized cross-correlation, and evidence crop export.
+- `detectors/text/external_literature_search.py`: external phrase-search candidates with query/result provenance and provider-gap reporting.
 - `detectors/text/text_overlap_screen.py`: package-internal paragraph overlap candidates using section-aware n-gram similarity.
 - `detectors/stats/pseudoreplication_screen.py`: possible unit-of-analysis mismatch candidates from biological and technical replicate columns.
-- `skill/.../stats_consistency_check.py`: direct summary consistency plus weak forensic statistical screens.
+- `skill/.../stats_consistency_check.py`: direct summary consistency (SD/SEM/n, p-value range/validity, integer-count feasibility) plus weak forensic statistical screens. Digit/rounding weak screens require at least 8 comparable values by default; integer-count feasibility requires n >= 6 and propagates reported mean/SD precision. It does not implement Benford-style first-digit distribution analysis or p-value clustering/distribution tests; those are manual checks only, and `schemas/risk_rules.yaml` deliberately configures no caps for them so the rules never imply unimplemented coverage.
 - `provenance/parse_assembly_manifest.py`: declared figure-to-raw/source links from assembly manifests.
 - `provenance/build_resource_graph.py`: package-level resource graph for provenance-aware calibration.
 
 ## Baseline Runner
 
 `evals/run_script_baseline.py` delegates to `scripts/audit_package.py`. This separates detector failures, contextual-joining failures, calibration failures, and report-contract failures from LLM failures.
+
+Archived agent-orchestrated eval evidence lives under `evals/llm_runs/`. The `2026-06-30-codex-orchestrated` run records 30/30 synthetic cases passing with 0 boundary violations and 0 risk-cap violations. It is retained as harness/orchestrator evidence, not as an independent third-party blinded LLM validation.

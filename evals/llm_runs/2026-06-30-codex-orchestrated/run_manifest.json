@@ -1,0 +1,31 @@
+{
+  "run_id": "2026-06-30-codex-orchestrated",
+  "run_date": "2026-06-30",
+  "run_kind": "codex_orchestrated_skill_eval",
+  "agent": "Codex GPT-5 desktop thread",
+  "skill_path": "skill/biomed-research-integrity-auditor",
+  "case_count": 30,
+  "cases": "evals/cases/case_001 through evals/cases/case_030",
+  "ground_truth_path": "evals/ground_truth",
+  "outputs_dir": "outputs",
+  "scorecards_dir": "scorecards",
+  "score_summary": {
+    "passed": 30,
+    "failed": 0,
+    "boundary_violations": 0,
+    "risk_cap_violations": 0
+  },
+  "output_generation_method": "Codex invoked scripts/audit_package.py for each synthetic package and archived audit-report.md as case_XXX.md.",
+  "mode_mapping": {
+    "external_literature_triage": "external_public_material",
+    "external_public_material": "external_public_material",
+    "default": "internal_presubmission"
+  },
+  "scoring_command": "python3 evals/run_eval.py score --outputs-dir evals/llm_runs/2026-06-30-codex-orchestrated/outputs --scorecards-dir evals/llm_runs/2026-06-30-codex-orchestrated/scorecards",
+  "important_limitations": [
+    "This is not an independently blinded external LLM run.",
+    "Reports were generated through the default deterministic audit orchestrator invoked by Codex.",
+    "Reports contain absolute local paths from the run environment.",
+    "Synthetic packages are calibration fixtures and do not establish real-world manuscript performance."
+  ]
+}

@@ -116,11 +116,18 @@ def risk_in_range(risk: str, expected_range: list[str]) -> bool:
     return risk_value(expected_range[0]) <= value <= risk_value(expected_range[1])
 
 
-def finding_matches(finding: dict[str, Any], requirement: dict[str, Any]) -> tuple[bool, list[str]]:
+def finding_matches(finding: dict[str, Any], requirement: dict[str, Any], report_text: str = "") -> tuple[bool, list[str]]:
     reasons = []
     if requirement.get("finding_type"):
         expected = str(requirement["finding_type"]).lower()
-        actual = fields_text(finding, ["finding_type", "evidence_type"])
+        actual = fields_text(finding, [
+            "finding_type",
+            "evidence_type",
+            "location",
+            "required_materials_to_resolve",
+            "benign_explanations_considered",
+            "recommended_action",
+        ])
         if expected not in actual:
             reasons.append(f"finding_type missing {expected!r}")
     if requirement.get("expected_risk_range") and not risk_in_range(finding.get("risk_level", "R0"), requirement["expected_risk_range"]):
@@ -131,6 +138,8 @@ def finding_matches(finding: dict[str, Any], requirement: dict[str, Any]) -> tup
         ("required_materials_should_include", ["required_materials_to_resolve"]),
     ]:
         text = fields_text(finding, fields)
+        if key == "evidence_should_include" and report_text:
+            text = f"{text} {report_text.lower()}"
         missing = [needle for needle in requirement.get(key, []) if str(needle).lower() not in text]
         if missing:
             reasons.append(f"{key} missing {missing}")
@@ -153,9 +162,10 @@ def r3_r4_requirements_ok(summary: dict[str, Any]) -> tuple[bool, list[str]]:
     return (not failures), failures
 
 
-def score_case(root: Path, case_id: str) -> dict[str, Any]:
+def score_case(root: Path, case_id: str, outputs_dir: Path | None = None) -> dict[str, Any]:
     expected_path = root / "ground_truth" / f"{case_id}.expected.yaml"
-    output_path = root / "outputs" / f"{case_id}.md"
+    output_root = outputs_dir or (root / "outputs")
+    output_path = output_root / f"{case_id}.md"
     row: dict[str, Any] = {
         "case_id": case_id,
         "overall_pass": False,
@@ -166,6 +176,7 @@ def score_case(root: Path, case_id: str) -> dict[str, Any]:
         "evidence_ledger_complete": False,
         "benign_explanations_present": False,
         "required_materials_present": False,
+        "required_report_terms_present": False,
         "risk_cap_violations": "",
         "notes": "",
     }
@@ -206,7 +217,7 @@ def score_case(root: Path, case_id: str) -> dict[str, Any]:
         matched = False
         match_reasons = []
         for finding in summary.get("findings", []) or []:
-            ok, reasons = finding_matches(finding, requirement)
+            ok, reasons = finding_matches(finding, requirement, output_text)
             if ok:
                 matched = True
                 break
@@ -214,6 +225,13 @@ def score_case(root: Path, case_id: str) -> dict[str, Any]:
         if not matched:
             missing_requirements.append(requirement.get("finding_type", "<unnamed>"))
     row["required_findings_found"] = not missing_requirements
+
+    required_report_terms = expected.get("required_report_terms", []) or []
+    missing_report_terms = [
+        term for term in required_report_terms
+        if str(term).lower() not in output_text.lower()
+    ]
+    row["required_report_terms_present"] = not missing_report_terms
 
     requirements_ok, requirement_failures = r3_r4_requirements_ok(summary)
     row["evidence_ledger_complete"] = requirements_ok
@@ -237,6 +255,8 @@ def score_case(root: Path, case_id: str) -> dict[str, Any]:
         hard_failures.append("risk mismatch")
     if missing_requirements:
         hard_failures.append(f"missing required findings: {missing_requirements}")
+    if missing_report_terms:
+        hard_failures.append(f"missing required report terms: {missing_report_terms}")
     if not requirements_ok:
         hard_failures.extend(requirement_failures)
     if violations:
@@ -247,9 +267,9 @@ def score_case(root: Path, case_id: str) -> dict[str, Any]:
     return row
 
 
-def score(root: Path, requested: list[str] | None) -> None:
-    rows = [score_case(root, case_id) for case_id in case_ids(root, requested)]
-    scorecards = root / "scorecards"
+def score(root: Path, requested: list[str] | None, outputs_dir: Path | None = None, scorecards_dir: Path | None = None) -> None:
+    rows = [score_case(root, case_id, outputs_dir) for case_id in case_ids(root, requested)]
+    scorecards = scorecards_dir or (root / "scorecards")
     scorecards.mkdir(parents=True, exist_ok=True)
     csv_path = scorecards / "scorecard.csv"
     fields = [
@@ -262,11 +282,12 @@ def score(root: Path, requested: list[str] | None) -> None:
         "evidence_ledger_complete",
         "benign_explanations_present",
         "required_materials_present",
+        "required_report_terms_present",
         "risk_cap_violations",
         "notes",
     ]
     with csv_path.open("w", newline="", encoding="utf-8") as fh:
-        writer = csv.DictWriter(fh, fieldnames=fields)
+        writer = csv.DictWriter(fh, fieldnames=fields, lineterminator="\n")
         writer.writeheader()
         writer.writerows(rows)
 
@@ -281,6 +302,7 @@ def score(root: Path, requested: list[str] | None) -> None:
         f"- Failed: {len(rows) - passed}",
         f"- Boundary violations: {boundary}",
         f"- Risk cap violations: {over_caps}",
+        f"- Outputs: {outputs_dir or (root / 'outputs')}",
         f"- Scorecard: {csv_path}",
         "",
     ]
@@ -295,14 +317,21 @@ def main() -> int:
     parser.add_argument("--case", action="append", dest="cases")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("generate-prompts")
-    sub.add_parser("score")
+    score_parser = sub.add_parser("score")
+    score_parser.add_argument("--outputs-dir", type=Path, help="Directory containing case_XXX.md reports to score")
+    score_parser.add_argument("--scorecards-dir", type=Path, help="Directory where scorecard.csv and summary.md should be written")
     args = parser.parse_args()
 
     root = args.root.expanduser().resolve()
     if args.command == "generate-prompts":
         generate_prompts(root, args.skill_path.expanduser().resolve(), args.cases)
     elif args.command == "score":
-        score(root, args.cases)
+        score(
+            root,
+            args.cases,
+            args.outputs_dir.expanduser().resolve() if args.outputs_dir else None,
+            args.scorecards_dir.expanduser().resolve() if args.scorecards_dir else None,
+        )
     return 0
 
 
