@@ -31,6 +31,13 @@ export interface PackageInventory {
   file_counts: Record<string, number>;
   assembly_manifest: AssemblyManifestInventory;
   relation_types: string[];
+  relation_allowed_source_roles?: Record<string, string[]>;
+  inventory_warnings?: string[];
+  scan_limit_reached?: boolean;
+  scan_limits?: {
+    max_files?: number;
+    max_depth?: number;
+  };
   scope_note: string;
 }
 

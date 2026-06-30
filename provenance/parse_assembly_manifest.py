@@ -20,6 +20,8 @@ IMAGE_OR_DATA_RE = re.compile(
 STRUCTURED_SUFFIXES = {".csv", ".tsv", ".yaml", ".yml"}
 TEXT_SUFFIXES = {".txt", ".md"}
 SOURCE_ROLES = {"raw_image", "source_data"}
+PACKAGE_FILE_SCAN_LIMIT = 10000
+PACKAGE_FILE_MAX_DEPTH = 12
 EXPECTED_RELATION_TYPES = {
     "declared_derived_from",
     "same_field_different_channel",
@@ -32,15 +34,53 @@ FIGURE_FIGURE_TRACEABILITY_RELATIONS = {
 }
 
 
-def package_files(package: Path) -> dict[str, list[str]]:
-    files: dict[str, list[str]] = {}
-    for path in sorted(package.rglob("*")):
-        if not path.is_file():
+def bounded_files(
+    root: Path,
+    package: Path,
+    max_files: int = PACKAGE_FILE_SCAN_LIMIT,
+    max_depth: int = PACKAGE_FILE_MAX_DEPTH,
+) -> tuple[list[Path], list[str], bool]:
+    files: list[Path] = []
+    warnings: list[str] = []
+    pending: list[tuple[Path, int]] = [(root, 0)]
+    while pending:
+        directory, depth = pending.pop(0)
+        try:
+            entries = sorted(directory.iterdir(), key=lambda item: item.name.lower())
+        except OSError as exc:
+            rel = directory.relative_to(package).as_posix() if directory != package else "."
+            warnings.append(f"Could not read {rel}: {exc.__class__.__name__}")
             continue
+        for entry in entries:
+            rel = entry.relative_to(package).as_posix()
+            if entry.is_symlink():
+                warnings.append(f"Skipped symlink: {rel}")
+                continue
+            if entry.is_dir():
+                if depth >= max_depth:
+                    warnings.append(f"Skipped directory beyond max depth {max_depth}: {rel}")
+                    continue
+                pending.append((entry, depth + 1))
+                continue
+            if not entry.is_file():
+                continue
+            files.append(entry)
+            if len(files) >= max_files:
+                warnings.append(
+                    f"Package file index stopped after {max_files} files; choose a narrower package directory."
+                )
+                return files, warnings, True
+    return files, warnings, False
+
+
+def package_files(package: Path) -> tuple[dict[str, list[str]], list[str]]:
+    files: dict[str, list[str]] = {}
+    paths, warnings, _ = bounded_files(package, package)
+    for path in paths:
         rel = str(path.relative_to(package))
         files.setdefault(path.name.lower(), []).append(rel)
         files.setdefault(rel.lower(), []).append(rel)
-    return files
+    return files, warnings
 
 
 def resolve_token(token: str, files: dict[str, list[str]]) -> str | None:
@@ -64,13 +104,18 @@ def role(path: str) -> str:
     return "resource"
 
 
-def manifest_files(package: Path, suffixes: set[str]) -> list[Path]:
+def manifest_files(package: Path, suffixes: set[str], files: dict[str, list[str]]) -> list[Path]:
     assembly_dir = package / "figure_assembly"
     if not assembly_dir.exists():
         return []
     return [
-        path for path in sorted(assembly_dir.rglob("*"))
-        if path.is_file() and path.suffix.lower() in suffixes
+        package / rel
+        for rel in sorted({
+            rel
+            for matches in files.values()
+            for rel in matches
+            if rel.startswith("figure_assembly/") and Path(rel).suffix.lower() in suffixes
+        })
     ]
 
 
@@ -200,11 +245,13 @@ def infer_ordered_links(text: str, package: Path, files: dict[str, list[str]], e
         resolved = resolve_token(match.group(0), files)
         if resolved and role(resolved) in {"raw_image", "source_data"} and resolved not in raw_refs:
             raw_refs.append(resolved)
-    figure_paths = [
-        str(path.relative_to(package))
-        for path in sorted((package / "figures").rglob("*"))
-        if path.is_file() and path.suffix.lower() in {".png", ".jpg", ".jpeg", ".tif", ".tiff"}
-    ] if (package / "figures").exists() else []
+    figure_paths = sorted({
+        rel
+        for matches in files.values()
+        for rel in matches
+        if rel.startswith("figures/")
+        and Path(rel).suffix.lower() in {".png", ".jpg", ".jpeg", ".tif", ".tiff"}
+    })
     if len(figure_paths) != len(raw_refs) or not figure_paths:
         return []
     links = []
@@ -222,12 +269,12 @@ def infer_ordered_links(text: str, package: Path, files: dict[str, list[str]], e
 
 
 def parse_package(package: Path) -> dict[str, Any]:
-    files = package_files(package)
+    files, file_index_warnings = package_files(package)
     links: list[dict[str, Any]] = []
     parsed_files = []
-    warnings = []
-    structured_files = manifest_files(package, STRUCTURED_SUFFIXES)
-    text_files = [] if structured_files else manifest_files(package, TEXT_SUFFIXES)
+    warnings = list(file_index_warnings)
+    structured_files = manifest_files(package, STRUCTURED_SUFFIXES, files)
+    text_files = [] if structured_files else manifest_files(package, TEXT_SUFFIXES, files)
 
     for manifest in structured_files:
         rel = str(manifest.relative_to(package))

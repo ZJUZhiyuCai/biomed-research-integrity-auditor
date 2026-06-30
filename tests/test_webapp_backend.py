@@ -6,11 +6,15 @@ from pathlib import Path
 import tempfile
 import time
 import unittest
+from unittest import mock
 import zipfile
 
 from fastapi.testclient import TestClient
 
-from webapp.backend.app import create_app
+from webapp.backend import app as webapp_app
+
+
+create_app = webapp_app.create_app
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -177,6 +181,78 @@ class WebappBackendTests(unittest.TestCase):
                 })
                 self.assertEqual(unsupported.status_code, 400)
                 self.assertIn("Unsupported relation_type", unsupported.text)
+
+    def test_package_prep_inventory_reports_scan_limits(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            package = tmp_path / "package"
+            package.mkdir()
+            for idx in range(5):
+                (package / f"file_{idx}.txt").write_text("x", encoding="utf-8")
+
+            with mock.patch.object(webapp_app, "INVENTORY_MAX_FILES", 3):
+                with TestClient(create_app(output_root=tmp_path / "runs")) as client:
+                    response = client.post("/api/packages/inspect", json={"package_path": str(package)})
+                    response.raise_for_status()
+                    inventory = response.json()["inventory"]
+
+            self.assertTrue(inventory["scan_limit_reached"])
+            self.assertEqual(inventory["scan_limits"]["max_files"], 3)
+            self.assertTrue(any("Inventory stopped after 3 files" in item for item in inventory["inventory_warnings"]))
+
+    def test_package_prep_manifest_rejects_relation_source_role_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            package = tmp_path / "package"
+            (package / "figures").mkdir(parents=True)
+            (package / "source_data").mkdir()
+            (package / "raw_images").mkdir()
+            (package / "figures" / "Figure_1A.png").write_bytes(b"figure")
+            (package / "figures" / "Figure_1B.png").write_bytes(b"figure")
+            (package / "source_data" / "Figure_1.csv").write_text("x,y\n1,2\n", encoding="utf-8")
+
+            with TestClient(create_app(output_root=tmp_path / "runs")) as client:
+                mismatch = client.post("/api/packages/assembly-manifest", json={
+                    "package_path": str(package),
+                    "rows": [
+                        {
+                            "figure_panel": "figures/Figure_1A.png",
+                            "source_record": "source_data/Figure_1.csv",
+                            "relation_type": "same_membrane_reprobe",
+                        }
+                    ],
+                })
+                self.assertEqual(mismatch.status_code, 400)
+                self.assertIn("same_membrane_reprobe source_record", mismatch.text)
+
+                valid_figure_relation = client.post("/api/packages/assembly-manifest", json={
+                    "package_path": str(package),
+                    "rows": [
+                        {
+                            "figure_panel": "figures/Figure_1A.png",
+                            "source_record": "figures/Figure_1B.png",
+                            "relation_type": "same_field_different_channel",
+                        }
+                    ],
+                })
+                valid_figure_relation.raise_for_status()
+                self.assertEqual(valid_figure_relation.json()["rows_written"], 1)
+
+    def test_webapp_serves_frontend_and_package_prep_endpoints(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            with TestClient(create_app(output_root=tmp_path / "runs")) as client:
+                index = client.get("/")
+                self.assertEqual(index.status_code, 200)
+                self.assertIn("root", index.text)
+
+                response = client.post("/api/packages/inspect", json={
+                    "package_path": str(ROOT / "examples" / "full_presubmission_package")
+                })
+                response.raise_for_status()
+                inventory = response.json()["inventory"]
+                self.assertIn("relation_allowed_source_roles", inventory)
+                self.assertIn("declared_derived_from", inventory["relation_allowed_source_roles"])
 
 
 if __name__ == "__main__":

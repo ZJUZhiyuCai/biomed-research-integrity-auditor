@@ -786,6 +786,20 @@ button:disabled:hover {
   padding-top: 16px;
   border-top: 1px dashed var(--border);
 }
+.inventory-warning-block {
+  margin-top: 12px;
+  padding: 10px 12px;
+  color: var(--r3-ink);
+  background: var(--r3-bg);
+  border-radius: var(--radius-sm);
+  font-size: 12.5px;
+}
+.inventory-warning-block .list-block-title {
+  color: inherit;
+}
+.inventory-warning-block ul {
+  margin-top: 4px;
+}
 .manifest-heading {
   display: flex;
   align-items: flex-start;

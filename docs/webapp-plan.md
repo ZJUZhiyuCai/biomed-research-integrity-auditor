@@ -74,11 +74,12 @@ Endpoints (read existing artifacts; never recompute risk):
 - `GET /api/audits/{id}/evidence/{relpath}` - serves crops from `audit_outputs/<id>/evidence/...` produced by [detectors/image/local_patch_reuse.py](../detectors/image/local_patch_reuse.py).
 - `GET /api/audits/{id}/report.md` - Markdown export. PDF/self-contained HTML export is P1.
 - `POST /api/packages/inspect` - inventories a local package path and returns recommended folder,
-  file-role, and existing `assembly_manifest.csv` state.
+  file-role, scan-warning, and existing `assembly_manifest.csv` state. Inventory is bounded by
+  file count and directory depth to avoid accidentally scanning a whole home/workspace tree.
 - `POST /api/packages/scaffold` - creates the recommended package folders without deleting or
   overwriting supplied materials.
 - `POST /api/packages/assembly-manifest` - writes `figure_assembly/assembly_manifest.csv` after
-  package-relative path and relation-type validation.
+  package-relative path, relation-type, and source-role validation.
 
 Security constraints:
 - Serve evidence only from the current audit's `evidence/` directory; reject absolute paths, empty path segments, and `..`.
@@ -151,5 +152,6 @@ Then grammar (P2, clearly labeled "writing quality, not integrity"):
 - [ ] Add opt-in reference/DOI resolution and retracted-reference checks, plus reference vs in-text consistency.
 - [ ] Add grammar/language checking (local LanguageTool default; optional LLM via user key with explicit opt-in), clearly labeled as writing quality, not integrity.
 - [x] Add backend API tests using example packages and path/zip safety checks.
+- [x] Add lightweight webapp smoke coverage for served frontend entry plus package-prep endpoints.
 - [ ] Add a frontend Playwright smoke test.
 - [ ] Add a contract test that writing output never merges into integrity findings when the writing module exists; keep the existing suite green.

@@ -46,6 +46,8 @@ Included:
   missing materials, evidence images, local history, delete, and Chinese/English labels.
 - Package prep tools: inspect a local package, create the recommended folder scaffold, and write
   `figure_assembly/assembly_manifest.csv` rows for declared figure-to-source relationships.
+- Package-prep guardrails: bounded directory inventory, visible scan warnings, package-relative
+  path checks, and relation/source-role validation before manifest rows are written.
 
 Not included yet:
 
@@ -67,3 +69,15 @@ The UI must preserve the same boundary as the CLI:
 - render positive provenance as evidence to inspect, not as proof that the manuscript is correct;
 - treat assembly-manifest rows as declarations that the pipeline still cross-checks against
   supplied images, source data, and raw records.
+
+## Package Prep Notes
+
+The package-prep inventory is intentionally bounded. If a path contains more than the local file
+limit or deeply nested folders, the API returns `inventory_warnings` and asks you to choose a
+narrower package directory. This is a coverage warning for preparation, not an integrity finding.
+
+Manifest relation types are constrained before writing:
+
+- `declared_derived_from` may point to `raw_images/` or `source_data/`.
+- `same_field_different_channel` may point to another `figures/` panel or a `raw_images/` file.
+- `same_membrane_reprobe` may point to another `figures/` panel or a `raw_images/` file.

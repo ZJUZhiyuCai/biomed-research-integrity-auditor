@@ -28,6 +28,13 @@ const ROLE_LABELS = [
   "ethics_irb"
 ];
 
+function sourceRole(path: string): string {
+  if (path.startsWith("figures/")) return "figures";
+  if (path.startsWith("raw_images/")) return "raw_images";
+  if (path.startsWith("source_data/")) return "source_data";
+  return "other";
+}
+
 export function PackagePrepPanel({
   t,
   packagePath,
@@ -55,18 +62,55 @@ export function PackagePrepPanel({
   const relationTypes = inventory?.relation_types?.length
     ? inventory.relation_types
     : ["declared_derived_from", "same_field_different_channel", "same_membrane_reprobe"];
+  const allowedSourceRoles =
+    inventory?.relation_allowed_source_roles?.[relationType] ||
+    (relationType === "declared_derived_from"
+      ? ["raw_images", "source_data"]
+      : ["figures", "raw_images"]);
 
   const sourceOptions = useMemo(
     () => [
       { label: "raw_images", files: rawImages },
       { label: "source_data", files: sourceData },
-      { label: "figures", files: figures }
-    ],
-    [figures, rawImages, sourceData]
+      { label: "figures", files: figures.filter((file) => file !== figure) }
+    ].filter((group) => allowedSourceRoles.includes(group.label)),
+    [allowedSourceRoles, figure, figures, rawImages, sourceData]
+  );
+
+  const selectedSourceOptions = useMemo(
+    () => sourceOptions.flatMap((group) => group.files),
+    [sourceOptions]
+  );
+
+  const sourceIsCompatible = !source || (
+    allowedSourceRoles.includes(sourceRole(source)) &&
+    source !== figure &&
+    selectedSourceOptions.includes(source)
+  );
+
+  useEffect(() => {
+    if (!sourceIsCompatible) setSource("");
+  }, [sourceIsCompatible]);
+
+  const canAddRelationship = Boolean(figure && source && sourceIsCompatible);
+
+  const roleRows = useMemo(
+    () =>
+      ROLE_LABELS.map((role) => {
+        const count = inventory?.file_counts[role] || 0;
+        const preview = (inventory?.files_by_role[role] || []).slice(0, 3).join(", ");
+        return (
+          <span key={role}>
+            <span className="mono">{role}</span>: {count}
+            {preview ? <span className="muted"> · {preview}</span> : null}
+          </span>
+        );
+      }),
+    [inventory]
   );
 
   function addRow() {
-    if (!figure || !source) return;
+    if (!canAddRelationship) return;
     setRows((current) => [
       ...current,
       {
@@ -144,17 +188,18 @@ export function PackagePrepPanel({
               <ListBlock
                 title={t.detectedFiles}
                 empty={t.emptyRole}
-                rows={ROLE_LABELS.map((role) => {
-                  const count = inventory.file_counts[role] || 0;
-                  const preview = (inventory.files_by_role[role] || []).slice(0, 3).join(", ");
-                  return (
-                    <span>
-                      <span className="mono">{role}</span>: {count}
-                      {preview ? <span className="muted"> · {preview}</span> : null}
-                    </span>
-                  );
-                })}
+                rows={roleRows}
               />
+              {(inventory.inventory_warnings || []).length > 0 && (
+                <div className="inventory-warning-block">
+                  <h4 className="list-block-title">{t.inventoryWarnings}</h4>
+                  <ul>
+                    {(inventory.inventory_warnings || []).slice(0, 6).map((warning, index) => (
+                      <li key={index}>{warning}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
             </div>
           </div>
 
@@ -225,7 +270,7 @@ export function PackagePrepPanel({
                 type="button"
                 className="primary-button relationship-add"
                 onClick={addRow}
-                disabled={!figure || !source}
+                disabled={!canAddRelationship}
               >
                 <Plus size={15} aria-hidden="true" />
                 {t.addRelationship}

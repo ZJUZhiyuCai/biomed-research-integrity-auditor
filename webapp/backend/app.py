@@ -35,6 +35,8 @@ MODES = {"internal_presubmission", "external_public_material", "response_to_conc
 EXTERNAL_PROVIDERS = {"auto", "none", "fixture", "europepmc", "crossref"}
 MAX_ZIP_BYTES = 250 * 1024 * 1024
 MAX_ZIP_MEMBERS = 5000
+INVENTORY_MAX_FILES = 5000
+INVENTORY_MAX_DEPTH = 12
 RECOMMENDED_PACKAGE_DIRS = [
     "figures",
     "raw_images",
@@ -50,6 +52,11 @@ ALLOWED_MANIFEST_RELATIONS = {
     "declared_derived_from",
     "same_field_different_channel",
     "same_membrane_reprobe",
+}
+RELATION_ALLOWED_SOURCE_ROLES = {
+    "declared_derived_from": {"raw_images", "source_data"},
+    "same_field_different_channel": {"figures", "raw_images"},
+    "same_membrane_reprobe": {"figures", "raw_images"},
 }
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp"}
 SOURCE_DATA_SUFFIXES = {".csv", ".tsv", ".xlsx"}
@@ -327,9 +334,8 @@ def package_inventory(package: Path) -> dict[str, Any]:
         "ethics_irb": [],
         "other": [],
     }
-    for path in sorted(package.rglob("*")):
-        if not path.is_file():
-            continue
+    files, inventory_warnings, limit_reached = bounded_package_files(package)
+    for path in files:
         rel = path.relative_to(package).as_posix()
         role = inventory_role(path.relative_to(package))
         files_by_role.setdefault(role, []).append(rel)
@@ -342,11 +348,54 @@ def package_inventory(package: Path) -> dict[str, Any]:
         "file_counts": {key: len(value) for key, value in files_by_role.items()},
         "assembly_manifest": manifest,
         "relation_types": sorted(ALLOWED_MANIFEST_RELATIONS),
+        "relation_allowed_source_roles": {
+            key: sorted(value) for key, value in RELATION_ALLOWED_SOURCE_ROLES.items()
+        },
+        "inventory_warnings": inventory_warnings,
+        "scan_limit_reached": limit_reached,
+        "scan_limits": {
+            "max_files": INVENTORY_MAX_FILES,
+            "max_depth": INVENTORY_MAX_DEPTH,
+        },
         "scope_note": (
             "Assembly-manifest rows are declarations for audit context only; "
             "the pipeline cross-checks them against supplied files."
         ),
     }
+
+
+def bounded_package_files(package: Path) -> tuple[list[Path], list[str], bool]:
+    files: list[Path] = []
+    warnings: list[str] = []
+    pending: list[tuple[Path, int]] = [(package, 0)]
+    while pending:
+        directory, depth = pending.pop(0)
+        try:
+            entries = sorted(directory.iterdir(), key=lambda item: item.name.lower())
+        except OSError as exc:
+            rel = directory.relative_to(package).as_posix() if directory != package else "."
+            warnings.append(f"Could not read {rel}: {exc.__class__.__name__}")
+            continue
+        for entry in entries:
+            rel = entry.relative_to(package).as_posix()
+            if entry.is_symlink():
+                warnings.append(f"Skipped symlink: {rel}")
+                continue
+            if entry.is_dir():
+                if depth >= INVENTORY_MAX_DEPTH:
+                    warnings.append(f"Skipped directory beyond max depth {INVENTORY_MAX_DEPTH}: {rel}")
+                    continue
+                pending.append((entry, depth + 1))
+                continue
+            if not entry.is_file():
+                continue
+            files.append(entry)
+            if len(files) >= INVENTORY_MAX_FILES:
+                warnings.append(
+                    f"Inventory stopped after {INVENTORY_MAX_FILES} files; choose a narrower package directory."
+                )
+                return files, warnings, True
+    return files, warnings, False
 
 
 def inventory_role(relative_path: Path) -> str:
@@ -403,16 +452,17 @@ def validated_manifest_row(package: Path, row: ManifestRowInput) -> dict[str, st
     source_role = inventory_role(Path(source))
     if figure_role != "figures":
         raise HTTPException(status_code=400, detail="figure_panel must point to an image under figures/")
-    if source_role not in {"raw_images", "source_data", "figures"}:
+    allowed_source_roles = RELATION_ALLOWED_SOURCE_ROLES[relation_type]
+    if source_role not in allowed_source_roles:
         raise HTTPException(
             status_code=400,
-            detail="source_record must point to figures/, raw_images/, or source_data/",
+            detail=(
+                f"{relation_type} source_record must point to one of: "
+                f"{', '.join(sorted(allowed_source_roles))}"
+            ),
         )
-    if relation_type == "declared_derived_from" and source_role == "figures":
-        raise HTTPException(
-            status_code=400,
-            detail="declared_derived_from should point to raw_images/ or source_data/",
-        )
+    if source == figure:
+        raise HTTPException(status_code=400, detail="source_record must differ from figure_panel")
     return {
         "figure_panel": figure,
         "source_record": source,
@@ -500,7 +550,9 @@ def save_job(settings: WebappSettings, job: AuditJob) -> None:
     job.updated_at = time.time()
     path = job_file(settings, job.audit_id)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(asdict(job), indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    tmp_path = path.with_name(f".{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+    tmp_path.write_text(json.dumps(asdict(job), indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    os.replace(tmp_path, path)
 
 
 def load_job(settings: WebappSettings, audit_id: str) -> Optional[AuditJob]:
