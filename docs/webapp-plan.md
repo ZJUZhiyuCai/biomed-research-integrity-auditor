@@ -16,10 +16,12 @@
 
 V0.5 implements the P0 path plus the highest-leverage package-prep P1 slice: a local FastAPI job
 runner, artifact API, React/Vite report viewer, package scaffold/inspection tools, a visual
-assembly-manifest builder, and launcher. The CLI now writes submission-QC artifacts and a basic
-HTML/PDF report export inside `submission_qc_packet/`; dedicated web UI tabs/buttons for those
-artifacts are still future work. It intentionally does not include network reference checks or
-desktop packaging yet.
+assembly-manifest builder, and launcher. The CLI writes submission-QC artifacts and a basic
+HTML/PDF report export inside `submission_qc_packet/`; the web UI now surfaces claim coverage,
+action trackers, correction plans, re-audit diffs, QC-packet downloads, and the fenced
+Writing & Submission Readiness module. Opt-in DOI/reference metadata prompts are wired; full
+retraction-database coverage, inline correction-plan editing, grammar engines, and signed desktop
+packaging remain future work.
 
 Implemented files:
 
