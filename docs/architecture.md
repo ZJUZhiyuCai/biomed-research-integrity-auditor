@@ -201,7 +201,7 @@ Re-audit comparison is available through `scripts/compare_audit_runs.py` or `scr
 - `detectors/text/external_literature_search.py`: external phrase-search candidates with query/result provenance and provider-gap reporting.
 - `detectors/text/text_overlap_screen.py`: package-internal paragraph overlap candidates using section-aware n-gram similarity.
 - `detectors/stats/pseudoreplication_screen.py`: possible unit-of-analysis mismatch candidates from biological and technical replicate columns.
-- `skill/.../stats_consistency_check.py`: direct summary consistency (SD/SEM/n, p-value range/validity, integer-count feasibility) plus weak forensic statistical screens. Digit/rounding weak screens require at least 8 comparable values by default; integer-count feasibility requires n >= 6 and propagates reported mean/SD precision. It does not implement Benford-style first-digit distribution analysis or p-value clustering/distribution tests; those are manual checks only, and `schemas/risk_rules.yaml` deliberately configures no caps for them so the rules never imply unimplemented coverage.
+- `skill/.../stats_consistency_check.py`: direct summary consistency (SD/SEM/n, p-value range/validity, integer-count feasibility) plus weak forensic statistical screens. Digit/rounding weak screens require at least 8 comparable values by default; integer-count feasibility requires n >= 6 and propagates reported mean/SD precision. Benford-style first-digit prompts and p-value-clustering prompts are implemented as weak, sample-gated triage screens capped at R2.
 - `provenance/parse_assembly_manifest.py`: declared figure-to-raw/source links from assembly manifests.
 - `provenance/build_resource_graph.py`: package-level resource graph for provenance-aware calibration.
 

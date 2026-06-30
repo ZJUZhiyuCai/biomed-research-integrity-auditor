@@ -23,6 +23,8 @@ export interface CreateAuditInput {
   scan_profile: string;
   domains: string;
   external_literature_provider: string;
+  reference_check_provider: string;
+  compare_to_audit_id?: string | null;
 }
 
 export const listAudits = () => api<{ audits: AuditJob[] }>("/api/audits");
@@ -70,7 +72,9 @@ export async function uploadZip(
   mode: string,
   scan_profile: string,
   domains: string,
-  external_literature_provider: string
+  external_literature_provider: string,
+  reference_check_provider: string,
+  compare_to_audit_id?: string | null
 ): Promise<AuditJob> {
   const form = new FormData();
   form.append("file", file);
@@ -78,6 +82,8 @@ export async function uploadZip(
   form.append("scan_profile", scan_profile);
   form.append("domains", domains);
   form.append("external_literature_provider", external_literature_provider);
+  form.append("reference_check_provider", reference_check_provider);
+  if (compare_to_audit_id) form.append("compare_to_audit_id", compare_to_audit_id);
   const response = await fetch("/api/audits/upload", { method: "POST", body: form });
   if (!response.ok) {
     const text = await response.text();
@@ -89,4 +95,13 @@ export async function uploadZip(
 export function evidenceUrl(auditId: string, path: string): string {
   const encoded = path.split("/").map(encodeURIComponent).join("/");
   return `/api/audits/${auditId}/evidence/${encoded}`;
+}
+
+export function artifactUrl(auditId: string, path: string): string {
+  const encoded = path.split("/").map(encodeURIComponent).join("/");
+  return `/api/audits/${auditId}/artifact/${encoded}`;
+}
+
+export function qcPacketUrl(auditId: string): string {
+  return `/api/audits/${auditId}/submission-qc-packet.zip`;
 }

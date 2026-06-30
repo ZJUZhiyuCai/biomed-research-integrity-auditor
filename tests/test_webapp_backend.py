@@ -61,12 +61,51 @@ class WebappBackendTests(unittest.TestCase):
                 self.assertEqual(payload["audit_summary"]["misconduct_verdict_present"], False)
                 self.assertIn("audit_coverage", payload["audit_summary"])
                 self.assertIn("modules_executed", payload["coverage"])
+                self.assertIn("writing_submission_readiness", payload["coverage"]["modules_executed"])
                 self.assertEqual(payload["pipeline_summary"]["overall_risk"], artifact_summary["overall_risk"])
                 self.assertEqual(payload["pipeline_summary"]["scan_profile"], "quick")
+                self.assertIn("claim_coverage", payload)
+                self.assertIn("unresolved", payload["action_trackers"])
+                self.assertTrue(payload["submission_qc_packet"]["available"])
+                self.assertIn("writing_readiness", payload)
+                self.assertEqual(payload["writing_readiness"]["scope"], "writing_submission_readiness_only")
+                self.assertGreater(len(payload["writing_readiness"].get("checks", [])), 0)
+                finding_text = json.dumps(
+                    payload.get("calibrated_findings", {}).get("findings", []),
+                    sort_keys=True,
+                ).lower()
+                self.assertNotIn("writing_submission_readiness", finding_text)
+                self.assertNotIn("writing_readiness", finding_text)
+
+                actions = client.get(f"/api/audits/{audit_id}/artifact/unresolved_actions.csv")
+                actions.raise_for_status()
+                self.assertIn("action_id", actions.text)
+
+                packet = client.get(f"/api/audits/{audit_id}/submission-qc-packet.zip")
+                packet.raise_for_status()
+                self.assertGreater(len(packet.content), 100)
 
                 report_response = client.get(f"/api/audits/{audit_id}/report.md")
                 report_response.raise_for_status()
                 self.assertIn("AUDIT_JSON_SUMMARY", report_response.text)
+                self.assertIn("Writing & Submission Readiness", report_response.text)
+
+                rerun = client.post("/api/audits", json={
+                    "package_path": str(ROOT / "examples" / "minimal_package"),
+                    "mode": "internal_presubmission",
+                    "scan_profile": "quick",
+                    "domains": "wetlab,animal,cell",
+                    "external_literature_provider": "none",
+                    "reference_check_provider": "none",
+                    "compare_to_audit_id": audit_id,
+                })
+                rerun.raise_for_status()
+                rerun_id = rerun.json()["audit_id"]
+                rerun_job = wait_for_audit(client, rerun_id)
+                self.assertEqual(rerun_job["status"], "completed", rerun_job.get("stderr_tail"))
+                rerun_summary = client.get(f"/api/audits/{rerun_id}/summary")
+                rerun_summary.raise_for_status()
+                self.assertIsNotNone(rerun_summary.json()["re_audit_diff"])
 
     def test_evidence_endpoint_blocks_path_traversal(self) -> None:
         with TestClient(create_app(output_root=ROOT / "tmp" / "webapp_traversal_runs")) as client:

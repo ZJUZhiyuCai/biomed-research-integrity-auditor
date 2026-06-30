@@ -29,6 +29,17 @@
 - Structured methodology/reporting-standard readiness output (`methodology_checklist.json` and
   `.csv`) covering wet-lab, animal, clinical, cell, flow, and omics manual-review prompts, with
   bilingual report and webapp panels.
+- Separate Writing & Submission Readiness output (`writing_readiness.json` / `.csv`) for
+  language placeholders, generic submission-file prompts, and opt-in DOI/reference metadata
+  review. This module is rendered separately and is not merged into integrity findings.
+- Webapp submission workspace surfaces claim coverage, unresolved action trackers, re-audit diffs,
+  QC-packet download links, and writing-readiness prompts.
+- Frame-level screening for multi-frame TIFF-like image files in global near-duplicate and local
+  patch/copy-move detectors.
+- Sample-gated weak Benford-style first-digit and p-value-clustering prompts, capped as weak
+  statistical triage signals.
+- Release artifact tooling: `make release-artifacts`, `scripts/build_release_artifacts.py`,
+  GitHub Release/frontend-smoke workflow templates, and Homebrew/macOS packaging templates.
 
 ### Changed
 - Python support metadata now matches the documented and CI-tested requirement: Python 3.10+.
@@ -39,6 +50,10 @@
   displacement-cluster requirement only to low-contrast enhanced tiles.
 - Audit coverage now records the methodology readiness checklist as executed while still stating
   that ARRIVE/CONSORT/ICMJE/MIFlowCyt/omics compliance determinations require manual review.
+- The `deep` scan profile now applies stricter image similarity parameters and records those
+  thresholds in coverage.
+- Source/wheel packaging metadata now includes schema, skill, template, and built webapp assets
+  needed by the installed CLI entry points.
 
 ## v0.6.1 - Human Bilingual Reports and Public Smoke Benchmark
 

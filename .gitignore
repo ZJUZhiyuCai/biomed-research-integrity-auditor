@@ -2,6 +2,8 @@
 __pycache__/
 *.py[cod]
 *.egg-info/
+build/
+dist/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
@@ -22,3 +24,5 @@ audit_outputs/
 tmp/
 webapp/frontend/node_modules/
 webapp/frontend/dist/
+webapp/frontend/test-results/
+webapp/frontend/playwright-report/

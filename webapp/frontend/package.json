@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "build": "tsc --noEmit && vite build",
+    "smoke": "playwright test --config=playwright.config.ts",
     "preview": "vite preview --host 127.0.0.1"
   },
   "dependencies": {
@@ -22,6 +23,7 @@
     "vite": "^8.1.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.61.1",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1"
   }

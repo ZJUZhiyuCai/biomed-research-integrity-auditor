@@ -27,9 +27,13 @@ Under the hood it is an installable local **CLI**, a local-first **web app**, a 
 - Screen figures for image near-duplicates and same-image copy-move.
 - Cross-check declared figure-to-raw traceability and record positive provenance evidence.
 - Record an audit snapshot with file hashes, optional claim-to-evidence coverage, and a submission QC packet.
-- Check numeric/statistical consistency in source or summary tables (SD/SEM/n, p-value range, integer counts).
+- Check numeric/statistical consistency in source or summary tables (SD/SEM/n, p-value range,
+  integer counts, weak Benford-style and p-value-clustering triage when sample-size gates are met).
 - Screen package-internal text overlap, with optional external phrase-search triage.
 - Emit a structured methodology/reporting-standard readiness checklist for manual ARRIVE / CONSORT / ICMJE / MIFlowCyt / omics review.
+- Emit a separate Writing & Submission Readiness artifact for language placeholders, generic
+  submission files, and opt-in DOI/reference metadata prompts. This module is fenced from the
+  integrity risk register.
 - Produce a bilingual human-readable report with a Quick Read, submission-readiness status,
   action queue, coverage, materials needed, finding cards, technical appendix, and an `R0`–`R4` risk register.
 
@@ -100,9 +104,10 @@ Each run writes to the output directory:
 - `audit_snapshot.json` and `file_hash_manifest.json` — the exact package version reviewed, including SHA-256 hashes.
 - `claim_coverage.json` / `claim_coverage.csv` — claim-to-evidence coverage when `claim_manifest.csv` is supplied.
 - `methodology_checklist.json` / `methodology_checklist.csv` — manual-review readiness prompts for wet-lab, animal, clinical, cell, flow, and omics reporting.
+- `writing_readiness.json` / `writing_readiness.csv` — writing/submission preparation prompts; these do not change R0-R4.
 - `unresolved_actions.csv`, `resolved_actions.csv`, and `accepted_with_reason.csv` — team trackers for follow-up.
 - `submission_qc_packet/` — a leave-behind packet with the report, coverage, action trackers, verified traceability,
-  missing materials, file hashes, claim coverage, methodology checklist, and an author sign-off template.
+  missing materials, file hashes, claim coverage, methodology checklist, writing readiness, and an author sign-off template.
 
 To audit your own package, point the command at your folder and pick a mode
 (`--mode internal_presubmission` is the default; `external_public_material` and
@@ -123,7 +128,7 @@ Use `--scan-profile` to control speed and depth:
 | --- | --- | --- |
 | `quick` | First-pass drag-and-check review | Keeps fast source/text/global-image screens; skips expensive local-patch/copy-move deep image screening and external phrase search. |
 | `standard` | Default pre-submission QC | Runs the current balanced detector set and exports the submission QC packet. |
-| `deep` | Focused recheck or response-to-concern work | Preserves all current screens and marks the run as a deeper review surface for future detector/profile expansion. |
+| `deep` | Focused recheck or response-to-concern work | Runs the current screens with stricter image similarity parameters and records the selected deep-profile thresholds in coverage. |
 
 ### Optional claim-to-evidence manifest
 
@@ -169,10 +174,26 @@ Then open `http://127.0.0.1:8765`. The web app is a thin local wrapper around
 `scripts/audit_package.py`: it runs the same pipeline, reads the same artifacts, and keeps Audit
 Coverage visible so "no findings" is not mistaken for a clean verdict. It also includes local
 package-prep tools for creating the recommended folder layout and writing
-`figure_assembly/assembly_manifest.csv` declarations before you run the audit. See
+`figure_assembly/assembly_manifest.csv` declarations before you run the audit. The report view
+surfaces claim coverage, unresolved action trackers, re-audit diffs, QC-packet download links,
+and the fenced Writing & Submission Readiness module. See
 [`webapp/README.md`](webapp/README.md).
 
 Source-checkout fallback: `python -m webapp`.
+
+### Release artifacts
+
+For maintainers, build repeatable release artifacts with:
+
+```bash
+make release-artifacts
+```
+
+This builds the frontend, Python wheel/sdist, a source bundle, and SHA-256 manifest under
+`dist/release/`. GitHub Actions workflow templates for release artifacts and frontend smoke tests
+are provided under `packaging/github-workflows/`; enabling them requires a maintainer token with
+workflow permission. PyPI and Homebrew publication still require maintainer credentials or formula
+updates; see [`packaging/README.md`](packaging/README.md).
 
 ### Install the skill (optional)
 
@@ -389,13 +410,17 @@ python3 evals/run_eval.py generate-prompts
   exhaustive plagiarism-database coverage or a verdict.
 - True-PDF intake handles machine-readable text and OCR-capable scanned PDFs; figure/caption
   extraction is limited.
-- Image intake normalizes high-bit-depth grayscale TIFFs, but broad validation on
-  multi-frame/Z-stack/channel microscopy remains future work.
+- Image intake normalizes high-bit-depth grayscale TIFFs and screens multi-frame TIFF-like files
+  as frame-level items up to the configured frame cap. Broad validation on vendor-specific
+  Z-stack/channel microscopy formats remains future work.
 - Statistical screening covers p-value range/validity, SD/SEM/n consistency, integer-count
-  feasibility, and weak forensic patterns. Weak digit/rounding screens need at least 8 comparable
-  values, and integer-count feasibility needs n ≥ 6 while respecting reported precision. It does
-  **not** implement Benford-style first-digit analysis or p-value clustering/distribution tests —
-  those remain manual checks.
+  feasibility, weak forensic patterns, Benford-style first-digit prompts, and p-value clustering
+  prompts. Weak digit/rounding screens need at least 8 comparable values, Benford-style prompts
+  need at least 30 positive values, p-value clustering prompts need at least 20 p-values, and
+  integer-count feasibility needs n ≥ 6 while respecting reported precision. These distributional
+  checks are weak triage only, not standalone evidence.
+- Reference checking is opt-in and currently limited to DOI/reference metadata prompts through
+  Crossref-style lookups; it is not a full citation-integrity or retraction-database service.
 - Public-material review is capped by missing source/raw records and must never be read as a
   misconduct verdict.
 

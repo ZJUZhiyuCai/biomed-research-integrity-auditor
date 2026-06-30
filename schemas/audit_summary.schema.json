@@ -196,6 +196,22 @@
           }
         }
       }
+    },
+    "writing_readiness": {
+      "type": "object",
+      "required": ["schema_version", "scope", "overall_status", "scope_note", "checks"],
+      "properties": {
+        "schema_version": {"type": "string"},
+        "created_at": {"type": "string"},
+        "scope": {"type": "string"},
+        "overall_status": {"type": "string"},
+        "scope_note": {"type": "string"},
+        "checks": {"type": "array"},
+        "language_checks": {"type": "object"},
+        "reference_checks": {"type": "object"},
+        "submission_checks": {"type": "object"},
+        "text_extraction_errors": {"type": "array"}
+      }
     }
   },
   "$defs": {

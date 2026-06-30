@@ -4,7 +4,8 @@ version = "0.6.1"
 description = "Codex skill and detector pipeline for biomedical research integrity risk auditing"
 readme = "README.md"
 requires-python = ">=3.10"
-license = {text = "MIT"}
+license = "MIT"
+license-files = ["LICENSE"]
 dependencies = [
   "Pillow>=10.0",
   "PyYAML>=6.0",
@@ -29,8 +30,26 @@ biomed-risk-cap-engine = "calibrators.risk_cap_engine:main"
 biomed-self-audit-webapp = "webapp.__main__:main"
 
 [tool.setuptools]
-packages = ["calibrators", "detectors", "detectors.image", "detectors.stats", "detectors.text", "provenance", "scripts", "webapp", "webapp.backend"]
+include-package-data = true
+packages = ["calibrators", "detectors", "detectors.image", "detectors.stats", "detectors.text", "provenance", "schemas", "schemas.source_data", "scripts", "skill", "webapp", "webapp.backend", "webapp.frontend", "webapp.frontend.dist", "webapp.frontend.dist.assets"]
+
+[tool.setuptools.package-data]
+schemas = ["*.json", "*.yaml"]
+"schemas.source_data" = ["*.yaml"]
+skill = [
+  "biomed-research-integrity-auditor/*.md",
+  "biomed-research-integrity-auditor/agents/*.yaml",
+  "biomed-research-integrity-auditor/references/*.md",
+  "biomed-research-integrity-auditor/scripts/*.py",
+  "biomed-research-integrity-auditor/templates/*.md",
+  "biomed-research-integrity-auditor/templates/*.json",
+  "biomed-research-integrity-auditor/templates/submission_qc/*.csv",
+  "biomed-research-integrity-auditor/templates/submission_qc/*.yaml",
+  "biomed-research-integrity-auditor/templates/reporting_checklists/*.yaml"
+]
+"webapp.frontend.dist" = ["*.html"]
+"webapp.frontend.dist.assets" = ["*"]
 
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"

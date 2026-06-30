@@ -23,6 +23,10 @@ from scripts.methodology_checklist import (  # noqa: E402
     build_methodology_checklist,
     write_methodology_checklist_csv,
 )
+from scripts.writing_readiness_check import (  # noqa: E402
+    build_writing_readiness,
+    write_csv as write_writing_readiness_csv,
+)
 from scripts.submission_qc import (  # noqa: E402
     build_audit_snapshot,
     build_claim_coverage,
@@ -52,6 +56,7 @@ TEXT_EXTS = {".txt", ".md", ".pdf"}
 MODES = ("internal_presubmission", "external_public_material", "response_to_concern")
 SCAN_PROFILES = ("quick", "standard", "deep")
 EXTERNAL_LITERATURE_PROVIDERS = ("auto", "none", "fixture", "europepmc", "crossref")
+REFERENCE_CHECK_PROVIDERS = ("none", "crossref")
 EXTERNAL_LITERATURE_FIXTURE_NAMES = (
     "external_literature_fixture.json",
     "external_literature/fixture.json",
@@ -337,13 +342,16 @@ def run_image_detector(package: Path, output_dir: Path, provenance_graph: Path, 
 
     outputs: list[Path] = []
     image_output = output_dir / "global_image_candidates.json"
-    global_result = run_detector("global_image", package, output_dir, [
+    global_cmd = [
         PYTHON,
         "detectors/image/global_near_duplicate.py",
         str(package),
         "--output",
         str(image_output),
-    ], image_output)
+    ]
+    if scan_profile == "deep":
+        global_cmd.extend(["--threshold", "8"])
+    global_result = run_detector("global_image", package, output_dir, global_cmd, image_output)
 
     if global_result.ok:
         contextual_output = output_dir / "contextual_image_candidates.json"
@@ -367,7 +375,7 @@ def run_image_detector(package: Path, output_dir: Path, provenance_graph: Path, 
         return outputs
 
     local_patch_output = output_dir / "local_patch_candidates.json"
-    local_patch_result = run_detector("local_patch", package, output_dir, [
+    local_patch_cmd = [
         PYTHON,
         "detectors/image/local_patch_reuse.py",
         str(package),
@@ -377,7 +385,17 @@ def run_image_detector(package: Path, output_dir: Path, provenance_graph: Path, 
         str(output_dir / "evidence" / "local_patch"),
         "--output",
         str(local_patch_output),
-    ], local_patch_output)
+    ]
+    if scan_profile == "deep":
+        local_patch_cmd.extend([
+            "--tile-size",
+            "96",
+            "--stride",
+            "48",
+            "--hash-threshold",
+            "5",
+        ])
+    local_patch_result = run_detector("local_patch", package, output_dir, local_patch_cmd, local_patch_output)
 
     if local_patch_result.ok:
         local_patch_contextual_output = output_dir / "local_patch_contextual_candidates.json"
@@ -524,6 +542,16 @@ def build_coverage(
         "audit_coverage_gap": False,
         "external_literature_provider": external_provider,
         "scan_profile": scan_profile,
+        "profile_parameters": (
+            {
+                "global_image_hash_threshold": 8,
+                "local_patch_tile_size": 96,
+                "local_patch_stride": 48,
+                "local_patch_hash_threshold": 5,
+            }
+            if scan_profile == "deep"
+            else {}
+        ),
         "scope_note": (
             "A module with no findings means no candidate was detected within the current detector "
             "scope and supplied materials; it is not a guarantee of correctness. Methodology and "
@@ -597,8 +625,12 @@ def build_coverage(
         )
 
     coverage["modules_executed"].append("methodology_readiness_checklist")
+    coverage["modules_executed"].append("writing_submission_readiness")
     coverage["modules_not_executed"].append(
         "methodology/reporting-standard compliance determination (ARRIVE/CONSORT/ICMJE/MIFlowCyt/omics accession): manual review required"
+    )
+    coverage["modules_not_executed"].append(
+        "journal-specific writing, language, and reference correctness determination: manual review required"
     )
 
     for path in detector_outputs:
@@ -663,6 +695,7 @@ def run_report(
     coverage: Path | None = None,
     claim_coverage: Path | None = None,
     methodology_checklist: Path | None = None,
+    writing_readiness: Path | None = None,
     scan_profile: str = "standard",
 ) -> Path:
     report = output_dir / "audit-report.md"
@@ -686,6 +719,8 @@ def run_report(
         cmd.extend(["--claim-coverage", str(claim_coverage)])
     if methodology_checklist is not None:
         cmd.extend(["--methodology-checklist", str(methodology_checklist)])
+    if writing_readiness is not None:
+        cmd.extend(["--writing-readiness", str(writing_readiness)])
     cmd.extend(["--scan-profile", scan_profile])
     if case_id:
         cmd.extend(["--case-id", case_id])
@@ -714,6 +749,7 @@ def run_pipeline(
     external_literature_fixture: Path | None = None,
     claim_manifest: Path | None = None,
     compare_to: Path | None = None,
+    reference_check_provider: str = "none",
 ) -> dict[str, Any]:
     output_dir.mkdir(parents=True, exist_ok=True)
     manifest = build_manifest(package, mode, domains, output_dir)
@@ -736,6 +772,11 @@ def run_pipeline(
     write_json(methodology_checklist_path, methodology_checklist)
     methodology_checklist_csv = output_dir / "methodology_checklist.csv"
     write_methodology_checklist_csv(methodology_checklist_csv, methodology_checklist)
+    writing_readiness = build_writing_readiness(package, reference_check_provider)
+    writing_readiness_path = output_dir / "writing_readiness.json"
+    write_json(writing_readiness_path, writing_readiness)
+    writing_readiness_csv = output_dir / "writing_readiness.csv"
+    write_writing_readiness_csv(writing_readiness_csv, writing_readiness)
 
     provenance_graph = build_provenance(package, manifest, output_dir)
     detector_outputs = []
@@ -770,6 +811,7 @@ def run_pipeline(
         coverage_path,
         claim_coverage_path,
         methodology_checklist_path,
+        writing_readiness_path,
         scan_profile,
     )
     audit_summary = extract_audit_summary(report)
@@ -808,6 +850,7 @@ def run_pipeline(
         snapshot,
         claim_coverage,
         methodology_checklist,
+        writing_readiness,
         re_audit_diff,
     )
 
@@ -823,6 +866,8 @@ def run_pipeline(
         "claim_coverage_csv": str(claim_coverage_csv),
         "methodology_checklist": str(methodology_checklist_path),
         "methodology_checklist_csv": str(methodology_checklist_csv),
+        "writing_readiness": str(writing_readiness_path),
+        "writing_readiness_csv": str(writing_readiness_csv),
         "missing_materials_csv": str(missing_materials_csv),
         "verified_traceability_csv": str(verified_traceability_csv),
         "unresolved_actions_csv": str(unresolved_actions_csv),
@@ -862,7 +907,7 @@ def main() -> int:
         default="standard",
         help=(
             "Runtime depth. quick keeps fast presentation-layer screens and skips expensive local-patch "
-            "and external phrase search; standard is the default presubmission audit; deep preserves all current screens."
+            "and external phrase search; standard is the default presubmission audit; deep uses stricter image thresholds."
         ),
     )
     parser.add_argument("--output-dir", type=Path)
@@ -892,6 +937,12 @@ def main() -> int:
         type=Path,
         help="Optional previous audit output directory for re-audit diff generation.",
     )
+    parser.add_argument(
+        "--reference-check-provider",
+        choices=REFERENCE_CHECK_PROVIDERS,
+        default="none",
+        help="Optional DOI/reference metadata provider for writing-readiness checks. Default stays offline.",
+    )
     args = parser.parse_args()
 
     package = args.package_dir.expanduser().resolve()
@@ -915,6 +966,7 @@ def main() -> int:
         args.external_literature_fixture.expanduser().resolve() if args.external_literature_fixture else None,
         claim_manifest,
         compare_to,
+        args.reference_check_provider,
     )
     print(json.dumps(result, indent=2, ensure_ascii=False))
     return 0

@@ -51,6 +51,73 @@ export interface PipelineSummary {
   [key: string]: unknown;
 }
 
+export interface ClaimCoverage {
+  supplied?: boolean;
+  claim_manifest?: string | null;
+  claims_declared?: number;
+  claims_with_source_data?: number;
+  claims_with_raw_records?: number;
+  claims_with_analysis_code?: number;
+  claims_with_protocol_link?: number;
+  claims_with_unresolved_evidence_gap?: number;
+  unresolved_claims?: Array<Record<string, unknown>>;
+  warnings?: string[];
+  scope_note?: string;
+  [key: string]: unknown;
+}
+
+export interface ActionTrackerRow {
+  action_id?: string;
+  action_category?: string;
+  risk_level?: string;
+  action_type?: string;
+  item?: string;
+  location?: string;
+  required_action?: string;
+  owner?: string;
+  status?: string;
+  human_note?: string;
+  accepted_with_reason?: string;
+  source?: string;
+  [key: string]: string | undefined;
+}
+
+export interface ActionTrackers {
+  unresolved?: ActionTrackerRow[];
+  resolved?: ActionTrackerRow[];
+  accepted_with_reason?: ActionTrackerRow[];
+}
+
+export interface ReAuditDiff {
+  scope_note?: string;
+  overall_risk?: { previous?: string | null; current?: string | null };
+  risk_counts?: {
+    previous?: Record<string, number>;
+    current?: Record<string, number>;
+  };
+  missing_material_count?: { previous?: number; current?: number };
+  positive_provenance_count?: { previous?: number; current?: number };
+  unresolved_action_count?: { previous?: number; current?: number };
+  claim_evidence_gaps?: { previous?: number | null; current?: number | null };
+  [key: string]: unknown;
+}
+
+export interface SubmissionQCPacket {
+  available?: boolean;
+  files?: string[];
+  download_url?: string | null;
+}
+
+export interface WritingReadiness {
+  scope_note?: string;
+  overall_status?: string;
+  checks?: Array<Record<string, unknown>>;
+  reference_checks?: Record<string, unknown>;
+  language_checks?: Record<string, unknown>;
+  submission_checks?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
 export interface AuditJob {
   audit_id: string;
   status: AuditStatus;
@@ -58,6 +125,7 @@ export interface AuditJob {
   scan_profile: string;
   domains: string;
   external_literature_provider: string;
+  reference_check_provider?: string;
   package_path: string;
   output_dir: string;
   created_at: number;
@@ -183,6 +251,7 @@ export interface AuditSummary {
   findings?: Finding[];
   audit_coverage?: Coverage;
   methodology_checklist?: MethodologyChecklist;
+  claim_coverage?: ClaimCoverage;
   [key: string]: unknown;
 }
 
@@ -197,4 +266,9 @@ export interface SummaryPayload {
   coverage: Coverage;
   calibrated_findings: CalibratedFindings;
   pipeline_summary: PipelineSummary;
+  claim_coverage?: ClaimCoverage | null;
+  action_trackers?: ActionTrackers;
+  re_audit_diff?: ReAuditDiff | null;
+  submission_qc_packet?: SubmissionQCPacket;
+  writing_readiness?: WritingReadiness | null;
 }

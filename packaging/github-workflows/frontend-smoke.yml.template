@@ -1,0 +1,29 @@
+name: frontend-smoke
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  frontend-smoke:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: webapp/frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: webapp/frontend
+        run: npm ci
+
+      - name: Install Playwright Chromium
+        working-directory: webapp/frontend
+        run: npx playwright install --with-deps chromium
+
+      - name: Run frontend build and smoke test
+        run: make frontend-smoke

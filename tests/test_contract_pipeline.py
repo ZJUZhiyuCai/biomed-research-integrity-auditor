@@ -26,7 +26,7 @@ if str(ROOT) not in sys.path:
 
 from calibrators.contract_validation import ContractError, validate_instance  # noqa: E402
 from calibrators.risk_cap_engine import calibrate_payload, load_rules  # noqa: E402
-from detectors.image.image_io import normalized_rgb  # noqa: E402
+from detectors.image.image_io import iter_normalized_frames, normalized_rgb  # noqa: E402
 from provenance.panel_modality import normalize_modality, resolve_panel_modality_routing  # noqa: E402
 
 
@@ -366,6 +366,38 @@ class ContractPipelineTests(unittest.TestCase):
         extrema = normalized.convert("L").getextrema()
         self.assertEqual(extrema, (0, 255))
 
+    def test_image_detectors_screen_multiframe_tiff_frames(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "pkg"
+            package.mkdir()
+            frame_a = textured_image(101, (96, 96))
+            frame_b = textured_image(202, (96, 96))
+            tiff = package / "stack.tif"
+            frame_a.save(tiff, save_all=True, append_images=[frame_b])
+            frame_b.save(package / "matching_frame.png")
+
+            with Image.open(tiff) as img:
+                frames = iter_normalized_frames(img)
+            self.assertEqual([label for label, _ in frames], ["#frame0000", "#frame0001"])
+
+            output = Path(tmp) / "global.json"
+            run([
+                PYTHON,
+                "detectors/image/global_near_duplicate.py",
+                str(package),
+                "--output",
+                str(output),
+            ])
+            payload = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual(payload["images_screened"], 3)
+            locations = [
+                location
+                for candidate in payload["candidates"]
+                for location in candidate["locations"]
+            ]
+            self.assertIn("stack.tif#frame0001", locations)
+            self.assertIn("matching_frame.png", locations)
+
     def test_case008_adaptive_weak_stats_default(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             output = Path(tmp) / "case008_stats.json"
@@ -478,6 +510,23 @@ class ContractPipelineTests(unittest.TestCase):
         self.assertTrue(terminal_enough)
         self.assertEqual(terminal_enough[0]["evidence"]["effective_min_count"], 8)
 
+    def test_benford_and_pvalue_cluster_screens_are_gated_weak_signals(self) -> None:
+        stats = load_stats_consistency_check()
+        small_columns = {"measurement": [(idx, "900", 900.0) for idx in range(2, 12)]}
+        self.assertEqual(stats.check_benford_style_distribution(Path("small.csv"), small_columns, 30, 20.0), [])
+
+        benford_columns = {"measurement": [(idx, "900", 900.0) for idx in range(2, 42)]}
+        benford = stats.check_benford_style_distribution(Path("benford.csv"), benford_columns, 30, 20.0)
+        self.assertTrue(benford)
+        self.assertIn("benford_style", benford[0]["risk_cap_tags"])
+        self.assertEqual(benford[0]["risk_suggestion"], "R2_max")
+
+        p_columns = {"p_value": [(idx, "0.049", 0.049) for idx in range(2, 24)]}
+        p_cluster = stats.check_p_value_clustering(Path("pvals.csv"), p_columns, 20, 0.005, 0.35, 0.25)
+        self.assertTrue(p_cluster)
+        self.assertIn("p_value_clustering", p_cluster[0]["risk_cap_tags"])
+        self.assertEqual(p_cluster[0]["evidence"]["minimum_values_for_automatic_check"], 20)
+
     def test_digit_preservation_uses_explicit_pair_threshold(self) -> None:
         stats = load_stats_consistency_check()
         rows = [
@@ -490,9 +539,15 @@ class ContractPipelineTests(unittest.TestCase):
             min_pairs=4,
             min_digit_count=None,
             min_digit_pairs=None,
+            min_benford_values=30,
+            min_pvalue_cluster_values=20,
             digit_dominance=0.65,
             rounding_share=0.85,
             residual_tolerance=1e-9,
+            benford_chi_square_threshold=20.0,
+            pvalue_threshold_window=0.005,
+            pvalue_near_threshold_share=0.35,
+            pvalue_repeated_value_share=0.25,
         )
         self.assertTrue(any(item["finding_type"] == "Digit positions are preserved across paired columns" for item in findings))
 
@@ -1316,13 +1371,13 @@ class RiskCapTests(unittest.TestCase):
         self.assertIn("local_patch_direct_source_conflict", rules["r4_requirements"])
         self.assertIn("source_to_figure_conflict", rules["r4_requirements"])
 
-    def test_risk_rules_do_not_cap_unimplemented_screens(self) -> None:
-        # No detector emits Benford-style or p-value-clustering tags, so the rules
-        # must not configure caps for them (which would imply unimplemented coverage).
+    def test_risk_rules_cap_distributional_stat_screens_as_weak_signals(self) -> None:
+        # Benford-style and p-value-clustering screens are weak distributional
+        # triage prompts only; they must stay capped at R2.
         rules = load_rules(ROOT / "schemas" / "risk_rules.yaml")
         detector_caps = rules["detector_caps"]
-        for unimplemented_tag in ("benford_style", "p_value_clustering"):
-            self.assertNotIn(unimplemented_tag, detector_caps)
+        for tag in ("benford_style", "p_value_clustering"):
+            self.assertEqual(detector_caps[tag]["max"], "R2")
 
     def test_local_patch_r4_requires_direct_contradiction_tag(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

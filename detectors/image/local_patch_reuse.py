@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from detectors.image.image_io import normalized_rgb
+from detectors.image.image_io import iter_normalized_frames
 from provenance.panel_modality import resolve_panel_modality_routing
 
 
@@ -582,26 +582,28 @@ def scan(
             continue
         try:
             with Image.open(path) as img:
-                base = normalized_rgb(img)
-                tiles = generate_tiles(base, tile_size, stride, hash_size, min_stddev)
-                _, image_stddev = luma_stats(base)
-                low_contrast_tiles = []
-                if image_stddev < low_contrast_stddev_threshold:
-                    low_contrast_tiles = generate_tiles(
-                        contrast_enhanced_luma(base),
-                        tile_size,
-                        stride,
-                        hash_size,
-                        low_contrast_min_stddev,
-                        "low_contrast_autocontrast",
-                    )
-                images.append({
-                    "path": str(path.relative_to(root)),
-                    "image": base.copy(),
-                    "tiles": tiles,
-                    "low_contrast_tiles": low_contrast_tiles,
-                    "stddev": round(image_stddev, 3),
-                })
+                for frame_label, base in iter_normalized_frames(img):
+                    tiles = generate_tiles(base, tile_size, stride, hash_size, min_stddev)
+                    _, image_stddev = luma_stats(base)
+                    low_contrast_tiles = []
+                    if image_stddev < low_contrast_stddev_threshold:
+                        low_contrast_tiles = generate_tiles(
+                            contrast_enhanced_luma(base),
+                            tile_size,
+                            stride,
+                            hash_size,
+                            low_contrast_min_stddev,
+                            "low_contrast_autocontrast",
+                        )
+                    images.append({
+                        "path": f"{rel_path}{frame_label}",
+                        "source_file": rel_path,
+                        "frame_label": frame_label or None,
+                        "image": base.copy(),
+                        "tiles": tiles,
+                        "low_contrast_tiles": low_contrast_tiles,
+                        "stddev": round(image_stddev, 3),
+                    })
         except Exception as exc:  # noqa: BLE001 - unreadable files should not abort an audit.
             errors.append({"path": str(path.relative_to(root)), "error": str(exc)})
 
@@ -690,6 +692,7 @@ def scan(
             "low_contrast_min_stddev": low_contrast_min_stddev,
             "low_contrast_ncc_threshold": low_contrast_ncc_threshold,
             "transforms": list(TRANSFORMS),
+            "multi_frame_images": "screened_as_frame_level_items",
         },
         "images_screened": len(images),
         "panels_excluded_from_deep_scan": panels_excluded_from_deep_scan,

@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from detectors.image.image_io import normalized_rgb
+from detectors.image.image_io import iter_normalized_frames
 
 
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp"}
@@ -190,15 +190,19 @@ def scan(root: Path, threshold: int, hash_size: int) -> dict[str, Any]:
     for path in image_paths:
         try:
             with Image.open(path) as img:
-                base = normalized_rgb(img)
-                transform_hashes = {
-                    name: hash_bundle(transformed(base, name), hash_size)
-                    for name in TRANSFORMS
-                }
-                images.append({
-                    "path": str(path.relative_to(root)),
-                    "hashes": transform_hashes,
-                })
+                rel = str(path.relative_to(root))
+                frames = iter_normalized_frames(img)
+                for frame_label, base in frames:
+                    transform_hashes = {
+                        name: hash_bundle(transformed(base, name), hash_size)
+                        for name in TRANSFORMS
+                    }
+                    images.append({
+                        "path": f"{rel}{frame_label}",
+                        "source_file": rel,
+                        "frame_label": frame_label or None,
+                        "hashes": transform_hashes,
+                    })
         except Exception as exc:  # noqa: BLE001 - unreadable files should not abort an audit.
             errors.append({"path": str(path.relative_to(root)), "error": str(exc)})
 
@@ -241,6 +245,7 @@ def scan(root: Path, threshold: int, hash_size: int) -> dict[str, Any]:
             "threshold": threshold,
             "transforms": list(TRANSFORMS),
             "hash_methods": ["average_hash", "difference_hash", "perceptual_hash"],
+            "multi_frame_images": "screened_as_frame_level_items",
         },
         "images_screened": len(images),
         "pairwise_edges": len(edges),

@@ -565,6 +565,7 @@ def export_submission_qc_packet(
     snapshot: dict[str, Any],
     claim_coverage: dict[str, Any],
     methodology_checklist: dict[str, Any] | None = None,
+    writing_readiness: dict[str, Any] | None = None,
     re_audit_diff: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     packet_dir = output_dir / "submission_qc_packet"
@@ -581,6 +582,9 @@ def export_submission_qc_packet(
     if methodology_checklist is not None:
         write_json(packet_dir / "methodology_checklist.json", methodology_checklist)
         copy_if_exists(output_dir / "methodology_checklist.csv", packet_dir / "methodology_checklist.csv")
+    if writing_readiness is not None:
+        write_json(packet_dir / "writing_readiness.json", writing_readiness)
+        copy_if_exists(output_dir / "writing_readiness.csv", packet_dir / "writing_readiness.csv")
     write_json(packet_dir / "calibrated_findings.json", calibrated)
     write_missing_materials_csv(packet_dir / "missing_materials.csv", manifest)
     write_verified_traceability_csv(packet_dir / "verified_traceability.csv", audit_summary)
@@ -613,6 +617,7 @@ def export_submission_qc_packet(
         "- `audit_snapshot.json` and `file_hash_manifest.json` record the package version reviewed.",
         "- `claim_coverage.*` records claim-to-evidence coverage when a claim manifest was supplied.",
         "- `methodology_checklist.*` records reporting-standard readiness prompts and supporting-material gaps.",
+        "- `writing_readiness.*` records writing, reference, and generic submission-file readiness prompts.",
         "- `unresolved_actions.csv` collects remaining completeness gaps, findings, and claim-evidence gaps.",
         "- `resolved_actions.csv` and `accepted_with_reason.csv` are empty tracker templates for team follow-up.",
         "- `author_signoff.yaml` is a template for internal responsibility review before submission.",

@@ -60,12 +60,15 @@ Included:
   path checks, and relation/source-role validation before manifest rows are written.
 - CLI-generated submission-QC artifacts are available in each audit output directory, including
   `audit_snapshot.json`, `claim_coverage.*`, `unresolved_actions.csv`, and `submission_qc_packet/`.
+- The report view surfaces claim coverage, unresolved action trackers, re-audit diffs, QC-packet
+  download links, and a separate Writing & Submission Readiness panel.
 
 Not included yet:
 
-- Dedicated web UI tabs/buttons for claim coverage, author sign-off, or QC-packet download.
-- Network reference/DOI/retraction checks.
-- Desktop packaging.
+- Interactive editing of the correction-plan tracker inside the browser.
+- Full citation-integrity/retraction-database coverage beyond opt-in Crossref-style DOI metadata prompts.
+- Grammar/language checking engines.
+- A signed desktop application.
 
 Those remain P1/P2 features in [`docs/webapp-plan.md`](../docs/webapp-plan.md).
 

@@ -648,6 +648,7 @@ def build_summary(
     coverage: dict[str, Any] | None = None,
     claim_coverage: dict[str, Any] | None = None,
     methodology_checklist: dict[str, Any] | None = None,
+    writing_readiness: dict[str, Any] | None = None,
     scan_profile: str = "standard",
 ) -> dict[str, Any]:
     caps = []
@@ -675,6 +676,7 @@ def build_summary(
         **({"audit_coverage": coverage} if coverage else {}),
         **({"claim_coverage": claim_coverage} if claim_coverage else {}),
         **({"methodology_checklist": methodology_checklist} if methodology_checklist else {}),
+        **({"writing_readiness": writing_readiness} if writing_readiness else {}),
     }
 
 
@@ -910,6 +912,54 @@ def render_methodology_checklist(methodology_checklist: dict[str, Any] | None) -
     lines += [
         "> A ready item means supporting files exist; it does not mean the method is adequate or policy-compliant.",
         "> “可复核”只表示存在支撑文件；不代表方法充分或符合政策。",
+        "",
+    ]
+    return lines
+
+
+def readiness_status_label(status: str) -> str:
+    labels = {
+        "ready_for_manual_review": "Ready for manual review / 可人工复核",
+        "needs_attention": "Needs attention before submission / 投稿前需处理",
+        "not_run": "Not run / 未执行",
+    }
+    return labels.get(status, humanize(status))
+
+
+def render_writing_readiness(writing_readiness: dict[str, Any] | None) -> list[str]:
+    if not writing_readiness:
+        return []
+    lines = ["## Writing & Submission Readiness / 写作与投稿准备度", ""]
+    lines += [
+        writing_readiness.get(
+            "scope_note",
+            "Writing/submission readiness is separate from research-integrity findings and does not change R0-R4.",
+        ),
+        "",
+    ]
+    checks = writing_readiness.get("checks", []) or []
+    rows = [["Check / 检查", "Status / 状态", "Action / 动作"]]
+    for check in checks:
+        rows.append([
+            f"{check.get('label_en', '')} / {check.get('label_zh', '')}",
+            readiness_status_label(str(check.get("status", ""))),
+            f"{check.get('recommended_action_en', '')} / {check.get('recommended_action_zh', '')}",
+        ])
+    lines += [table(rows)]
+    language = writing_readiness.get("language_checks", {}) or {}
+    references = writing_readiness.get("reference_checks", {}) or {}
+    submission = writing_readiness.get("submission_checks", {}) or {}
+    lines += [table([
+        ["Area / 区域", "Value / 数值"],
+        ["Long sentence prompts / 过长句提示", str(language.get("long_sentence_count", 0))],
+        ["Placeholder tokens / 占位文本", ", ".join(language.get("placeholder_tokens", []) or []) or "0"],
+        ["Reference DOI count / DOI 数量", str(references.get("doi_count", 0))],
+        ["Reference provider / 引用元数据来源", str(references.get("provider", "none"))],
+        ["Generic submission files missing / 通用投稿文件缺失", ", ".join(submission.get("missing_items", []) or []) or "0"],
+    ])]
+    lines += [
+        "> This section is an author-workflow aid. It is not merged into the risk register.",
+        "> 本节只辅助作者整理投稿材料，不进入风险登记。",
         "",
     ]
     return lines
@@ -1207,6 +1257,7 @@ def render_report(
     coverage: dict[str, Any] | None = None,
     claim_coverage: dict[str, Any] | None = None,
     methodology_checklist: dict[str, Any] | None = None,
+    writing_readiness: dict[str, Any] | None = None,
     scan_profile: str = "standard",
 ) -> str:
     normalized = normalized_mode(mode)
@@ -1221,6 +1272,7 @@ def render_report(
         coverage,
         claim_coverage,
         methodology_checklist,
+        writing_readiness,
         scan_profile,
     )
     validate_instance(summary, SUMMARY_SCHEMA, "audit summary")
@@ -1238,6 +1290,7 @@ def render_report(
     ]
     lines += render_coverage(coverage)
     lines += render_claim_coverage(claim_coverage)
+    lines += render_writing_readiness(writing_readiness)
     lines += render_methodology_checklist(methodology_checklist)
 
     lines += ["## Materials Needed / 需要补充的材料", ""]
@@ -1325,6 +1378,7 @@ def main() -> int:
     parser.add_argument("--coverage", type=Path)
     parser.add_argument("--claim-coverage", type=Path)
     parser.add_argument("--methodology-checklist", type=Path)
+    parser.add_argument("--writing-readiness", type=Path)
     parser.add_argument("--scan-profile", choices=["quick", "standard", "deep"], default="standard")
     parser.add_argument("--case-id")
     parser.add_argument("--output", type=Path, default=Path("audit-report.md"))
@@ -1338,6 +1392,7 @@ def main() -> int:
     coverage = load_json(args.coverage, None) if args.coverage else None
     claim_coverage = load_json(args.claim_coverage, None) if args.claim_coverage else None
     methodology_checklist = load_json(args.methodology_checklist, None) if args.methodology_checklist else None
+    writing_readiness = load_json(args.writing_readiness, None) if args.writing_readiness else None
     args.output.write_text(
         render_report(
             args.mode,
@@ -1348,6 +1403,7 @@ def main() -> int:
             coverage,
             claim_coverage,
             methodology_checklist,
+            writing_readiness,
             args.scan_profile,
         ),
         encoding="utf-8",

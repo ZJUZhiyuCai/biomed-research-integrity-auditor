@@ -20,11 +20,10 @@ detector_caps:
     max: R2
   cross_file_sequence_reuse:
     max: R2
-  # Future candidate screens only; intentionally NOT configured because no detector
-  # emits them. Benford-style first-digit distribution analysis and p-value
-  # clustering/distribution tests are not implemented. Do not add caps for these
-  # tags until a detector actually produces them, so the rules never imply coverage
-  # that does not exist.
+  benford_style:
+    max: R2
+  p_value_clustering:
+    max: R2
 
   image_similarity_candidate:
     max: R3

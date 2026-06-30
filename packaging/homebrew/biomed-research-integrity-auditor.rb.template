@@ -1,0 +1,31 @@
+class BiomedResearchIntegrityAuditor < Formula
+  desc "Local-first biomedical pre-submission self-audit toolkit"
+  homepage "https://github.com/OWNER/biomed-research-integrity-auditor"
+  url "https://github.com/OWNER/biomed-research-integrity-auditor/releases/download/vVERSION/biomed-research-integrity-auditor-VERSION-source-bundle.zip"
+  sha256 "REPLACE_WITH_SHA256"
+  license "MIT"
+
+  depends_on "python@3.12"
+  depends_on "node" => :build
+  depends_on "tesseract"
+
+  def install
+    libexec.install Dir["*"]
+    system Formula["python@3.12"].opt_bin/"python3.12", "-m", "venv", libexec/".venv"
+    system libexec/".venv/bin/python", "-m", "pip", "install", "--upgrade", "pip"
+    system libexec/".venv/bin/python", "-m", "pip", "install", "-r", libexec/"requirements.txt"
+    system libexec/".venv/bin/python", "-m", "pip", "install", "-e", libexec
+    cd libexec/"webapp/frontend" do
+      system "npm", "ci"
+      system "npm", "run", "build"
+    end
+    bin.install_symlink libexec/".venv/bin/biomed-audit"
+    bin.install_symlink libexec/".venv/bin/biomed-audit-diff"
+    bin.install_symlink libexec/".venv/bin/biomed-audit-web"
+    bin.install_symlink libexec/".venv/bin/biomed-self-audit-webapp"
+  end
+
+  test do
+    system bin/"biomed-audit", "--help"
+  end
+end

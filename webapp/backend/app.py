@@ -39,6 +39,7 @@ DEFAULT_RUNS_ROOT = ROOT / "audit_outputs" / "webapp"
 MODES = {"internal_presubmission", "external_public_material", "response_to_concern"}
 SCAN_PROFILES = {"quick", "standard", "deep"}
 EXTERNAL_PROVIDERS = {"auto", "none", "fixture", "europepmc", "crossref"}
+REFERENCE_CHECK_PROVIDERS = {"none", "crossref"}
 MAX_ZIP_BYTES = 250 * 1024 * 1024
 MAX_ZIP_MEMBERS = 5000
 INVENTORY_MAX_FILES = 5000
@@ -74,6 +75,11 @@ class AuditCreateRequest(BaseModel):
     scan_profile: str = "standard"
     domains: str = "wetlab,animal,cell"
     external_literature_provider: str = "auto"
+    reference_check_provider: str = "none"
+    compare_to_audit_id: Optional[str] = Field(
+        default=None,
+        description="Optional completed audit id to compare this run against.",
+    )
 
 
 class PackagePathRequest(BaseModel):
@@ -116,6 +122,7 @@ class AuditJob:
     scan_profile: str
     domains: str
     external_literature_provider: str
+    reference_check_provider: str
     output_dir: str
     created_at: float
     updated_at: float
@@ -170,7 +177,17 @@ def create_app(output_root: Optional[Path] = None) -> FastAPI:
         package = Path(request.package_path).expanduser().resolve()
         if not package.exists() or not package.is_dir():
             raise HTTPException(status_code=404, detail=f"Package directory not found: {package}")
-        job = prepare_job(settings, package, request.mode, request.scan_profile, request.domains, request.external_literature_provider)
+        compare_to = resolve_compare_to(settings, request.compare_to_audit_id)
+        job = prepare_job(
+            settings,
+            package,
+            request.mode,
+            request.scan_profile,
+            request.domains,
+            request.external_literature_provider,
+            request.reference_check_provider,
+            compare_to=compare_to,
+        )
         save_job(settings, job)
         threading.Thread(target=run_job, args=(settings, job.audit_id), daemon=True).start()
         return job_response(settings, job)
@@ -182,6 +199,8 @@ def create_app(output_root: Optional[Path] = None) -> FastAPI:
         scan_profile: str = Form("standard"),
         domains: str = Form("wetlab,animal,cell"),
         external_literature_provider: str = Form("auto"),
+        reference_check_provider: str = Form("none"),
+        compare_to_audit_id: Optional[str] = Form(None),
     ) -> dict[str, Any]:
         audit_id = new_audit_id(file.filename or "uploaded_package")
         upload_root = settings.packages_dir / audit_id
@@ -204,6 +223,7 @@ def create_app(output_root: Optional[Path] = None) -> FastAPI:
         except ValueError as exc:
             shutil.rmtree(upload_root, ignore_errors=True)
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        compare_to = resolve_compare_to(settings, compare_to_audit_id)
         job = prepare_job(
             settings,
             package,
@@ -211,8 +231,10 @@ def create_app(output_root: Optional[Path] = None) -> FastAPI:
             scan_profile,
             domains,
             external_literature_provider,
+            reference_check_provider,
             audit_id=audit_id,
             uploaded_package_dir=upload_root,
+            compare_to=compare_to,
         )
         save_job(settings, job)
         threading.Thread(target=run_job, args=(settings, job.audit_id), daemon=True).start()
@@ -277,6 +299,15 @@ def create_app(output_root: Optional[Path] = None) -> FastAPI:
             "coverage": read_json_artifact(output_dir / "coverage.json"),
             "calibrated_findings": read_json_artifact(output_dir / "calibrated_findings.json"),
             "pipeline_summary": read_json_artifact(output_dir / "pipeline_summary.json"),
+            "claim_coverage": read_optional_json_artifact(output_dir / "claim_coverage.json"),
+            "action_trackers": {
+                "unresolved": read_csv_artifact(output_dir / "unresolved_actions.csv"),
+                "resolved": read_csv_artifact(output_dir / "resolved_actions.csv"),
+                "accepted_with_reason": read_csv_artifact(output_dir / "accepted_with_reason.csv"),
+            },
+            "re_audit_diff": read_optional_json_artifact(output_dir / "re_audit_diff.json"),
+            "submission_qc_packet": submission_qc_packet_summary(output_dir),
+            "writing_readiness": read_optional_json_artifact(output_dir / "writing_readiness.json"),
         }
 
     @app.get("/api/audits/{audit_id}/report.md")
@@ -295,6 +326,27 @@ def create_app(output_root: Optional[Path] = None) -> FastAPI:
         if not evidence_path.is_file():
             raise HTTPException(status_code=404, detail="Evidence file not found for this audit")
         return FileResponse(evidence_path)
+
+    @app.get("/api/audits/{audit_id}/artifact/{relpath:path}")
+    def get_artifact(audit_id: str, relpath: str) -> FileResponse:
+        job = require_job(settings, audit_id)
+        if not artifact_download_allowed(relpath):
+            raise HTTPException(status_code=400, detail="Artifact is not exposed by the webapp")
+        artifact_path = safe_artifact(Path(job.output_dir), relpath)
+        if not artifact_path.is_file():
+            raise HTTPException(status_code=404, detail="Artifact file not found for this audit")
+        return FileResponse(artifact_path)
+
+    @app.get("/api/audits/{audit_id}/submission-qc-packet.zip")
+    def get_submission_qc_packet(audit_id: str) -> FileResponse:
+        job = require_job(settings, audit_id)
+        output_dir = Path(job.output_dir).resolve()
+        packet_dir = safe_artifact(output_dir, "submission_qc_packet")
+        if not packet_dir.is_dir():
+            raise HTTPException(status_code=404, detail="Submission QC packet has not been generated yet")
+        zip_path = output_dir / "submission_qc_packet.zip"
+        write_packet_zip(packet_dir, zip_path)
+        return FileResponse(zip_path, filename=f"{audit_id}-submission-qc-packet.zip")
 
     @app.delete("/api/audits/{audit_id}")
     def delete_audit(audit_id: str) -> dict[str, Any]:
@@ -497,13 +549,15 @@ def validate_package_relative_file(package: Path, value: str, field: str) -> str
     return relative.as_posix()
 
 
-def validate_mode_profile_and_provider(mode: str, scan_profile: str, provider: str) -> None:
+def validate_mode_profile_and_provider(mode: str, scan_profile: str, provider: str, reference_provider: str) -> None:
     if mode not in MODES:
         raise HTTPException(status_code=400, detail=f"Unsupported mode: {mode}")
     if scan_profile not in SCAN_PROFILES:
         raise HTTPException(status_code=400, detail=f"Unsupported scan profile: {scan_profile}")
     if provider not in EXTERNAL_PROVIDERS:
         raise HTTPException(status_code=400, detail=f"Unsupported external literature provider: {provider}")
+    if reference_provider not in REFERENCE_CHECK_PROVIDERS:
+        raise HTTPException(status_code=400, detail=f"Unsupported reference check provider: {reference_provider}")
 
 
 def new_audit_id(name: str) -> str:
@@ -518,10 +572,12 @@ def prepare_job(
     scan_profile: str,
     domains: str,
     external_literature_provider: str,
+    reference_check_provider: str,
     audit_id: Optional[str] = None,
     uploaded_package_dir: Optional[Path] = None,
+    compare_to: Optional[Path] = None,
 ) -> AuditJob:
-    validate_mode_profile_and_provider(mode, scan_profile, external_literature_provider)
+    validate_mode_profile_and_provider(mode, scan_profile, external_literature_provider, reference_check_provider)
     audit_id = audit_id or new_audit_id(package.name)
     output_dir = (settings.audits_dir / audit_id).resolve()
     output_dir.mkdir(parents=True, exist_ok=False)
@@ -539,9 +595,13 @@ def prepare_job(
         domains,
         "--external-literature-provider",
         external_literature_provider,
+        "--reference-check-provider",
+        reference_check_provider,
         "--case-id",
         package.name,
     ]
+    if compare_to is not None:
+        command.extend(["--compare-to", str(compare_to)])
     now = time.time()
     return AuditJob(
         audit_id=audit_id,
@@ -551,6 +611,7 @@ def prepare_job(
         scan_profile=scan_profile,
         domains=domains,
         external_literature_provider=external_literature_provider,
+        reference_check_provider=reference_check_provider,
         output_dir=str(output_dir),
         created_at=now,
         updated_at=now,
@@ -578,6 +639,7 @@ def load_job(settings: WebappSettings, audit_id: str) -> Optional[AuditJob]:
         return None
     payload = json.loads(path.read_text(encoding="utf-8"))
     payload.setdefault("scan_profile", "standard")
+    payload.setdefault("reference_check_provider", "none")
     return AuditJob(**payload)
 
 
@@ -586,6 +648,18 @@ def require_job(settings: WebappSettings, audit_id: str) -> AuditJob:
     if job is None:
         raise HTTPException(status_code=404, detail="Audit not found")
     return job
+
+
+def resolve_compare_to(settings: WebappSettings, audit_id: Optional[str]) -> Path | None:
+    if not audit_id:
+        return None
+    previous = require_job(settings, audit_id)
+    if previous.status != "completed":
+        raise HTTPException(status_code=400, detail="compare_to_audit_id must refer to a completed audit")
+    output_dir = Path(previous.output_dir).resolve()
+    if not output_dir.is_dir():
+        raise HTTPException(status_code=404, detail="Previous audit output directory is missing")
+    return output_dir
 
 
 def run_job(settings: WebappSettings, audit_id: str) -> None:
@@ -630,6 +704,7 @@ def job_response(settings: WebappSettings, job: AuditJob) -> dict[str, Any]:
         "scan_profile": job.scan_profile,
         "domains": job.domains,
         "external_literature_provider": job.external_literature_provider,
+        "reference_check_provider": job.reference_check_provider,
         "package_path": job.package_path,
         "output_dir": job.output_dir,
         "created_at": job.created_at,
@@ -645,6 +720,13 @@ def job_response(settings: WebappSettings, job: AuditJob) -> dict[str, Any]:
             "calibrated_findings": str(output_dir / "calibrated_findings.json"),
             "report": str(output_dir / "audit-report.md"),
             "evidence_dir": str(output_dir / "evidence"),
+            "claim_coverage": str(output_dir / "claim_coverage.json"),
+            "unresolved_actions": str(output_dir / "unresolved_actions.csv"),
+            "resolved_actions": str(output_dir / "resolved_actions.csv"),
+            "accepted_with_reason": str(output_dir / "accepted_with_reason.csv"),
+            "re_audit_diff": str(output_dir / "re_audit_diff.json"),
+            "writing_readiness": str(output_dir / "writing_readiness.json"),
+            "submission_qc_packet": str(output_dir / "submission_qc_packet"),
         },
         "runs_root": str(settings.runs_root),
     }
@@ -654,6 +736,72 @@ def read_json_artifact(path: Path) -> dict[str, Any]:
     if not path.is_file():
         raise HTTPException(status_code=404, detail=f"Artifact not found: {path.name}")
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def read_optional_json_artifact(path: Path) -> dict[str, Any] | None:
+    if not path.is_file():
+        return None
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def read_csv_artifact(path: Path) -> list[dict[str, str]]:
+    if not path.is_file():
+        return []
+    with path.open(newline="", encoding="utf-8") as handle:
+        return list(csv.DictReader(handle))
+
+
+def submission_qc_packet_summary(output_dir: Path) -> dict[str, Any]:
+    packet_dir = output_dir / "submission_qc_packet"
+    if not packet_dir.is_dir():
+        return {"available": False, "files": [], "download_url": None}
+    files = sorted(path.name for path in packet_dir.iterdir() if path.is_file())
+    return {
+        "available": True,
+        "files": files,
+        "download_url": "submission-qc-packet.zip",
+    }
+
+
+EXPOSED_ARTIFACTS = {
+    "audit-report.md",
+    "AUDIT_JSON_SUMMARY.json",
+    "coverage.json",
+    "calibrated_findings.json",
+    "pipeline_summary.json",
+    "claim_coverage.json",
+    "claim_coverage.csv",
+    "methodology_checklist.json",
+    "methodology_checklist.csv",
+    "writing_readiness.json",
+    "writing_readiness.csv",
+    "unresolved_actions.csv",
+    "resolved_actions.csv",
+    "accepted_with_reason.csv",
+    "missing_materials.csv",
+    "verified_traceability.csv",
+    "re_audit_diff.json",
+    "re_audit_diff.csv",
+}
+
+
+def artifact_download_allowed(relpath: str) -> bool:
+    relative = Path(relpath)
+    if relative.is_absolute() or any(part in {"..", ""} for part in relative.parts):
+        return False
+    as_posix = relative.as_posix()
+    if as_posix in EXPOSED_ARTIFACTS:
+        return True
+    if as_posix.startswith("submission_qc_packet/") and len(relative.parts) == 2:
+        return True
+    return False
+
+
+def write_packet_zip(packet_dir: Path, zip_path: Path) -> None:
+    with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for path in sorted(packet_dir.iterdir(), key=lambda item: item.name.lower()):
+            if path.is_file():
+                archive.write(path, arcname=path.name)
 
 
 def safe_artifact(output_dir: Path, relpath: str) -> Path:

@@ -102,17 +102,17 @@ Security constraints:
 ## P1 - the features that make it usable for non-developers
 
 - Re-audit and diff UI: CLI diff artifacts exist via `scripts/compare_audit_runs.py` and
-  `scripts/audit_package.py --compare-to`; the web app still needs a first-class comparison view
-  and correction-plan tracker mapped to [skill/biomed-research-integrity-auditor/templates/presubmission-correction-plan.md](../skill/biomed-research-integrity-auditor/templates/presubmission-correction-plan.md).
-- Export UI for CLI-generated submission QC packets, including report HTML/PDF, unresolved actions,
-  claim coverage, and author sign-off template.
+  `scripts/audit_package.py --compare-to`; the web app now exposes the selected re-audit diff.
+  Browser-side correction-plan editing mapped to [skill/biomed-research-integrity-auditor/templates/presubmission-correction-plan.md](../skill/biomed-research-integrity-auditor/templates/presubmission-correction-plan.md) remains open.
+- Export UI for CLI-generated submission QC packets now exposes packet downloads and key files.
+  HTML/PDF polish and author-signoff editing remain open.
 
 ## P1/P2 - Writing & Submission Readiness module (separate tab, fenced)
 
 On-brand, integrity-adjacent checks first (higher value than raw grammar):
 - Interactive reporting-standard checklists (ARRIVE/CONSORT/MIFlowCyt/omics) generated from [skill/biomed-research-integrity-auditor/references/biomed-module-checklists.md](../skill/biomed-research-integrity-auditor/references/biomed-module-checklists.md), auto-prefilled where the pipeline already detects signals (randomization/blinding mentions, n reporting, accession presence).
 - Submission-readiness checklist: data/code availability, ethics/IRB statement, COI, funding, ORCID, author contributions.
-- Reference and citation integrity: DOI resolution (Crossref), retracted-reference flagging (Retraction Watch/Crossref), reference-list vs in-text consistency - opt-in network.
+- Reference and citation integrity: DOI resolution/metadata prompts are implemented through opt-in Crossref-style checks. Retraction Watch coverage and reference-list vs in-text consistency remain open.
 - Statistical-reporting completeness and figure/table callout consistency.
 
 Then grammar (P2, clearly labeled "writing quality, not integrity"):
@@ -153,12 +153,12 @@ Then grammar (P2, clearly labeled "writing quality, not integrity"):
 - [x] Build the visual figure-to-raw/source assembly-manifest builder that writes `figure_assembly/assembly_manifest.csv`, plus a package-prep wizard.
 - [x] Add CLI re-audit diff artifacts.
 - [x] Add CLI submission-QC packet with report HTML/PDF exports.
-- [ ] Add web UI re-audit/R-level diff plus a correction-plan tracker mapped to the presubmission-correction-plan template.
-- [ ] Add web UI claim-coverage and QC-packet download surfaces for CLI-generated artifacts.
-- [ ] Build the separate Writing & Submission Readiness module v1: interactive reporting-standard checklists (prefilled) and submission-readiness checklist, with no network calls.
-- [ ] Add opt-in reference/DOI resolution and retracted-reference checks, plus reference vs in-text consistency.
+- [x] Add web UI re-audit/R-level diff surface; browser correction-plan editing remains open.
+- [x] Add web UI claim-coverage and QC-packet download surfaces for CLI-generated artifacts.
+- [x] Build the separate Writing & Submission Readiness module v1 for submission-readiness prompts, fenced from integrity findings.
+- [x] Add opt-in DOI/reference metadata prompts; retraction-database checks and reference vs in-text consistency remain open.
 - [ ] Add grammar/language checking (local LanguageTool default; optional LLM via user key with explicit opt-in), clearly labeled as writing quality, not integrity.
 - [x] Add backend API tests using example packages and path/zip safety checks.
 - [x] Add lightweight webapp smoke coverage for served frontend entry plus package-prep endpoints.
-- [ ] Add a frontend Playwright smoke test.
-- [ ] Add a contract test that writing output never merges into integrity findings when the writing module exists; keep the existing suite green.
+- [x] Add a frontend Playwright smoke test.
+- [x] Add a contract test that writing output never merges into integrity findings when the writing module exists; keep the existing suite green.

@@ -12,6 +12,7 @@ import { MissingMaterialsPanel } from "./MissingMaterialsPanel";
 import { ReportPanel } from "./ReportPanel";
 import { PackagePrepPanel } from "./PackagePrepPanel";
 import { MethodologyPanel } from "./MethodologyPanel";
+import { SubmissionWorkspacePanel } from "./SubmissionWorkspacePanel";
 import { WorkspaceSkeleton } from "./Skeleton";
 import { EmptyState, StatusPill } from "./primitives";
 
@@ -144,6 +145,15 @@ export function Workspace(props: WorkspaceProps) {
             </div>
           )}
           <CoveragePanel coverage={detail.coverage} t={t} />
+          <SubmissionWorkspacePanel
+            auditId={audit.audit_id}
+            claimCoverage={detail.claim_coverage || detail.audit_summary?.claim_coverage}
+            actionRows={detail.action_trackers?.unresolved || []}
+            reAuditDiff={detail.re_audit_diff}
+            qcPacket={detail.submission_qc_packet}
+            writingReadiness={detail.writing_readiness}
+            t={t}
+          />
           <MethodologyPanel checklist={detail.audit_summary?.methodology_checklist} t={t} />
           <section className="two-column">
             <ProvenancePanel summary={detail.audit_summary} t={t} />

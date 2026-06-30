@@ -42,6 +42,8 @@ COUNT_HINTS = (
 )
 DEFAULT_MIN_DIGIT_VALUES = 8
 DEFAULT_MIN_INTEGER_COUNT_N = 6
+DEFAULT_MIN_BENFORD_VALUES = 30
+DEFAULT_MIN_PVALUE_CLUSTER_VALUES = 20
 
 
 def normalized_numeric_text(value: Any) -> str | None:
@@ -405,6 +407,17 @@ def first_decimal_digit(raw: str) -> str | None:
     return digits[0] if digits else None
 
 
+def first_significant_digit(value: float) -> str | None:
+    if value <= 0 or not math.isfinite(value):
+        return None
+    while value < 1:
+        value *= 10
+    while value >= 10:
+        value /= 10
+    digit = int(value)
+    return str(digit) if 1 <= digit <= 9 else None
+
+
 def effective_min_count(n_values: int, user_min: int | None = None) -> int:
     if user_min is not None:
         return user_min
@@ -490,6 +503,93 @@ def check_precision_mixing(path: Path, columns: dict[str, list[tuple[int, str, f
             "dominant_decimal_places_by_column": dominant_places,
             "decimal_place_counts_by_column": column_counts,
         }, evidence_type="weak_forensic_triage_signal"))
+    return findings
+
+
+def check_benford_style_distribution(
+    path: Path,
+    columns: dict[str, list[tuple[int, str, float]]],
+    min_count: int,
+    chi_square_threshold: float,
+) -> list[dict[str, Any]]:
+    values = [
+        value
+        for column, column_values in columns.items()
+        if column not in SUMMARY_COLUMNS and column not in TERMINAL_DIGIT_SKIP_COLUMNS
+        for _, _, value in column_values
+        if value > 0
+    ]
+    digits = [digit for value in values if (digit := first_significant_digit(abs(value))) is not None]
+    if len(digits) < min_count:
+        return []
+    counts = Counter(digits)
+    expected = {str(digit): math.log10(1 + 1 / digit) * len(digits) for digit in range(1, 10)}
+    chi_square = sum(((counts.get(digit, 0) - expected[digit]) ** 2) / expected[digit] for digit in expected)
+    if chi_square < chi_square_threshold:
+        return []
+    candidate = weak_issue(f"{path.name}:first_digits", "Benford-style first-digit distribution deviates from expectation; weak triage signal", {
+        "values_screened": len(digits),
+        "minimum_values_for_automatic_check": min_count,
+        "digit_counts": dict(sorted(counts.items())),
+        "expected_counts": {digit: round(value, 3) for digit, value in expected.items()},
+        "chi_square": round(chi_square, 4),
+        "chi_square_threshold": chi_square_threshold,
+        "boundary_note": "Benford-style checks are only weak screening aids and are often inappropriate for bounded or transformed biomedical measurements.",
+    })
+    candidate["risk_cap_tags"].append("benford_style")
+    return [candidate]
+
+
+def p_value_columns(columns: dict[str, list[tuple[int, str, float]]]) -> list[tuple[str, list[tuple[int, str, float]]]]:
+    result = []
+    for column, values in columns.items():
+        normalized = normalize_header(column)
+        if normalized in {"p", "p_value", "pvalue", "pval", "p_adj", "padj"} or normalized.startswith("p_"):
+            p_values = [(idx, raw, value) for idx, raw, value in values if 0 <= value <= 1]
+            if p_values:
+                result.append((column, p_values))
+    return result
+
+
+def check_p_value_clustering(
+    path: Path,
+    columns: dict[str, list[tuple[int, str, float]]],
+    min_count: int,
+    near_threshold_window: float,
+    near_threshold_share: float,
+    repeated_value_share: float,
+) -> list[dict[str, Any]]:
+    findings = []
+    thresholds = [0.05, 0.01, 0.001]
+    for column, values in p_value_columns(columns):
+        if len(values) < min_count:
+            continue
+        numeric = [value for _, _, value in values]
+        near = {
+            str(threshold): sum(1 for value in numeric if threshold - near_threshold_window <= value < threshold)
+            for threshold in thresholds
+        }
+        raw_counts = Counter(str(raw).strip() for _, raw, _ in values)
+        repeated_raw, repeated_count = raw_counts.most_common(1)[0]
+        near_total = sum(near.values())
+        near_share = near_total / len(numeric)
+        repeat_share = repeated_count / len(numeric)
+        if near_share >= near_threshold_share or repeat_share >= repeated_value_share:
+            candidate = weak_issue(f"{path.name}:{column}", "P-value clustering/distribution pattern; weak triage signal", {
+                "column": column,
+                "p_values_screened": len(numeric),
+                "minimum_values_for_automatic_check": min_count,
+                "near_significance_threshold_counts": near,
+                "near_threshold_window": near_threshold_window,
+                "near_threshold_share": round(near_share, 3),
+                "near_threshold_share_trigger": near_threshold_share,
+                "most_repeated_reported_p_value": repeated_raw,
+                "most_repeated_reported_p_value_share": round(repeat_share, 3),
+                "repeated_value_share_trigger": repeated_value_share,
+                "boundary_note": "P-value clustering is a weak distributional screen and must be interpreted with study design, multiplicity, and reporting policy.",
+            })
+            candidate["risk_cap_tags"].append("p_value_clustering")
+            findings.append(candidate)
     return findings
 
 
@@ -853,15 +953,30 @@ def check_table_forensics(
     min_pairs: int,
     min_digit_count: int | None,
     min_digit_pairs: int | None,
+    min_benford_values: int,
+    min_pvalue_cluster_values: int,
     digit_dominance: float,
     rounding_share: float,
     residual_tolerance: float,
+    benford_chi_square_threshold: float,
+    pvalue_threshold_window: float,
+    pvalue_near_threshold_share: float,
+    pvalue_repeated_value_share: float,
 ) -> list[dict[str, Any]]:
     columns = numeric_columns(rows)
     findings = []
     findings.extend(check_terminal_digits(path, columns, min_digit_count, digit_dominance))
     findings.extend(check_rounding_patterns(path, columns, min_digit_count, rounding_share))
     findings.extend(check_precision_mixing(path, columns, min_digit_count))
+    findings.extend(check_benford_style_distribution(path, columns, min_benford_values, benford_chi_square_threshold))
+    findings.extend(check_p_value_clustering(
+        path,
+        columns,
+        min_pvalue_cluster_values,
+        pvalue_threshold_window,
+        pvalue_near_threshold_share,
+        pvalue_repeated_value_share,
+    ))
     findings.extend(check_repeated_summaries(path, rows))
     findings.extend(check_column_relationships(path, columns, min_pairs, residual_tolerance))
     findings.extend(check_digit_preservation(path, columns, min_pairs, effective_min_count(0, min_digit_pairs), 0.85))
@@ -917,9 +1032,15 @@ def main() -> int:
     parser.add_argument("--min-digit-count", type=int, default=None, help="Override minimum numeric values for terminal-digit, rounding, and precision checks")
     parser.add_argument("--min-digit-pairs", type=int, default=None, help="Override minimum paired rows for digit-preservation checks")
     parser.add_argument("--min-integer-count-n", type=int, default=DEFAULT_MIN_INTEGER_COUNT_N, help="Minimum n for integer-count mean/SD/n feasibility checks")
+    parser.add_argument("--min-benford-values", type=int, default=DEFAULT_MIN_BENFORD_VALUES, help="Minimum positive values for Benford-style first-digit screening")
+    parser.add_argument("--min-pvalue-cluster-values", type=int, default=DEFAULT_MIN_PVALUE_CLUSTER_VALUES, help="Minimum p-values for p-value clustering screening")
     parser.add_argument("--digit-dominance", type=float, default=0.65, help="Dominant terminal digit share needed to flag")
     parser.add_argument("--rounding-share", type=float, default=0.85, help="Share of values ending in 0 or 5 needed to flag")
     parser.add_argument("--residual-tolerance", type=float, default=1e-9, help="Relative tolerance for exact linear transformation screens")
+    parser.add_argument("--benford-chi-square-threshold", type=float, default=20.0, help="Chi-square threshold for Benford-style first-digit screening")
+    parser.add_argument("--pvalue-threshold-window", type=float, default=0.005, help="Window below 0.05/0.01/0.001 used for p-value clustering prompts")
+    parser.add_argument("--pvalue-near-threshold-share", type=float, default=0.35, help="Share of p-values near significance thresholds needed to flag")
+    parser.add_argument("--pvalue-repeated-value-share", type=float, default=0.25, help="Share of repeated reported p-values needed to flag")
     parser.add_argument("--output", type=Path, default=Path("stats_consistency_findings.json"))
     args = parser.parse_args()
 
@@ -940,9 +1061,15 @@ def main() -> int:
                     args.min_pairs,
                     args.min_digit_count,
                     args.min_digit_pairs,
+                    args.min_benford_values,
+                    args.min_pvalue_cluster_values,
                     args.digit_dominance,
                     args.rounding_share,
                     args.residual_tolerance,
+                    args.benford_chi_square_threshold,
+                    args.pvalue_threshold_window,
+                    args.pvalue_near_threshold_share,
+                    args.pvalue_repeated_value_share,
                 ))
         except Exception as exc:  # noqa: BLE001 - report unreadable data without aborting.
             errors.append({"path": str(file_path), "error": str(exc)})
@@ -961,9 +1088,15 @@ def main() -> int:
             "min_digit_pairs": args.min_digit_pairs,
             "default_min_digit_pairs": DEFAULT_MIN_DIGIT_VALUES,
             "min_integer_count_n": args.min_integer_count_n,
+            "min_benford_values": args.min_benford_values,
+            "min_pvalue_cluster_values": args.min_pvalue_cluster_values,
             "digit_dominance": args.digit_dominance,
             "rounding_share": args.rounding_share,
             "residual_tolerance": args.residual_tolerance,
+            "benford_chi_square_threshold": args.benford_chi_square_threshold,
+            "pvalue_threshold_window": args.pvalue_threshold_window,
+            "pvalue_near_threshold_share": args.pvalue_near_threshold_share,
+            "pvalue_repeated_value_share": args.pvalue_repeated_value_share,
         },
         "files_screened": [str(p) for p in files],
         "candidates": candidates,

@@ -19,9 +19,11 @@
 - 筛查图像近重复、局部 patch 复用、同图内 copy-move 候选。
 - 交叉核对你在 figure assembly manifest 中声明的 figure-to-raw 关系，并记录正向 provenance 证据。
 - 记录本次审计的文件哈希快照、可选 claim-to-evidence 覆盖情况，并导出投稿前 QC packet。
-- 检查源数据或汇总表中的数值/统计一致性，例如 SD/SEM/n、p-value 范围、整数计数可行性。
+- 检查源数据或汇总表中的数值/统计一致性，例如 SD/SEM/n、p-value 范围、整数计数可行性，
+  以及满足样本量门槛后的 Benford-style 和 p-value clustering 弱提示。
 - 筛查包内文本重叠，并可选择运行外部短语检索 triage。
 - 输出结构化方法学/报告规范准备度清单，供 ARRIVE、CONSORT、ICMJE、MIFlowCyt、组学 accession 等人工复核使用。
+- 输出独立的 Writing & Submission Readiness artifact，用于提示占位文字、通用投稿文件和可选 DOI/reference 元数据问题；该模块不会并入研究诚信风险登记。
 - 输出双语、人类可读的中性报告：包含 Quick Read、投稿准备状态、行动队列、Audit Coverage、需要补充的材料、发现卡片、技术附录和 `R0` 到 `R4` 风险登记。
 
 **它不能做：**
@@ -88,8 +90,9 @@ biomed-audit examples/full_presubmission_package --output-dir audit_outputs/full
 - `audit_snapshot.json` 和 `file_hash_manifest.json`：记录本次审计到底审了哪个版本的材料，包括 SHA-256。
 - `claim_coverage.json` / `claim_coverage.csv`：如果提供 `claim_manifest.csv`，这里会列出 claim-to-evidence 覆盖情况。
 - `methodology_checklist.json` / `methodology_checklist.csv`：wet-lab、animal、clinical、cell、flow、omics 的人工复核准备度清单。
+- `writing_readiness.json` / `writing_readiness.csv`：写作与投稿准备度提示；它们不会改变 R0-R4 风险等级。
 - `unresolved_actions.csv`、`resolved_actions.csv`、`accepted_with_reason.csv`：团队协作用的行动项跟踪表。
-- `submission_qc_packet/`：投稿前留档包，包含报告、coverage、行动项跟踪表、已验证 traceability、缺失材料、文件哈希、claim coverage、methodology checklist 和 author sign-off 模板。
+- `submission_qc_packet/`：投稿前留档包，包含报告、coverage、行动项跟踪表、已验证 traceability、缺失材料、文件哈希、claim coverage、methodology checklist、writing readiness 和 author sign-off 模板。
 
 审计你自己的材料包时，把命令指向你的目录即可。默认模式是 `internal_presubmission`，也支持 `external_public_material` 和 `response_to_concern`：
 
@@ -107,7 +110,7 @@ biomed-audit /path/to/my_package --output-dir audit_outputs/my_package
 | --- | --- | --- |
 | `quick` | 第一次快速拖稿自查 | 保留快速 source/text/整图筛查；跳过耗时的 local-patch/copy-move 深度图像筛查和外部短语检索。 |
 | `standard` | 默认投稿前 QC | 运行当前平衡的检测集合，并导出 submission QC packet。 |
-| `deep` | 回应质疑或重点复核 | 保留当前全部筛查，并把本次运行标记为深度复核，方便后续 detector/profile 扩展。 |
+| `deep` | 回应质疑或重点复核 | 使用更严格的图像相似度参数运行当前筛查，并在 coverage 中记录 deep-profile 阈值。 |
 
 ### 可选：claim-to-evidence manifest
 
@@ -148,9 +151,22 @@ biomed-audit-web
 然后打开 `http://127.0.0.1:8765`。这个 Web App 只是 `scripts/audit_package.py` 的本地外壳：
 它运行同一条流水线、读取同一批 artifact，并固定显示 Audit Coverage，避免把“未发现 finding”
 误读成“论文已证明没问题”。它也提供本地材料准备工具，可以创建推荐目录结构，并在审计前写入
-`figure_assembly/assembly_manifest.csv` 的 figure-source 声明关系。更多说明见 [`webapp/README.md`](webapp/README.md)。
+`figure_assembly/assembly_manifest.csv` 的 figure-source 声明关系。报告界面会展示 claim coverage、
+未解决行动项、re-audit diff、QC packet 下载入口，以及独立隔离的 Writing & Submission Readiness 模块。更多说明见 [`webapp/README.md`](webapp/README.md)。
 
 源码运行 fallback：`python -m webapp`。
+
+### Release artifacts
+
+维护者可以用下面的命令构建可重复发布产物：
+
+```bash
+make release-artifacts
+```
+
+它会构建前端、Python wheel/sdist、源码 bundle 和 SHA-256 清单，并写入 `dist/release/`。
+`packaging/github-workflows/` 提供 release artifacts 和 frontend smoke test 的 GitHub Actions 模板；
+启用它们需要带 workflow 权限的 maintainer token。PyPI 与 Homebrew 发布仍需要维护者凭据或 formula 更新；见 [`packaging/README.md`](packaging/README.md)。
 
 ### 安装为 Codex Skill（可选）
 
@@ -327,8 +343,9 @@ python3 evals/run_eval.py generate-prompts
 - 图像、local patch 和 same-image copy-move 检测只在单个 package 内运行，不跨论文或外部图像库搜索。
 - 文本重叠筛查是 package-internal；可选外部短语检索只是 triage，不是穷尽式查重数据库覆盖，也不是 verdict。
 - true-PDF intake 支持 machine-readable text 和可 OCR 的 scanned PDF；figure/caption extraction 仍有限。
-- 图像 intake 会归一化高 bit-depth 灰度 TIFF，但对 multi-frame、Z-stack、channel microscopy 的广泛验证仍是未来工作。
-- 统计筛查覆盖 p-value range/validity、SD/SEM/n 一致性、integer-count feasibility 和弱取证模式。弱 digit/rounding screen 默认至少需要 8 个可比值；integer-count feasibility 需要 n ≥ 6，并考虑报告精度。它**不实现** Benford-style first-digit analysis 或 p-value clustering/distribution tests；这些仍是人工检查。
+- 图像 intake 会归一化 high-bit-depth 灰度 TIFF，并把 multi-frame TIFF-like 文件按 frame-level item 筛查到配置上限；对供应商专有 Z-stack/channel microscopy 格式的广泛验证仍是未来工作。
+- 统计筛查覆盖 p-value range/validity、SD/SEM/n 一致性、integer-count feasibility、弱取证模式、Benford-style first-digit prompts 和 p-value clustering prompts。弱 digit/rounding screen 默认至少需要 8 个可比值；Benford-style 至少需要 30 个正值；p-value clustering 至少需要 20 个 p 值；integer-count feasibility 需要 n ≥ 6，并考虑报告精度。这些分布提示只是弱 triage，不能单独作为强证据。
+- reference checking 需要 opt-in，目前只限 DOI/reference 元数据提示（Crossref-style lookup）；它不是完整 citation-integrity 或 retraction database 服务。
 - 公开材料 review 受 source/raw records 缺失限制，不能被读成学术不端结论。
 
 ---

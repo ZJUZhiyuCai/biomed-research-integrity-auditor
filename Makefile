@@ -2,7 +2,7 @@ PYTHON ?= python3
 SKILL_DIR := skill/biomed-research-integrity-auditor
 EVAL_DIR := evals
 
-.PHONY: validate install-local regenerate-evals prompts score true-pdf-benchmark scanned-pdf-benchmark real-image-benchmark pppr-public-smoke
+.PHONY: validate install-local frontend-smoke release-artifacts regenerate-evals prompts score true-pdf-benchmark scanned-pdf-benchmark real-image-benchmark pppr-public-smoke
 
 validate:
 	$(PYTHON) -m py_compile scripts/*.py provenance/*.py benchmarks/*/*.py benchmarks/*/scripts/*.py $(EVAL_DIR)/run_eval.py $(EVAL_DIR)/run_script_baseline.py $(EVAL_DIR)/generate_synthetic_cases.py $(EVAL_DIR)/assert_audit_outputs.py $(SKILL_DIR)/scripts/*.py detectors/image/*.py detectors/stats/*.py detectors/text/*.py calibrators/*.py webapp/*.py webapp/backend/*.py tests/*.py
@@ -14,6 +14,17 @@ validate:
 
 install-local:
 	$(PYTHON) scripts/install_local_commands.py
+
+frontend-smoke:
+	cd webapp/frontend && npm run build
+	cd webapp/frontend && npm run smoke
+
+release-artifacts:
+	cd webapp/frontend && npm ci
+	cd webapp/frontend && npm run build
+	$(PYTHON) -m pip install --upgrade build
+	$(PYTHON) -m build
+	$(PYTHON) scripts/build_release_artifacts.py
 
 regenerate-evals:
 	$(PYTHON) $(EVAL_DIR)/generate_synthetic_cases.py

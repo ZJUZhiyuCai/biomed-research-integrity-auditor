@@ -51,6 +51,8 @@ function AppInner() {
   const [scanProfile, setScanProfile] = useState("standard");
   const [domains, setDomains] = useState("wetlab,animal,cell");
   const [provider, setProvider] = useState("auto");
+  const [referenceProvider, setReferenceProvider] = useState("none");
+  const [compareToAuditId, setCompareToAuditId] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [lightbox, setLightbox] = useState<LightboxState | null>(null);
   const [packageInventory, setPackageInventory] = useState<PackageInventory | null>(null);
@@ -76,8 +78,9 @@ function AppInner() {
     setAuditsLoading(true);
     try {
       const payload = await listAudits();
-      setAudits(payload.audits);
-      setSelectedId((current) => current ?? (payload.audits[0]?.audit_id ?? null));
+      const auditList = payload.audits || [];
+      setAudits(auditList);
+      setSelectedId((current) => current ?? (auditList[0]?.audit_id ?? null));
     } catch (err) {
       setError(String(err));
     } finally {
@@ -142,7 +145,9 @@ function AppInner() {
         mode,
         scan_profile: scanProfile,
         domains,
-        external_literature_provider: provider
+        external_literature_provider: provider,
+        reference_check_provider: referenceProvider,
+        compare_to_audit_id: compareToAuditId || null
       });
       setAudits((items) => [job, ...items]);
       setSelectedId(job.audit_id);
@@ -164,7 +169,7 @@ function AppInner() {
     }
     setError(null);
     try {
-      const job = await uploadZip(file, mode, scanProfile, domains, provider);
+      const job = await uploadZip(file, mode, scanProfile, domains, provider, referenceProvider, compareToAuditId || null);
       setAudits((items) => [job, ...items]);
       setSelectedId(job.audit_id);
       toast("success", t.uploaded);
@@ -266,6 +271,8 @@ function AppInner() {
         scanProfile={scanProfile}
         domains={domains}
         provider={provider}
+        referenceProvider={referenceProvider}
+        compareToAuditId={compareToAuditId}
         onLanguage={setLanguage}
         onTheme={setTheme}
         onSelect={setSelectedId}
@@ -275,6 +282,8 @@ function AppInner() {
         onScanProfile={setScanProfile}
         onDomains={setDomains}
         onProvider={setProvider}
+        onReferenceProvider={setReferenceProvider}
+        onCompareToAuditId={setCompareToAuditId}
         onRun={runAudit}
         onUpload={handleUpload}
       />

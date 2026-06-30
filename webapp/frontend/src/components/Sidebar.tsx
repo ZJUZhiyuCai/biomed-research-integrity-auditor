@@ -19,6 +19,8 @@ interface SidebarProps {
   scanProfile: string;
   domains: string;
   provider: string;
+  referenceProvider: string;
+  compareToAuditId: string;
   onLanguage: (l: Language) => void;
   onTheme: (t: Theme) => void;
   onSelect: (id: string) => void;
@@ -28,6 +30,8 @@ interface SidebarProps {
   onScanProfile: (v: string) => void;
   onDomains: (v: string) => void;
   onProvider: (v: string) => void;
+  onReferenceProvider: (v: string) => void;
+  onCompareToAuditId: (v: string) => void;
   onRun: () => void;
   onUpload: (file: File) => void;
 }
@@ -126,6 +130,26 @@ export function Sidebar(props: SidebarProps) {
             <option value="fixture">fixture</option>
             <option value="europepmc">europepmc</option>
             <option value="crossref">crossref</option>
+          </select>
+        </label>
+        <label>
+          <span>{t.referenceProvider}</span>
+          <select value={props.referenceProvider} onChange={(e) => props.onReferenceProvider(e.target.value)}>
+            <option value="none">none</option>
+            <option value="crossref">crossref</option>
+          </select>
+        </label>
+        <label>
+          <span>{t.compareTo}</span>
+          <select value={props.compareToAuditId} onChange={(e) => props.onCompareToAuditId(e.target.value)}>
+            <option value="">{t.noCompare}</option>
+            {props.audits
+              .filter((audit) => audit.status === "completed")
+              .map((audit) => (
+                <option key={audit.audit_id} value={audit.audit_id}>
+                  {audit.audit_id}
+                </option>
+              ))}
           </select>
         </label>
         <button className="primary-button" type="submit">

@@ -87,12 +87,14 @@ Weak triage checks:
 - Very small variance.
 - Implausibly high correlations between supposedly independent conditions.
 
-Manual statistical checks (not automated detector outputs):
+Weak distributional checks:
 
 - P value clustering near significance thresholds.
 - Benford-style first-digit distribution analysis.
 
-These distributional tests are intentionally not run by the default detectors; they require manual review and are statistically meaningful only with enough values. Treat them as human prompts, not tool findings. Weak checks should not drive R4 findings.
+These distributional screens are implemented only as sample-gated weak triage prompts. They still
+require manual review, domain appropriateness checks, and enough values to be meaningful. Treat
+them as human prompts, not standalone evidence. Weak checks should not drive R4 findings.
 
 ## 5. Methodology and Compliance Audit
 

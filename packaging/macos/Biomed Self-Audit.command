@@ -1,0 +1,5 @@
+#!/bin/zsh
+set -euo pipefail
+
+cd "$(dirname "$0")/../.."
+exec python3 scripts/install_local_commands.py --skip-frontend-build
