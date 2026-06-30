@@ -36,6 +36,16 @@ ACTION_FIELDNAMES = [
     "source",
 ]
 
+CORRECTION_PLAN_FIELDNAMES = [
+    "finding_id",
+    "risk",
+    "required_correction",
+    "owner",
+    "evidence_after_correction",
+    "status",
+    "source_action_id",
+]
+
 
 CLAIM_MANIFEST_CANDIDATES = (
     "claim_manifest.csv",
@@ -442,6 +452,72 @@ def write_unresolved_actions_csv(path: Path, rows: list[dict[str, str]]) -> None
             writer.writerow({key: row.get(key, "") for key in ACTION_FIELDNAMES})
 
 
+def correction_plan_rows(action_rows: list[dict[str, str]]) -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
+    for action in action_rows:
+        rows.append({
+            "finding_id": action.get("action_id", ""),
+            "risk": action.get("risk_level", ""),
+            "required_correction": action.get("required_action", ""),
+            "owner": action.get("owner", ""),
+            "evidence_after_correction": action.get("human_note", ""),
+            "status": action.get("status", "unresolved"),
+            "source_action_id": action.get("action_id", ""),
+        })
+    return rows
+
+
+def write_correction_plan_csv(path: Path, rows: list[dict[str, str]]) -> None:
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=CORRECTION_PLAN_FIELDNAMES)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({key: row.get(key, "") for key in CORRECTION_PLAN_FIELDNAMES})
+
+
+def markdown_cell(value: str) -> str:
+    return value.replace("|", "\\|").replace("\n", " ").strip()
+
+
+def write_correction_plan_markdown(path: Path, rows: list[dict[str, str]]) -> None:
+    lines = [
+        "# Pre-submission Correction Plan",
+        "",
+        "| Finding ID | Risk | Required correction | Owner | Evidence after correction | Status |",
+        "| --- | --- | --- | --- | --- | --- |",
+    ]
+    if rows:
+        for row in rows:
+            lines.append(
+                "| "
+                + " | ".join([
+                    markdown_cell(row.get("finding_id", "")),
+                    markdown_cell(row.get("risk", "")),
+                    markdown_cell(row.get("required_correction", "")),
+                    markdown_cell(row.get("owner", "")),
+                    markdown_cell(row.get("evidence_after_correction", "")),
+                    markdown_cell(row.get("status", "")),
+                ])
+                + " |"
+            )
+    else:
+        lines.append("|  |  | No unresolved correction currently listed within this audit scope. |  |  |  |")
+    lines += [
+        "",
+        "## Before Submission",
+        "",
+        "- Resolve all R4 findings.",
+        "- Resolve or explicitly document all R3 findings.",
+        "- Add source data and uncropped/raw records for figures that depend on images or quantitative summaries.",
+        "- Update figure legends for cropping, splicing, reuse, normalization, and statistical definitions.",
+        "- Update methods for randomization, blinding, sample size, exclusions, reagents, software, and repository accessions.",
+        "",
+        "> This is a team-tracking worksheet derived from calibrated audit actions. It is not an approval certificate.",
+        "",
+    ]
+    path.write_text("\n".join(lines), encoding="utf-8")
+
+
 def write_empty_action_tracker_csv(path: Path) -> None:
     with path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=ACTION_FIELDNAMES)
@@ -591,6 +667,9 @@ def export_submission_qc_packet(
     write_claim_coverage_csv(packet_dir / "claim_coverage.csv", claim_coverage)
     action_rows = unresolved_action_rows(manifest, audit_summary, claim_coverage)
     write_unresolved_actions_csv(packet_dir / "unresolved_actions.csv", action_rows)
+    plan_rows = correction_plan_rows(action_rows)
+    write_correction_plan_csv(packet_dir / "correction_plan.csv", plan_rows)
+    write_correction_plan_markdown(packet_dir / "correction_plan.md", plan_rows)
     write_empty_action_tracker_csv(packet_dir / "resolved_actions.csv")
     write_empty_action_tracker_csv(packet_dir / "accepted_with_reason.csv")
     (packet_dir / "author_signoff.yaml").write_text(
@@ -619,6 +698,7 @@ def export_submission_qc_packet(
         "- `methodology_checklist.*` records reporting-standard readiness prompts and supporting-material gaps.",
         "- `writing_readiness.*` records writing, reference, and generic submission-file readiness prompts.",
         "- `unresolved_actions.csv` collects remaining completeness gaps, findings, and claim-evidence gaps.",
+        "- `correction_plan.*` maps unresolved actions into the pre-submission correction-plan tracker.",
         "- `resolved_actions.csv` and `accepted_with_reason.csv` are empty tracker templates for team follow-up.",
         "- `author_signoff.yaml` is a template for internal responsibility review before submission.",
     ]

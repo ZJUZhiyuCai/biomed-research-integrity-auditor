@@ -58,7 +58,7 @@ Use when the user is responding to reviewer, journal, or PubPeer-style concerns.
    - If files are missing, keep them as R1 completeness gaps before doing deeper analysis.
    - Never imply that an audit is complete when source data or raw records are unavailable.
    - Use `--scan-profile quick` for a first-pass local self-check; it explicitly skips expensive local-patch/copy-move deep image screening and external phrase search. Use `--scan-profile standard` for routine presubmission QC. Use `--scan-profile deep` for focused rechecks or response-to-concern work.
-   - The orchestrator also writes `audit_snapshot.json`, `file_hash_manifest.json`, `claim_coverage.*`, `methodology_checklist.*`, CSV review exports, action trackers, and `submission_qc_packet/`. Treat these as versioning/review artifacts, not approval certificates.
+   - The orchestrator also writes `audit_snapshot.json`, `file_hash_manifest.json`, `claim_coverage.*`, `methodology_checklist.*`, CSV review exports, action trackers, `correction_plan.*`, and `submission_qc_packet/`. Treat these as versioning/review artifacts, not approval certificates.
    - If a package includes `claim_manifest.csv`, or the user passes `--claim-manifest`, read Claim Coverage as claim-to-evidence completeness only; it does not prove the claim is true.
    - To compare a repaired package against an earlier audit, use `scripts/compare_audit_runs.py <old_output> <new_output>` or run the new audit with `--compare-to <old_output>`.
 

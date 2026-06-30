@@ -103,7 +103,7 @@ Security constraints:
 
 - Re-audit and diff UI: CLI diff artifacts exist via `scripts/compare_audit_runs.py` and
   `scripts/audit_package.py --compare-to`; the web app now exposes the selected re-audit diff.
-  Browser-side correction-plan editing mapped to [skill/biomed-research-integrity-auditor/templates/presubmission-correction-plan.md](../skill/biomed-research-integrity-auditor/templates/presubmission-correction-plan.md) remains open.
+  The web app also exposes a correction-plan tracker generated from [skill/biomed-research-integrity-auditor/templates/presubmission-correction-plan.md](../skill/biomed-research-integrity-auditor/templates/presubmission-correction-plan.md); inline browser editing remains open.
 - Export UI for CLI-generated submission QC packets now exposes packet downloads and key files.
   HTML/PDF polish and author-signoff editing remain open.
 
@@ -153,7 +153,7 @@ Then grammar (P2, clearly labeled "writing quality, not integrity"):
 - [x] Build the visual figure-to-raw/source assembly-manifest builder that writes `figure_assembly/assembly_manifest.csv`, plus a package-prep wizard.
 - [x] Add CLI re-audit diff artifacts.
 - [x] Add CLI submission-QC packet with report HTML/PDF exports.
-- [x] Add web UI re-audit/R-level diff surface; browser correction-plan editing remains open.
+- [x] Add web UI re-audit/R-level diff surface and correction-plan tracker download/read surface; inline browser editing remains open.
 - [x] Add web UI claim-coverage and QC-packet download surfaces for CLI-generated artifacts.
 - [x] Build the separate Writing & Submission Readiness module v1 for submission-readiness prompts, fenced from integrity findings.
 - [x] Add opt-in DOI/reference metadata prompts; retraction-database checks and reference vs in-text consistency remain open.

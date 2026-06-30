@@ -8,6 +8,7 @@ import { artifactUrl, qcPacketUrl } from "../api";
 import type {
   ActionTrackerRow,
   ClaimCoverage,
+  CorrectionPlanRow,
   ReAuditDiff,
   SubmissionQCPacket,
   WritingReadiness
@@ -19,6 +20,7 @@ export function SubmissionWorkspacePanel({
   auditId,
   claimCoverage,
   actionRows,
+  correctionRows,
   reAuditDiff,
   qcPacket,
   writingReadiness,
@@ -27,6 +29,7 @@ export function SubmissionWorkspacePanel({
   auditId: string;
   claimCoverage?: ClaimCoverage | null;
   actionRows: ActionTrackerRow[];
+  correctionRows: CorrectionPlanRow[];
   reAuditDiff?: ReAuditDiff | null;
   qcPacket?: SubmissionQCPacket;
   writingReadiness?: WritingReadiness | null;
@@ -42,6 +45,7 @@ export function SubmissionWorkspacePanel({
       <div className="submission-grid">
         <ClaimCoverageCard claimCoverage={claimCoverage} t={t} />
         <ActionTrackerCard auditId={auditId} rows={actionRows} t={t} />
+        <CorrectionPlanCard auditId={auditId} rows={correctionRows} t={t} />
         <ReAuditDiffCard reAuditDiff={reAuditDiff} t={t} />
         <QCPacketCard auditId={auditId} qcPacket={qcPacket} t={t} />
         <WritingReadinessCard writingReadiness={writingReadiness} t={t} />
@@ -113,6 +117,59 @@ function ActionTrackerCard({
                   <td className="mono">{row.action_id}</td>
                   <td>{row.owner || row.action_category}</td>
                   <td>{row.required_action}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </MiniPanel>
+  );
+}
+
+function CorrectionPlanCard({
+  auditId,
+  rows,
+  t
+}: {
+  auditId: string;
+  rows: CorrectionPlanRow[];
+  t: Labels;
+}) {
+  return (
+    <MiniPanel
+      title={t.correctionPlan}
+      action={
+        <span className="link-row">
+          <a className="text-link" href={artifactUrl(auditId, "correction_plan.md")}>{t.downloadMd}</a>
+          <a className="text-link" href={artifactUrl(auditId, "correction_plan.csv")}>{t.downloadCsv}</a>
+        </span>
+      }
+    >
+      <div className="tracker-summary">
+        <strong>{rows.length}</strong>
+        <span>{t.correctionItems}</span>
+      </div>
+      {rows.length === 0 ? (
+        <EmptyState text={t.notExecutedYet} />
+      ) : (
+        <div className="tracker-table-wrap">
+          <table className="compact-table">
+            <thead>
+              <tr>
+                <th>{t.findingId}</th>
+                <th>R</th>
+                <th>{t.requiredCorrection}</th>
+                <th>{t.status}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.slice(0, 8).map((row) => (
+                <tr key={row.finding_id || row.source_action_id || row.required_correction}>
+                  <td className="mono">{row.finding_id}</td>
+                  <td>{row.risk}</td>
+                  <td>{row.required_correction}</td>
+                  <td>{row.status}</td>
                 </tr>
               ))}
             </tbody>

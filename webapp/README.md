@@ -61,11 +61,11 @@ Included:
 - CLI-generated submission-QC artifacts are available in each audit output directory, including
   `audit_snapshot.json`, `claim_coverage.*`, `unresolved_actions.csv`, and `submission_qc_packet/`.
 - The report view surfaces claim coverage, unresolved action trackers, re-audit diffs, QC-packet
-  download links, and a separate Writing & Submission Readiness panel.
+  download links, correction-plan trackers, and a separate Writing & Submission Readiness panel.
 
 Not included yet:
 
-- Interactive editing of the correction-plan tracker inside the browser.
+- Inline editing/persistence of correction-plan rows inside the browser.
 - Full citation-integrity/retraction-database coverage beyond opt-in Crossref-style DOI metadata prompts.
 - Grammar/language checking engines.
 - A signed desktop application.

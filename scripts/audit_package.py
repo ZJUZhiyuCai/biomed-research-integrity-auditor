@@ -32,11 +32,14 @@ from scripts.submission_qc import (  # noqa: E402
     build_claim_coverage,
     build_file_hash_manifest,
     build_re_audit_diff,
+    correction_plan_rows,
     export_submission_qc_packet,
     find_claim_manifest,
     pyproject_version,
     unresolved_action_rows,
     write_claim_coverage_csv,
+    write_correction_plan_csv,
+    write_correction_plan_markdown,
     write_empty_action_tracker_csv,
     write_missing_materials_csv,
     write_json as write_qc_json,
@@ -822,10 +825,16 @@ def run_pipeline(
     verified_traceability_csv = output_dir / "verified_traceability.csv"
     write_verified_traceability_csv(verified_traceability_csv, audit_summary)
     unresolved_actions_csv = output_dir / "unresolved_actions.csv"
+    action_rows = unresolved_action_rows(manifest_payload, audit_summary, claim_coverage)
     write_unresolved_actions_csv(
         unresolved_actions_csv,
-        unresolved_action_rows(manifest_payload, audit_summary, claim_coverage),
+        action_rows,
     )
+    correction_plan_csv = output_dir / "correction_plan.csv"
+    correction_plan_md = output_dir / "correction_plan.md"
+    correction_rows = correction_plan_rows(action_rows)
+    write_correction_plan_csv(correction_plan_csv, correction_rows)
+    write_correction_plan_markdown(correction_plan_md, correction_rows)
     resolved_actions_csv = output_dir / "resolved_actions.csv"
     accepted_with_reason_csv = output_dir / "accepted_with_reason.csv"
     write_empty_action_tracker_csv(resolved_actions_csv)
@@ -871,6 +880,8 @@ def run_pipeline(
         "missing_materials_csv": str(missing_materials_csv),
         "verified_traceability_csv": str(verified_traceability_csv),
         "unresolved_actions_csv": str(unresolved_actions_csv),
+        "correction_plan_csv": str(correction_plan_csv),
+        "correction_plan_md": str(correction_plan_md),
         "resolved_actions_csv": str(resolved_actions_csv),
         "accepted_with_reason_csv": str(accepted_with_reason_csv),
         "provenance_graph": str(provenance_graph),

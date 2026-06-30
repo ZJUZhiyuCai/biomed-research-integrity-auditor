@@ -33,7 +33,7 @@
   language placeholders, generic submission-file prompts, and opt-in DOI/reference metadata
   review. This module is rendered separately and is not merged into integrity findings.
 - Webapp submission workspace surfaces claim coverage, unresolved action trackers, re-audit diffs,
-  QC-packet download links, and writing-readiness prompts.
+  correction-plan trackers, QC-packet download links, and writing-readiness prompts.
 - Frame-level screening for multi-frame TIFF-like image files in global near-duplicate and local
   patch/copy-move detectors.
 - Sample-gated weak Benford-style first-digit and p-value-clustering prompts, capped as weak

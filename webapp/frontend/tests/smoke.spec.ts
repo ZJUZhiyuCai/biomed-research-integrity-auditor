@@ -64,6 +64,17 @@ const summary = {
     resolved: [],
     accepted_with_reason: []
   },
+  correction_plan: [
+    {
+      finding_id: "A-001",
+      risk: "R1",
+      required_correction: "Attach the raw microscopy source file.",
+      owner: "author",
+      evidence_after_correction: "",
+      status: "unresolved",
+      source_action_id: "A-001"
+    }
+  ],
   re_audit_diff: {
     scope_note: "Compared with the selected previous audit output.",
     overall_risk: { previous: "R2", current: "R1" },
@@ -158,12 +169,17 @@ test("renders human-facing submission workspace without boundary-breaking langua
   await expect(page.getByRole("heading", { name: "Submission Workspace" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Claim Coverage" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Action Tracker" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Correction Plan" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Re-audit Diff" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "QC Packet" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Writing & Submission Readiness" })).toBeVisible();
   await expect(page.getByRole("link", { name: /Download QC Packet/i })).toHaveAttribute(
     "href",
     "/api/audits/audit-smoke-1/submission-qc-packet.zip"
+  );
+  await expect(page.getByRole("link", { name: /Download Markdown/i })).toHaveAttribute(
+    "href",
+    "/api/audits/audit-smoke-1/artifact/correction_plan.md"
   );
 
   const visibleText = (await page.locator("body").innerText()).toLowerCase();

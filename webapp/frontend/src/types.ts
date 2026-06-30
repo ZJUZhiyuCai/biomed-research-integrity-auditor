@@ -88,6 +88,17 @@ export interface ActionTrackers {
   accepted_with_reason?: ActionTrackerRow[];
 }
 
+export interface CorrectionPlanRow {
+  finding_id?: string;
+  risk?: string;
+  required_correction?: string;
+  owner?: string;
+  evidence_after_correction?: string;
+  status?: string;
+  source_action_id?: string;
+  [key: string]: string | undefined;
+}
+
 export interface ReAuditDiff {
   scope_note?: string;
   overall_risk?: { previous?: string | null; current?: string | null };
@@ -268,6 +279,7 @@ export interface SummaryPayload {
   pipeline_summary: PipelineSummary;
   claim_coverage?: ClaimCoverage | null;
   action_trackers?: ActionTrackers;
+  correction_plan?: CorrectionPlanRow[];
   re_audit_diff?: ReAuditDiff | null;
   submission_qc_packet?: SubmissionQCPacket;
   writing_readiness?: WritingReadiness | null;

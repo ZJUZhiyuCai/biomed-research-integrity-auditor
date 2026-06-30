@@ -149,6 +149,7 @@ export function Workspace(props: WorkspaceProps) {
             auditId={audit.audit_id}
             claimCoverage={detail.claim_coverage || detail.audit_summary?.claim_coverage}
             actionRows={detail.action_trackers?.unresolved || []}
+            correctionRows={detail.correction_plan || []}
             reAuditDiff={detail.re_audit_diff}
             qcPacket={detail.submission_qc_packet}
             writingReadiness={detail.writing_readiness}

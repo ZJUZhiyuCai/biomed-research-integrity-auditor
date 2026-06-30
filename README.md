@@ -106,8 +106,9 @@ Each run writes to the output directory:
 - `methodology_checklist.json` / `methodology_checklist.csv` — manual-review readiness prompts for wet-lab, animal, clinical, cell, flow, and omics reporting.
 - `writing_readiness.json` / `writing_readiness.csv` — writing/submission preparation prompts; these do not change R0-R4.
 - `unresolved_actions.csv`, `resolved_actions.csv`, and `accepted_with_reason.csv` — team trackers for follow-up.
+- `correction_plan.md` / `correction_plan.csv` — a pre-submission correction-plan tracker derived from the action queue.
 - `submission_qc_packet/` — a leave-behind packet with the report, coverage, action trackers, verified traceability,
-  missing materials, file hashes, claim coverage, methodology checklist, writing readiness, and an author sign-off template.
+  correction plan, missing materials, file hashes, claim coverage, methodology checklist, writing readiness, and an author sign-off template.
 
 To audit your own package, point the command at your folder and pick a mode
 (`--mode internal_presubmission` is the default; `external_public_material` and
@@ -175,7 +176,7 @@ Then open `http://127.0.0.1:8765`. The web app is a thin local wrapper around
 Coverage visible so "no findings" is not mistaken for a clean verdict. It also includes local
 package-prep tools for creating the recommended folder layout and writing
 `figure_assembly/assembly_manifest.csv` declarations before you run the audit. The report view
-surfaces claim coverage, unresolved action trackers, re-audit diffs, QC-packet download links,
+surfaces claim coverage, unresolved action trackers, correction plans, re-audit diffs, QC-packet download links,
 and the fenced Writing & Submission Readiness module. See
 [`webapp/README.md`](webapp/README.md).
 

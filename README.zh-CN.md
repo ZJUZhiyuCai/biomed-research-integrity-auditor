@@ -92,7 +92,8 @@ biomed-audit examples/full_presubmission_package --output-dir audit_outputs/full
 - `methodology_checklist.json` / `methodology_checklist.csv`：wet-lab、animal、clinical、cell、flow、omics 的人工复核准备度清单。
 - `writing_readiness.json` / `writing_readiness.csv`：写作与投稿准备度提示；它们不会改变 R0-R4 风险等级。
 - `unresolved_actions.csv`、`resolved_actions.csv`、`accepted_with_reason.csv`：团队协作用的行动项跟踪表。
-- `submission_qc_packet/`：投稿前留档包，包含报告、coverage、行动项跟踪表、已验证 traceability、缺失材料、文件哈希、claim coverage、methodology checklist、writing readiness 和 author sign-off 模板。
+- `correction_plan.md` / `correction_plan.csv`：由行动队列生成的投稿前更正计划跟踪表。
+- `submission_qc_packet/`：投稿前留档包，包含报告、coverage、行动项跟踪表、更正计划、已验证 traceability、缺失材料、文件哈希、claim coverage、methodology checklist、writing readiness 和 author sign-off 模板。
 
 审计你自己的材料包时，把命令指向你的目录即可。默认模式是 `internal_presubmission`，也支持 `external_public_material` 和 `response_to_concern`：
 
@@ -152,7 +153,7 @@ biomed-audit-web
 它运行同一条流水线、读取同一批 artifact，并固定显示 Audit Coverage，避免把“未发现 finding”
 误读成“论文已证明没问题”。它也提供本地材料准备工具，可以创建推荐目录结构，并在审计前写入
 `figure_assembly/assembly_manifest.csv` 的 figure-source 声明关系。报告界面会展示 claim coverage、
-未解决行动项、re-audit diff、QC packet 下载入口，以及独立隔离的 Writing & Submission Readiness 模块。更多说明见 [`webapp/README.md`](webapp/README.md)。
+未解决行动项、更正计划、re-audit diff、QC packet 下载入口，以及独立隔离的 Writing & Submission Readiness 模块。更多说明见 [`webapp/README.md`](webapp/README.md)。
 
 源码运行 fallback：`python -m webapp`。
 

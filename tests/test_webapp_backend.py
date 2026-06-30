@@ -66,6 +66,8 @@ class WebappBackendTests(unittest.TestCase):
                 self.assertEqual(payload["pipeline_summary"]["scan_profile"], "quick")
                 self.assertIn("claim_coverage", payload)
                 self.assertIn("unresolved", payload["action_trackers"])
+                self.assertIn("correction_plan", payload)
+                self.assertGreater(len(payload["correction_plan"]), 0)
                 self.assertTrue(payload["submission_qc_packet"]["available"])
                 self.assertIn("writing_readiness", payload)
                 self.assertEqual(payload["writing_readiness"]["scope"], "writing_submission_readiness_only")
@@ -80,6 +82,10 @@ class WebappBackendTests(unittest.TestCase):
                 actions = client.get(f"/api/audits/{audit_id}/artifact/unresolved_actions.csv")
                 actions.raise_for_status()
                 self.assertIn("action_id", actions.text)
+
+                correction_plan = client.get(f"/api/audits/{audit_id}/artifact/correction_plan.md")
+                correction_plan.raise_for_status()
+                self.assertIn("Pre-submission Correction Plan", correction_plan.text)
 
                 packet = client.get(f"/api/audits/{audit_id}/submission-qc-packet.zip")
                 packet.raise_for_status()
