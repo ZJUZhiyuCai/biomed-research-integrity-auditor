@@ -32,6 +32,7 @@
 - React/Vite report viewer under `webapp/frontend` with Audit Coverage, R0-R4 risk register, positive provenance evidence, missing-materials panel, evidence crop rendering, bilingual labels, local history, and delete support.
 - `python3 -m webapp` launcher plus `biomed-self-audit-webapp` console entry point.
 - Safe artifact serving for evidence crops, guarded zip-package extraction, and backend tests that assert the API preserves CLI artifact risk/coverage fields.
+- Frontend polish for the local self-audit app: modular React components, local font assets, light/dark themes, Markdown report rendering with sanitization, zip drag/drop upload, toast feedback, evidence lightbox, module/risk filters, structured evidence metrics, traceability gaps, and materials-reviewed panels while preserving the no-verdict integrity boundary.
 
 ### Changed
 - Project version advanced to `0.5.0`; README files now include the local web-app entry point.
