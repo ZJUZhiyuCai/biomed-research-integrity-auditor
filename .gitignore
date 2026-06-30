@@ -6,6 +6,7 @@ __pycache__/
 .ruff_cache/
 .venv/
 venv/
+.cursor/
 
 evals/outputs/*
 !evals/outputs/.gitkeep
@@ -17,3 +18,5 @@ audit_outputs/
 
 *.log
 tmp/
+webapp/frontend/node_modules/
+webapp/frontend/dist/

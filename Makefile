@@ -5,7 +5,7 @@ EVAL_DIR := evals
 .PHONY: validate regenerate-evals prompts score true-pdf-benchmark scanned-pdf-benchmark real-image-benchmark
 
 validate:
-	$(PYTHON) -m py_compile scripts/*.py provenance/*.py benchmarks/*/*.py $(EVAL_DIR)/run_eval.py $(EVAL_DIR)/run_script_baseline.py $(EVAL_DIR)/generate_synthetic_cases.py $(EVAL_DIR)/assert_audit_outputs.py $(SKILL_DIR)/scripts/*.py detectors/image/*.py detectors/stats/*.py detectors/text/*.py calibrators/*.py tests/*.py
+	$(PYTHON) -m py_compile scripts/*.py provenance/*.py benchmarks/*/*.py $(EVAL_DIR)/run_eval.py $(EVAL_DIR)/run_script_baseline.py $(EVAL_DIR)/generate_synthetic_cases.py $(EVAL_DIR)/assert_audit_outputs.py $(SKILL_DIR)/scripts/*.py detectors/image/*.py detectors/stats/*.py detectors/text/*.py calibrators/*.py webapp/*.py webapp/backend/*.py tests/*.py
 	$(PYTHON) -m unittest discover -s tests
 	$(PYTHON) benchmarks/true_pdf/run_true_pdf_benchmark.py --output-dir tmp/true_pdf_benchmark
 	$(PYTHON) benchmarks/scanned_pdf/run_scanned_pdf_benchmark.py --output-dir tmp/scanned_pdf_benchmark --skip-if-unavailable

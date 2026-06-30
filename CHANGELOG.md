@@ -25,6 +25,17 @@
 - Statistical time-column detection no longer matches time tokens inside unrelated identifiers (for example `CD4`, `CD8`, `CD3`, `CD45`), preventing immunology/marker columns from being misread as longitudinal timepoints.
 - SD-versus-SEM consistency screening now tolerates ordinary reporting precision: the mismatch tolerance accounts for the rounding half-ULP of the reported SD and SEM, so legitimately rounded summary tables are no longer flagged as SD/SEM contradictions while genuine large deviations still fire.
 
+## v0.5.0 - Local Self-Audit Web App
+
+### Added
+- Local-first FastAPI backend under `webapp/backend` that launches `scripts/audit_package.py` as a background subprocess and serves the generated audit artifacts without recomputing risk.
+- React/Vite report viewer under `webapp/frontend` with Audit Coverage, R0-R4 risk register, positive provenance evidence, missing-materials panel, evidence crop rendering, bilingual labels, local history, and delete support.
+- `python3 -m webapp` launcher plus `biomed-self-audit-webapp` console entry point.
+- Safe artifact serving for evidence crops, guarded zip-package extraction, and backend tests that assert the API preserves CLI artifact risk/coverage fields.
+
+### Changed
+- Project version advanced to `0.5.0`; README files now include the local web-app entry point.
+
 ## v0.4.2 - OCR, Real-Image, and External-Search Benchmarks
 
 ### Added

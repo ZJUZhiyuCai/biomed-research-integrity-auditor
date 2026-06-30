@@ -82,6 +82,20 @@ python3 scripts/audit_package.py /path/to/my_package --output-dir audit_outputs/
 **Authors:** the [self-audit guide](docs/self-audit-guide.md) walks through how to lay out your
 materials, run the audit, and read the report — including which conclusions you may not draw.
 
+### Local web app (V0.5)
+
+If you prefer a browser UI, build and launch the local self-audit app:
+
+```bash
+cd webapp/frontend && npm install && npm run build && cd ../..
+python3 -m webapp
+```
+
+Then open `http://127.0.0.1:8765`. The web app is a thin local wrapper around
+`scripts/audit_package.py`: it runs the same pipeline, reads the same artifacts, and keeps Audit
+Coverage visible so "no findings" is not mistaken for a clean verdict. See
+[`webapp/README.md`](webapp/README.md).
+
 ### Install the skill (optional)
 
 To use it as a Codex skill, symlink it into your skills directory:
@@ -173,6 +187,7 @@ These are the design choices that keep the audit restrained, auditable, and hard
 | `docs/architecture.md`, `docs/design-notes.md` | Pipeline architecture and design rationale. |
 | `evals/` | Neutral synthetic packages, the eval harness, and ground truth. |
 | `benchmarks/` | True-PDF, scanned-PDF OCR, and real-image regression benchmarks. |
+| `webapp/` | Local FastAPI + React/Vite self-audit UI that wraps the existing CLI artifacts. |
 
 ---
 

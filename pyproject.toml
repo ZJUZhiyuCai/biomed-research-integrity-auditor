@@ -1,6 +1,6 @@
 [project]
 name = "biomed-research-integrity-auditor"
-version = "0.4.2"
+version = "0.5.0"
 description = "Codex skill and detector pipeline for biomedical research integrity risk auditing"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -13,16 +13,20 @@ dependencies = [
   "pypdf>=4.0",
   "PyMuPDF>=1.24",
   "pytesseract>=0.3",
-  "requests>=2.31"
+  "requests>=2.31",
+  "fastapi>=0.115",
+  "uvicorn>=0.30",
+  "python-multipart>=0.0.9"
 ]
 
 [project.scripts]
 biomed-image-global-near-duplicate = "detectors.image.global_near_duplicate:main"
 biomed-pseudoreplication-screen = "detectors.stats.pseudoreplication_screen:main"
 biomed-risk-cap-engine = "calibrators.risk_cap_engine:main"
+biomed-self-audit-webapp = "webapp.__main__:main"
 
 [tool.setuptools]
-packages = ["calibrators", "detectors", "detectors.image", "detectors.stats", "detectors.text", "provenance"]
+packages = ["calibrators", "detectors", "detectors.image", "detectors.stats", "detectors.text", "provenance", "webapp", "webapp.backend"]
 
 [build-system]
 requires = ["setuptools>=68"]

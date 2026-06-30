@@ -70,6 +70,19 @@ python3 scripts/audit_package.py /path/to/my_package --output-dir audit_outputs/
 
 **作者用户：**请先读 [`docs/self-audit-guide.md`](docs/self-audit-guide.md)。它会说明材料目录怎么准备、报告怎么看，以及哪些结论不能从工具输出中推出。
 
+### 本地 Web App（V0.5）
+
+如果你更想用浏览器界面，可以构建并启动本地自查 app：
+
+```bash
+cd webapp/frontend && npm install && npm run build && cd ../..
+python3 -m webapp
+```
+
+然后打开 `http://127.0.0.1:8765`。这个 Web App 只是 `scripts/audit_package.py` 的本地外壳：
+它运行同一条流水线、读取同一批 artifact，并固定显示 Audit Coverage，避免把“未发现 finding”
+误读成“论文已证明没问题”。更多说明见 [`webapp/README.md`](webapp/README.md)。
+
 ### 安装为 Codex Skill（可选）
 
 如果想在 Codex 中作为 Skill 使用，可以把 skill 目录 symlink 到本地 Codex skills 目录：
@@ -143,6 +156,7 @@ material intake → structured extraction → provenance graph → detectors
 | `docs/architecture.md`、`docs/design-notes.md` | 架构和设计说明。 |
 | `evals/` | 中性 synthetic packages、评测 harness 和 ground truth。 |
 | `benchmarks/` | true PDF、scanned PDF OCR 和 real-image 回归基准。 |
+| `webapp/` | 本地 FastAPI + React/Vite 自查界面，包装现有 CLI artifact。 |
 
 ---
 
