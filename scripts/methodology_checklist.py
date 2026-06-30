@@ -9,6 +9,11 @@ import json
 from pathlib import Path
 from typing import Any
 
+try:
+    from scripts.csv_safety import csv_safe_row
+except ImportError:  # pragma: no cover - supports direct script execution.
+    from csv_safety import csv_safe_row
+
 
 STATUS_READY = "materials_supplied_manual_review_required"
 STATUS_PARTIAL = "partial_supporting_materials_manual_review_limited"
@@ -328,7 +333,7 @@ def write_methodology_checklist_csv(path: Path, checklist: dict[str, Any]) -> No
         writer.writeheader()
         for module in checklist.get("modules", []) or []:
             for check in module.get("checks", []) or []:
-                writer.writerow({
+                row = {
                     "module_id": module.get("module_id", ""),
                     "module_label_en": module.get("label_en", ""),
                     "module_label_zh": module.get("label_zh", ""),
@@ -343,7 +348,8 @@ def write_methodology_checklist_csv(path: Path, checklist: dict[str, Any]) -> No
                     "missing_material_categories": ";".join(check.get("missing_material_categories", []) or []),
                     "recommended_action_en": check.get("recommended_action_en", ""),
                     "recommended_action_zh": check.get("recommended_action_zh", ""),
-                })
+                }
+                writer.writerow(csv_safe_row(row, writer.fieldnames or []))
 
 
 def main() -> int:

@@ -21,6 +21,11 @@ from typing import Any
 
 import yaml
 
+try:
+    from scripts.csv_safety import csv_safe_cell, csv_safe_row
+except ImportError:  # pragma: no cover - supports direct script execution.
+    from csv_safety import csv_safe_cell, csv_safe_row
+
 
 ACTION_FIELDNAMES = [
     "action_id",
@@ -323,7 +328,7 @@ def write_claim_coverage_csv(path: Path, coverage: dict[str, Any]) -> None:
     with path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
-        writer.writerows(rows)
+        writer.writerows(csv_safe_row(row, fieldnames) for row in rows)
 
 
 def write_missing_materials_csv(path: Path, manifest: dict[str, Any]) -> None:
@@ -332,9 +337,9 @@ def write_missing_materials_csv(path: Path, manifest: dict[str, Any]) -> None:
         writer.writeheader()
         for item in manifest.get("missing_materials", []) or []:
             writer.writerow({
-                "category": item.get("category", ""),
-                "risk_level": item.get("risk_level", "R1"),
-                "reason": item.get("reason", ""),
+                "category": csv_safe_cell(item.get("category", "")),
+                "risk_level": csv_safe_cell(item.get("risk_level", "R1")),
+                "reason": csv_safe_cell(item.get("reason", "")),
             })
 
 
@@ -344,7 +349,7 @@ def write_verified_traceability_csv(path: Path, audit_summary: dict[str, Any]) -
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
         for item in audit_summary.get("positive_provenance", []) or []:
-            writer.writerow({key: item.get(key, "") for key in fieldnames})
+            writer.writerow(csv_safe_row(item, fieldnames))
 
 
 def unresolved_action_rows(
@@ -449,7 +454,7 @@ def write_unresolved_actions_csv(path: Path, rows: list[dict[str, str]]) -> None
         writer = csv.DictWriter(handle, fieldnames=ACTION_FIELDNAMES)
         writer.writeheader()
         for row in rows:
-            writer.writerow({key: row.get(key, "") for key in ACTION_FIELDNAMES})
+            writer.writerow(csv_safe_row(row, ACTION_FIELDNAMES))
 
 
 def correction_plan_rows(action_rows: list[dict[str, str]]) -> list[dict[str, str]]:
@@ -472,7 +477,7 @@ def write_correction_plan_csv(path: Path, rows: list[dict[str, str]]) -> None:
         writer = csv.DictWriter(handle, fieldnames=CORRECTION_PLAN_FIELDNAMES)
         writer.writeheader()
         for row in rows:
-            writer.writerow({key: row.get(key, "") for key in CORRECTION_PLAN_FIELDNAMES})
+            writer.writerow(csv_safe_row(row, CORRECTION_PLAN_FIELDNAMES))
 
 
 def markdown_cell(value: str) -> str:
@@ -801,4 +806,4 @@ def write_re_audit_diff_csv(path: Path, diff: dict[str, Any]) -> None:
     with path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.writer(handle)
         writer.writerow(["metric", "previous", "current"])
-        writer.writerows(rows)
+        writer.writerows([csv_safe_cell(cell) for cell in row] for row in rows)

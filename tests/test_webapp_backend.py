@@ -183,7 +183,7 @@ class WebappBackendTests(unittest.TestCase):
                             "source_record": "source_data/Figure_1_values.csv",
                             "relation_type": "declared_derived_from",
                             "modality": "table",
-                            "notes": "",
+                            "notes": "=HYPERLINK(\"https://example.invalid\",\"note\")",
                         },
                     ],
                 })
@@ -196,6 +196,7 @@ class WebappBackendTests(unittest.TestCase):
                 self.assertIn("raw_images/Acq_001.tif", manifest_text)
                 self.assertIn(",other,", manifest_text)
                 self.assertIn(",chart,", manifest_text)
+                self.assertIn("'=HYPERLINK", manifest_text)
 
     def test_package_prep_manifest_rejects_unsafe_or_unsupported_rows(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -304,6 +305,14 @@ class WebappBackendTests(unittest.TestCase):
                 inventory = response.json()["inventory"]
                 self.assertIn("relation_allowed_source_roles", inventory)
                 self.assertIn("declared_derived_from", inventory["relation_allowed_source_roles"])
+
+    def test_webapp_rejects_invalid_audit_ids_before_filesystem_lookup(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            with TestClient(create_app(output_root=tmp_path / "runs")) as client:
+                response = client.get("/api/audits/bad$id")
+                self.assertEqual(response.status_code, 400)
+                self.assertIn("Invalid audit id", response.text)
 
 
 if __name__ == "__main__":

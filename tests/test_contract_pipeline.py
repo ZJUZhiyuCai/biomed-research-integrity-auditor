@@ -28,6 +28,13 @@ from calibrators.contract_validation import ContractError, validate_instance  # 
 from calibrators.risk_cap_engine import calibrate_payload, load_rules  # noqa: E402
 from detectors.image.image_io import iter_normalized_frames, normalized_rgb  # noqa: E402
 from provenance.panel_modality import normalize_modality, resolve_panel_modality_routing  # noqa: E402
+from scripts.submission_qc import (  # noqa: E402
+    write_claim_coverage_csv,
+    write_correction_plan_csv,
+    write_missing_materials_csv,
+    write_unresolved_actions_csv,
+    write_verified_traceability_csv,
+)
 
 
 def run(cmd: list[str]) -> None:
@@ -1927,6 +1934,88 @@ class EndToEndTests(unittest.TestCase):
             self.assertTrue((out / "verified_traceability.csv").is_file())
             self.assertIn("## Claim Coverage", (out / "audit-report.md").read_text(encoding="utf-8"))
             self.assertIn("## Methodology Readiness", (out / "audit-report.md").read_text(encoding="utf-8"))
+
+    def test_submission_qc_csv_exports_neutralize_spreadsheet_formulas(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+
+            claim_csv = tmp_path / "claim_coverage.csv"
+            write_claim_coverage_csv(claim_csv, {
+                "unresolved_claims": [
+                    {
+                        "claim_id": "=HYPERLINK(\"https://example.invalid\",\"claim\")",
+                        "status": "+ready",
+                        "manuscript_location": "@Figure 1",
+                        "figure_or_table": "-Table 1",
+                        "field_status": {"source_data": "missing"},
+                        "gap_reasons": ["=missing source"],
+                        "missing_paths": ["\t=outside.csv"],
+                    }
+                ]
+            })
+            with claim_csv.open(newline="", encoding="utf-8") as handle:
+                row = next(csv.DictReader(handle))
+            self.assertTrue(row["claim_id"].startswith("'="))
+            self.assertTrue(row["status"].startswith("'+"))
+            self.assertTrue(row["manuscript_location"].startswith("'@"))
+            self.assertTrue(row["figure_or_table"].startswith("'-"))
+            self.assertTrue(row["gap_reasons"].startswith("'="))
+            self.assertTrue(row["missing_paths"].startswith("'\t="))
+
+            actions_csv = tmp_path / "unresolved_actions.csv"
+            write_unresolved_actions_csv(actions_csv, [{
+                "action_id": "ACT-0001",
+                "action_category": "must_resolve",
+                "risk_level": "R1",
+                "action_type": "claim_evidence_gap",
+                "location": "=Figure 2",
+                "required_action": "+open external workbook",
+                "owner": "@owner",
+                "status": "unresolved",
+                "human_note": "-note",
+                "accepted_with_reason": "",
+                "source": "claim_coverage",
+            }])
+            with actions_csv.open(newline="", encoding="utf-8") as handle:
+                row = next(csv.DictReader(handle))
+            self.assertTrue(row["location"].startswith("'="))
+            self.assertTrue(row["required_action"].startswith("'+"))
+            self.assertTrue(row["owner"].startswith("'@"))
+            self.assertTrue(row["human_note"].startswith("'-"))
+
+            correction_csv = tmp_path / "correction_plan.csv"
+            write_correction_plan_csv(correction_csv, [{
+                "finding_id": "ACT-0001",
+                "risk": "R1",
+                "required_correction": "=provide source data",
+                "owner": "+owner",
+                "evidence_after_correction": "@evidence",
+                "status": "unresolved",
+                "source_action_id": "ACT-0001",
+            }])
+            with correction_csv.open(newline="", encoding="utf-8") as handle:
+                row = next(csv.DictReader(handle))
+            self.assertTrue(row["required_correction"].startswith("'="))
+            self.assertTrue(row["owner"].startswith("'+"))
+            self.assertTrue(row["evidence_after_correction"].startswith("'@"))
+
+            missing_csv = tmp_path / "missing_materials.csv"
+            write_missing_materials_csv(missing_csv, {
+                "missing_materials": [{"category": "=raw", "risk_level": "R1", "reason": "@reason"}]
+            })
+            with missing_csv.open(newline="", encoding="utf-8") as handle:
+                row = next(csv.DictReader(handle))
+            self.assertTrue(row["category"].startswith("'="))
+            self.assertTrue(row["reason"].startswith("'@"))
+
+            trace_csv = tmp_path / "verified_traceability.csv"
+            write_verified_traceability_csv(trace_csv, {
+                "positive_provenance": [{"provenance_id": "=PROV", "figure_panel": "+panel"}]
+            })
+            with trace_csv.open(newline="", encoding="utf-8") as handle:
+                row = next(csv.DictReader(handle))
+            self.assertTrue(row["provenance_id"].startswith("'="))
+            self.assertTrue(row["figure_panel"].startswith("'+"))
 
     def test_re_audit_diff_script_compares_submission_qc_metrics(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

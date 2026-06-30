@@ -42,6 +42,11 @@
   GitHub Release/frontend-smoke workflow templates, and Homebrew/macOS packaging templates.
 
 ### Changed
+- Human-facing CSV exports in the submission QC packet and webapp-created assembly manifests now
+  neutralize spreadsheet formula-like cells, and webapp audit endpoints reject malformed audit IDs
+  before filesystem lookup.
+- `evals/run_script_baseline.py` now runs all synthetic cases by default when neither `--case` nor
+  `--package` is supplied, matching the downstream audit-output assertion workflow.
 - Python support metadata now matches the documented and CI-tested requirement: Python 3.10+.
 - The archived `public_smoke_2026-06-30` result now reports 13 ORI images screened, 2/2
   detector-scope ORI recall labels hit, and two retained ORI scope gaps for future

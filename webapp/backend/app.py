@@ -34,6 +34,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from provenance.panel_modality import CANONICAL_MODALITIES, normalize_modality  # noqa: E402
+from scripts.csv_safety import csv_safe_row  # noqa: E402
 
 DEFAULT_RUNS_ROOT = ROOT / "audit_outputs" / "webapp"
 MODES = {"internal_presubmission", "external_public_material", "response_to_concern"}
@@ -67,6 +68,7 @@ RELATION_ALLOWED_SOURCE_ROLES = {
 }
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp"}
 SOURCE_DATA_SUFFIXES = {".csv", ".tsv", ".xlsx"}
+AUDIT_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,120}$")
 
 
 class AuditCreateRequest(BaseModel):
@@ -275,7 +277,7 @@ def create_app(output_root: Optional[Path] = None) -> FastAPI:
         with manifest_path.open("w", newline="", encoding="utf-8") as handle:
             writer = csv.DictWriter(handle, fieldnames=ASSEMBLY_MANIFEST_COLUMNS)
             writer.writeheader()
-            writer.writerows(rows)
+            writer.writerows(csv_safe_row(row, ASSEMBLY_MANIFEST_COLUMNS) for row in rows)
         return {
             "manifest_path": str(manifest_path),
             "rows_written": len(rows),
@@ -622,7 +624,14 @@ def prepare_job(
 
 
 def job_file(settings: WebappSettings, audit_id: str) -> Path:
+    validate_audit_id(audit_id)
     return settings.audits_dir / audit_id / "job.json"
+
+
+def validate_audit_id(audit_id: str) -> str:
+    if not AUDIT_ID_RE.fullmatch(audit_id):
+        raise HTTPException(status_code=400, detail="Invalid audit id")
+    return audit_id
 
 
 def save_job(settings: WebappSettings, job: AuditJob) -> None:

@@ -24,6 +24,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from scripts.csv_safety import csv_safe_row  # noqa: E402
 from detectors.text.text_overlap_screen import read_text  # noqa: E402
 
 
@@ -272,7 +273,7 @@ def write_csv(path: Path, payload: dict[str, Any]) -> None:
         writer = csv.DictWriter(handle, fieldnames=["check_id", "status", "label_en", "label_zh", "recommended_action_en", "recommended_action_zh"])
         writer.writeheader()
         for row in payload.get("checks", []) or []:
-            writer.writerow({key: row.get(key, "") for key in writer.fieldnames or []})
+            writer.writerow(csv_safe_row(row, writer.fieldnames or []))
 
 
 def main() -> int:
