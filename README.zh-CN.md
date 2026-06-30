@@ -185,7 +185,7 @@ material intake → structured extraction → provenance graph → detectors
 | `docs/self-audit-guide.md` | 面向非开发者的自查指南。 |
 | `docs/architecture.md`、`docs/design-notes.md` | 架构和设计说明。 |
 | `evals/` | 中性 synthetic packages、评测 harness 和 ground truth。 |
-| `benchmarks/` | true PDF、scanned PDF OCR 和 real-image 回归基准。 |
+| `benchmarks/` | true PDF、scanned PDF OCR、real-image 回归基准，以及 PPPR public-concern benchmark scaffold。 |
 | `webapp/` | 本地 FastAPI + React/Vite 自查界面，包装现有 CLI artifact。 |
 
 ---
@@ -240,6 +240,13 @@ python3 benchmarks/real_image/run_real_image_benchmark.py    # 真实 public-dom
 ```
 
 `make validate` 会在缺少 OCR runtime 时跳过 scanned-PDF benchmark；CI 会安装 `tesseract-ocr` 并把它作为必过 gate。
+
+`benchmarks/pppr_integrity_benchmark/` 是 post-publication public concern benchmark 的脚手架：
+PubPeer 只作为 discovery/弱公共关注元数据，Crossref/Retraction Watch 作为 publication-status
+元数据，PMC Open Access 作为合法文章材料来源，ORI samples 作为小型图像单元测试。它不是 PubPeer
+爬虫，不保存评论全文，也不把 PubPeer 评论当成不端真值。真正构建前请先读
+[`docs/benchmarking_with_pubpeer_and_rwdb.md`](docs/benchmarking_with_pubpeer_and_rwdb.md) 和
+[`docs/data_ethics_and_legal_boundaries.md`](docs/data_ethics_and_legal_boundaries.md)。
 
 ### 外部文献短语检索
 

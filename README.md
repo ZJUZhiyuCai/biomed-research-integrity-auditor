@@ -222,7 +222,7 @@ These are the design choices that keep the audit restrained, auditable, and hard
 | `docs/self-audit-guide.md` | Non-developer guide to preparing materials and reading the report. |
 | `docs/architecture.md`, `docs/design-notes.md` | Pipeline architecture and design rationale. |
 | `evals/` | Neutral synthetic packages, the eval harness, and ground truth. |
-| `benchmarks/` | True-PDF, scanned-PDF OCR, and real-image regression benchmarks. |
+| `benchmarks/` | True-PDF, scanned-PDF OCR, real-image regression benchmarks, and the PPPR public-concern benchmark scaffold. |
 | `webapp/` | Local FastAPI + React/Vite self-audit UI that wraps the existing CLI artifacts. |
 
 ---
@@ -262,6 +262,25 @@ python3 evals/run_eval.py score          # scorecards land in evals/scorecards/
 
 The harness rewards **restraint** as much as recall: a model fails by over-claiming, ignoring
 benign explanations, exceeding risk caps, or using verdict language — not just by missing a risk.
+
+### Public-concern benchmark scaffold
+
+`benchmarks/pppr_integrity_benchmark/` contains a scaffold for a post-publication public concern
+benchmark using PubPeer as discovery metadata, Crossref/Retraction Watch as publication-status
+metadata, PMC Open Access as a permitted article-material source, and ORI samples as small image
+unit cases.
+
+It is intentionally **not** a PubPeer scraper and does not store PubPeer comments or non-OA article
+files. Start with:
+
+```bash
+python3 benchmarks/pppr_integrity_benchmark/scripts/build_rwdb_index.py --help
+python3 benchmarks/pppr_integrity_benchmark/scripts/evaluate_audit_outputs.py --help
+```
+
+Read [`docs/benchmarking_with_pubpeer_and_rwdb.md`](docs/benchmarking_with_pubpeer_and_rwdb.md)
+and [`docs/data_ethics_and_legal_boundaries.md`](docs/data_ethics_and_legal_boundaries.md) before
+building any real cases.
 
 **Blind-testing note:** the tested agent must receive only the case package path, never
 `ground_truth/`, `outputs/`, `scorecards/`, or `prompts/`. For stricter evaluation, copy the case

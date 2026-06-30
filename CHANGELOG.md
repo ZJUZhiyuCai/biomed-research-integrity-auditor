@@ -2,7 +2,18 @@
 
 ## Unreleased
 
-_No changes yet._
+### Added
+- PPPR/public-concern benchmark scaffold under `benchmarks/pppr_integrity_benchmark/`, including
+  a dataset card, data-ethics boundaries, finding-level label schema, header-only source/label
+  manifests, and offline scripts for RWDB/Crossref normalization, PubPeer manifest normalization,
+  PMC OA local-package assembly, matched-control metadata, benchmark running, and audit-output
+  evaluation.
+- Documentation for PubPeer/RWDB/PMC OA/ORI benchmark use that explicitly treats PubPeer as case
+  discovery / weak public-concern metadata, not misconduct ground truth, and forbids scraping,
+  comment redistribution, and clean-paper labels for controls.
+
+### Changed
+- `make validate` now compiles nested benchmark helper scripts.
 
 ## v0.6.0 - Submission QC Packet
 

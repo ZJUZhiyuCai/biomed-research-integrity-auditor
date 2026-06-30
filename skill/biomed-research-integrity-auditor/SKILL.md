@@ -218,6 +218,7 @@ Scripts are screening aids. Read or patch them before relying on them in unfamil
 - `../../benchmarks/true_pdf/run_true_pdf_benchmark.py`: true binary-PDF benchmark that verifies compressed machine text can be extracted for package-internal overlap screening.
 - `../../benchmarks/scanned_pdf/run_scanned_pdf_benchmark.py`: image-only PDF OCR benchmark; requires OCR runtime unless run with skip mode.
 - `../../benchmarks/real_image/run_real_image_benchmark.py`: real public-domain microscopy-image duplicate benchmark.
+- `../../benchmarks/pppr_integrity_benchmark/`: post-publication public concern benchmark scaffold. Use PubPeer only as discovery/weak public-concern metadata through permitted channels; do not scrape or redistribute comments. Use Crossref/RWDB for publication-status metadata, PMC OA for licensed article materials, ORI samples for image unit tests, and manually curated finding-level labels for evaluation.
 - `../../detectors/stats/pseudoreplication_screen.py`: unit-of-analysis mismatch candidate detector.
 - `../../calibrators/contextual_joiner.py`: enrich detector candidates with disclosed-reuse and source-availability context before calibration.
 - `../../calibrators/risk_cap_engine.py`: convert detector candidates into capped findings.

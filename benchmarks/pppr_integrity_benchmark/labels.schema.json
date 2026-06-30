@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.org/biomed-research-integrity-auditor/pppr_label.schema.json",
+  "title": "PPPR Finding-Level Label",
+  "type": "object",
+  "required": [
+    "case_id",
+    "label_id",
+    "source",
+    "source_url",
+    "paper_location",
+    "issue_type",
+    "label_strength",
+    "expected_risk",
+    "benign_explanation_possible",
+    "required_materials_to_resolve"
+  ],
+  "properties": {
+    "case_id": {"type": "string"},
+    "doi": {"type": "string"},
+    "pmid": {"type": "string"},
+    "pmcid": {"type": "string"},
+    "label_id": {"type": "string"},
+    "source": {
+      "enum": [
+        "pubpeer_manual_annotation",
+        "rwdb_metadata",
+        "crossref_metadata",
+        "pmc_oa_public_material",
+        "ori_unit_sample",
+        "manual_public_material_annotation"
+      ]
+    },
+    "source_url": {"type": "string"},
+    "paper_location": {
+      "type": "object",
+      "properties": {
+        "figure": {"type": "string"},
+        "panel": {"type": "string"},
+        "table": {"type": "string"},
+        "paragraph": {"type": "string"},
+        "caption_text": {"type": "string"}
+      },
+      "additionalProperties": true
+    },
+    "issue_type": {
+      "enum": [
+        "image_global_similarity",
+        "image_local_reuse",
+        "same_image_copy_move",
+        "western_blot_or_gel",
+        "microscopy_reuse",
+        "statistics_or_numeric",
+        "text_overlap",
+        "reporting_gap",
+        "methodological_concern",
+        "publication_status",
+        "metadata_status"
+      ]
+    },
+    "modality": {"type": "string"},
+    "evidence": {"type": "object"},
+    "benign_explanation_possible": {"type": "boolean"},
+    "benign_explanation_type": {"type": "string"},
+    "expected_risk": {
+      "enum": ["R1", "R2", "R2_or_R3", "R3", "R3_or_R4", "R4"]
+    },
+    "label_strength": {
+      "enum": [
+        "weak_pubpeer_signal",
+        "manually_verified_public_evidence",
+        "journal_confirmed_correction",
+        "journal_confirmed_retraction",
+        "ori_unit_sample"
+      ]
+    },
+    "annotator_1": {"type": "string"},
+    "annotator_2": {"type": "string"},
+    "adjudicated": {"type": "boolean"},
+    "required_materials_to_resolve": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "notes": {"type": "string"}
+  },
+  "not": {
+    "anyOf": [
+      {"required": ["misconduct"]},
+      {"required": ["fraud"]},
+      {"required": ["fake"]},
+      {"required": ["guilty"]}
+    ]
+  },
+  "additionalProperties": true
+}
