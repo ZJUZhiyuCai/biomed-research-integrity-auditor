@@ -1,0 +1,28 @@
+standard: NATURE_IMAGE_INTEGRITY
+scope_note: "Manual checklist template only; image detectors may emit candidates, but policy compliance requires human review."
+items:
+  - id: NATURE_IMG_01
+    name: Unprocessed blot or gel scans supplied where applicable
+    status: missing
+    evidence_files: []
+    reviewer_note: ""
+  - id: NATURE_IMG_02
+    name: Splicing, grouping, or rearrangement disclosed in figure legend
+    status: missing
+    evidence_files: []
+    reviewer_note: ""
+  - id: NATURE_IMG_03
+    name: Brightness and contrast adjustments applied consistently and globally
+    status: missing
+    evidence_files: []
+    reviewer_note: ""
+  - id: NATURE_IMG_04
+    name: Microscopy acquisition and processing metadata documented
+    status: missing
+    evidence_files: []
+    reviewer_note: ""
+  - id: NATURE_IMG_05
+    name: Scale bars, channels, LUTs, and merge information documented
+    status: missing
+    evidence_files: []
+    reviewer_note: ""

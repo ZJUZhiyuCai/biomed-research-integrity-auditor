@@ -1,0 +1,75 @@
+standard: ARRIVE_2_0
+scope_note: "Manual checklist template only; the current pipeline records completion status but does not auto-certify ARRIVE compliance."
+applies_if:
+  animal_study: true
+items:
+  - id: ARRIVE_E10_01
+    name: Study design
+    required_evidence: [groups_compared, experimental_unit, control_group]
+    status: missing
+    manuscript_location: ""
+    evidence_files: []
+    reviewer_note: ""
+  - id: ARRIVE_E10_02
+    name: Sample size
+    required_evidence: [sample_size_per_group, rationale_or_power_analysis]
+    status: missing
+    manuscript_location: ""
+    evidence_files: []
+    reviewer_note: ""
+  - id: ARRIVE_E10_03
+    name: Inclusion and exclusion criteria
+    required_evidence: [predefined_criteria, exclusions_reported]
+    status: missing
+    manuscript_location: ""
+    evidence_files: []
+    reviewer_note: ""
+  - id: ARRIVE_E10_04
+    name: Randomisation
+    required_evidence: [allocation_method, randomisation_unit]
+    status: missing
+    manuscript_location: ""
+    evidence_files: []
+    reviewer_note: ""
+  - id: ARRIVE_E10_05
+    name: Blinding
+    required_evidence: [who_was_blinded, when_blinding_was_used]
+    status: missing
+    manuscript_location: ""
+    evidence_files: []
+    reviewer_note: ""
+  - id: ARRIVE_E10_06
+    name: Outcome measures
+    required_evidence: [primary_outcome, secondary_outcomes]
+    status: missing
+    manuscript_location: ""
+    evidence_files: []
+    reviewer_note: ""
+  - id: ARRIVE_E10_07
+    name: Statistical methods
+    required_evidence: [analysis_unit, statistical_tests, assumptions]
+    status: missing
+    manuscript_location: ""
+    evidence_files: []
+    reviewer_note: ""
+  - id: ARRIVE_E10_08
+    name: Experimental animals
+    required_evidence: [species_strain_sex_age_weight, source]
+    status: missing
+    manuscript_location: ""
+    evidence_files: []
+    reviewer_note: ""
+  - id: ARRIVE_E10_09
+    name: Experimental procedures
+    required_evidence: [procedure_details, timing, location]
+    status: missing
+    manuscript_location: ""
+    evidence_files: []
+    reviewer_note: ""
+  - id: ARRIVE_E10_10
+    name: Results
+    required_evidence: [numbers_analysed, summary_statistics, adverse_events]
+    status: missing
+    manuscript_location: ""
+    evidence_files: []
+    reviewer_note: ""

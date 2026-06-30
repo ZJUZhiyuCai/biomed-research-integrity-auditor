@@ -24,6 +24,7 @@ pipeline**, and a **blind-evaluation harness**.
 
 - Screen figures for image near-duplicates and same-image copy-move.
 - Cross-check declared figure-to-raw traceability and record positive provenance evidence.
+- Record an audit snapshot with file hashes, optional claim-to-evidence coverage, and a submission QC packet.
 - Check numeric/statistical consistency in source or summary tables (SD/SEM/n, p-value range, integer counts).
 - Screen package-internal text overlap, with optional external phrase-search triage.
 - Produce a neutral report with an `R0`–`R4` risk register, an evidence ledger, and an explicit coverage section.
@@ -70,6 +71,10 @@ Each run writes to the output directory:
 - `audit-report.md` — the human-readable report (scope, coverage, missing materials, risk register, evidence ledger).
 - `AUDIT_JSON_SUMMARY.json` — the same findings in machine-readable form.
 - `coverage.json`, `calibrated_findings.json`, and per-detector outputs — supporting detail.
+- `audit_snapshot.json` and `file_hash_manifest.json` — the exact package version reviewed, including SHA-256 hashes.
+- `claim_coverage.json` / `claim_coverage.csv` — claim-to-evidence coverage when `claim_manifest.csv` is supplied.
+- `submission_qc_packet/` — a leave-behind packet with the report, coverage, unresolved actions, verified traceability,
+  missing materials, file hashes, claim coverage, and an author sign-off template.
 
 To audit your own package, point the command at your folder and pick a mode
 (`--mode internal_presubmission` is the default; `external_public_material` and
@@ -81,6 +86,34 @@ python3 scripts/audit_package.py /path/to/my_package --output-dir audit_outputs/
 
 **Authors:** the [self-audit guide](docs/self-audit-guide.md) walks through how to lay out your
 materials, run the audit, and read the report — including which conclusions you may not draw.
+
+### Optional claim-to-evidence manifest
+
+For a stronger pre-submission review, add `claim_manifest.csv` at the package root (or pass
+`--claim-manifest /path/to/claim_manifest.csv`). Each row links a manuscript claim to source data,
+raw records, analysis code, and protocol records:
+
+```csv
+claim_id,claim_text,manuscript_location,figure_or_table,source_data,raw_record,analysis_code,protocol,owner,status
+C001,"Treatment increases signal intensity",Results p.4,Fig1A,source_data/Fig1.csv,raw_images/acq_001.tif,statistics_code/fig1.ipynb,protocols/microscopy.md,first_author,ready
+```
+
+The report then includes **Claim Coverage** counts. This is a completeness view, not a claim that
+the scientific conclusion is true.
+
+### Re-audit diff
+
+After fixing gaps, compare two audit outputs:
+
+```bash
+python3 scripts/compare_audit_runs.py audit_outputs/v1 audit_outputs/v2 \
+  --output audit_outputs/v2/re_audit_diff.json \
+  --csv audit_outputs/v2/re_audit_diff.csv
+```
+
+You can also pass `--compare-to audit_outputs/v1` to `scripts/audit_package.py` when running v2.
+The diff reports changes in risk counts, missing materials, verified traceability, unresolved
+actions, and claim-evidence gaps. It is not a pass/fail decision.
 
 ### Local web app (V0.5)
 
@@ -180,6 +213,7 @@ These are the design choices that keep the audit restrained, auditable, and hard
 | --- | --- |
 | `skill/biomed-research-integrity-auditor/` | The installable Codex skill (instructions, templates, references, helper scripts). |
 | `scripts/audit_package.py` | The default contract-first orchestrator for a package audit. |
+| `scripts/submission_qc.py`, `scripts/compare_audit_runs.py` | Submission QC packet helpers and re-audit diff. |
 | `detectors/` | Candidate detectors (image, statistics, text) that emit evidence, not verdicts. |
 | `calibrators/` | Risk-cap and evidence-strength calibration, plus contract validation. |
 | `provenance/` | Resource-graph builders that separate expected traceability from reuse risk. |

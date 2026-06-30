@@ -1,0 +1,28 @@
+standard: ICMJE_AUTHORSHIP_AND_DISCLOSURE
+scope_note: "Manual checklist template only; it supports author responsibility review and does not replace journal disclosure forms."
+items:
+  - id: ICMJE_AUTHOR_01
+    name: Substantial contribution documented
+    status: missing
+    evidence_files: []
+    reviewer_note: ""
+  - id: ICMJE_AUTHOR_02
+    name: Drafting or critical revision documented
+    status: missing
+    evidence_files: []
+    reviewer_note: ""
+  - id: ICMJE_AUTHOR_03
+    name: Final approval documented
+    status: missing
+    evidence_files: []
+    reviewer_note: ""
+  - id: ICMJE_AUTHOR_04
+    name: Agreement to be accountable for accuracy and integrity documented
+    status: missing
+    evidence_files: []
+    reviewer_note: ""
+  - id: ICMJE_DISCLOSURE_01
+    name: Financial and non-financial relationships disclosed
+    status: missing
+    evidence_files: []
+    reviewer_note: ""

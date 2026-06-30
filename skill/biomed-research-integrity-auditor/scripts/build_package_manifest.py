@@ -31,6 +31,21 @@ CATEGORY_RULES = [
     ("flow_fcs", ("flow", "fcs", "flowjo", "workspace", "gating"), {".fcs", ".wsp", ".jo", ".pdf", ".png", ".tif", ".tiff"}),
 ]
 
+TOP_LEVEL_CATEGORY_OVERRIDES = {
+    "manuscript": "manuscript",
+    "figures": "figures",
+    "raw_images": "raw_images",
+    "figure_assembly": "figure_assembly",
+    "source_data": "source_data",
+    "statistics_code": "statistics_code",
+    "protocols": "protocols",
+    "supplementary": "supplementary",
+    "ethics_irb": "ethics_irb",
+    "clinical_registration": "clinical_registration",
+    "omics_accession": "omics_accession",
+    "flow_fcs": "flow_fcs",
+}
+
 BASE_EXPECTED = {
     "internal": ["manuscript", "supplementary", "source_data", "figures"],
     "external": ["manuscript"],
@@ -55,6 +70,8 @@ def sha256_file(path: Path) -> str:
 
 
 def classify(path: Path) -> str:
+    if path.parts and path.parts[0] in TOP_LEVEL_CATEGORY_OVERRIDES:
+        return TOP_LEVEL_CATEGORY_OVERRIDES[path.parts[0]]
     lowered = str(path).lower()
     suffix = path.suffix.lower()
     scores: dict[str, int] = {}

@@ -1,0 +1,2 @@
+claim_id,claim_text,manuscript_location,figure_or_table,source_data,raw_record,analysis_code,protocol,owner,status
+C001,"Example claim text",Results p.1,Fig1A,source_data/Figure_1_source.csv,raw_images/acquisition_001.tif,statistics_code/fig1_analysis.ipynb,protocols/microscopy_protocol.md,first_author,needs_review

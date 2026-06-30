@@ -16,8 +16,10 @@
 
 V0.5 implements the P0 path plus the highest-leverage package-prep P1 slice: a local FastAPI job
 runner, artifact API, React/Vite report viewer, package scaffold/inspection tools, a visual
-assembly-manifest builder, and launcher. It intentionally does not include the writing/submission
-module, PDF export, network reference checks, or desktop packaging yet.
+assembly-manifest builder, and launcher. The CLI now writes submission-QC artifacts and a basic
+HTML/PDF report export inside `submission_qc_packet/`; dedicated web UI tabs/buttons for those
+artifacts are still future work. It intentionally does not include network reference checks or
+desktop packaging yet.
 
 Implemented files:
 
@@ -99,8 +101,11 @@ Security constraints:
 
 ## P1 - the features that make it usable for non-developers
 
-- Re-audit and diff: re-run after fixes and show R-level changes; a correction-plan tracker mapped to [skill/biomed-research-integrity-auditor/templates/presubmission-correction-plan.md](../skill/biomed-research-integrity-auditor/templates/presubmission-correction-plan.md).
-- Export to PDF/self-contained HTML for co-authors.
+- Re-audit and diff UI: CLI diff artifacts exist via `scripts/compare_audit_runs.py` and
+  `scripts/audit_package.py --compare-to`; the web app still needs a first-class comparison view
+  and correction-plan tracker mapped to [skill/biomed-research-integrity-auditor/templates/presubmission-correction-plan.md](../skill/biomed-research-integrity-auditor/templates/presubmission-correction-plan.md).
+- Export UI for CLI-generated submission QC packets, including report HTML/PDF, unresolved actions,
+  claim coverage, and author sign-off template.
 
 ## P1/P2 - Writing & Submission Readiness module (separate tab, fenced)
 
@@ -135,7 +140,7 @@ Then grammar (P2, clearly labeled "writing quality, not integrity"):
 ## Suggested sequencing
 
 - P0 (make the existing pipeline usable by non-devs): backend job-runner + artifact API + React report viewer + local launcher.
-- P1 (close the loop): re-audit/diff, export, reporting-standard + submission-readiness checklists.
+- P1 (close the loop): web UI for re-audit/diff, QC-packet export/download, reporting-standard + submission-readiness checklists.
 - P2 (writing depth + network checks): grammar engine, reference/DOI/retraction checks, stats-completeness, journal presets, optional desktop packaging.
 
 ## Implementation checklist
@@ -146,8 +151,10 @@ Then grammar (P2, clearly labeled "writing quality, not integrity"):
 - [x] Build the React report viewer: coverage banner, R0-R4 risk register with evidence ledger, side-by-side evidence-crop viewer, positive-provenance and missing-materials panels, bilingual scaffold.
 - [x] Add the local launcher, persistent local-first/privacy banner, and audit history/delete.
 - [x] Build the visual figure-to-raw/source assembly-manifest builder that writes `figure_assembly/assembly_manifest.csv`, plus a package-prep wizard.
-- [ ] Add re-audit and R-level diff plus a correction-plan tracker mapped to the presubmission-correction-plan template.
-- [ ] Add PDF/self-contained HTML export of the report.
+- [x] Add CLI re-audit diff artifacts.
+- [x] Add CLI submission-QC packet with report HTML/PDF exports.
+- [ ] Add web UI re-audit/R-level diff plus a correction-plan tracker mapped to the presubmission-correction-plan template.
+- [ ] Add web UI claim-coverage and QC-packet download surfaces for CLI-generated artifacts.
 - [ ] Build the separate Writing & Submission Readiness module v1: interactive reporting-standard checklists (prefilled) and submission-readiness checklist, with no network calls.
 - [ ] Add opt-in reference/DOI resolution and retracted-reference checks, plus reference vs in-text consistency.
 - [ ] Add grammar/language checking (local LanguageTool default; optional LLM via user key with explicit opt-in), clearly labeled as writing quality, not integrity.

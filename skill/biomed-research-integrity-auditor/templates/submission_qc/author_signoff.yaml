@@ -1,0 +1,26 @@
+schema_version: "0.1.0"
+audit_id: ""
+scope_note: "Sign-offs document review responsibility; they are not a misconduct or correctness verdict."
+signoffs:
+  figure_preparer:
+    name: ""
+    date: ""
+    confirms:
+      - displayed figures trace to supplied raw/source records where available
+      - image-processing steps and figure assembly decisions are documented
+      - unresolved R3/R4 image concerns have been resolved or escalated before submission
+  data_or_statistical_owner:
+    name: ""
+    date: ""
+    confirms:
+      - source data reproduce reported summary statistics where checked
+      - n and experimental units are correctly defined
+      - exclusions and outlier decisions are documented
+  corresponding_author:
+    name: ""
+    date: ""
+    confirms:
+      - unresolved R3/R4 concerns are resolved before submission
+      - data, code, materials, and ethics statements match supplied records
+      - authors reviewed the final submission QC packet
+  all_authors: []

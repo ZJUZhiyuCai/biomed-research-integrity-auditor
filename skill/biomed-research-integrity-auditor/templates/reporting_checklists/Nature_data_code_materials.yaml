@@ -1,0 +1,23 @@
+standard: NATURE_DATA_CODE_MATERIALS
+scope_note: "Manual checklist template only; availability statements must be reviewed against journal policy and supplied records."
+items:
+  - id: NATURE_AVAIL_01
+    name: Data availability statement matches supplied source/raw records
+    status: missing
+    evidence_files: []
+    reviewer_note: ""
+  - id: NATURE_AVAIL_02
+    name: Code availability statement covers analysis code or documented exception
+    status: missing
+    evidence_files: []
+    reviewer_note: ""
+  - id: NATURE_AVAIL_03
+    name: Protocol availability or methods detail sufficient for replication
+    status: missing
+    evidence_files: []
+    reviewer_note: ""
+  - id: NATURE_AVAIL_04
+    name: Key biological resources use stable identifiers where available
+    status: missing
+    evidence_files: []
+    reviewer_note: ""

@@ -1438,6 +1438,88 @@ class EndToEndTests(unittest.TestCase):
                     self.assertGreaterEqual(len(summary["positive_provenance"]), 2)
                     self.assertEqual(coverage["image_files_unreadable"], 0)
 
+    def test_submission_qc_artifacts_snapshot_and_claim_coverage(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "out"
+            run([
+                PYTHON,
+                "scripts/audit_package.py",
+                "examples/full_presubmission_package",
+                "--output-dir",
+                str(out),
+                "--case-id",
+                "full_presubmission_package",
+            ])
+            snapshot = json.loads((out / "audit_snapshot.json").read_text(encoding="utf-8"))
+            self.assertEqual(snapshot["audit_id"], "full_presubmission_package")
+            self.assertRegex(snapshot["package_root_hash"], r"^[0-9a-f]{64}$")
+            self.assertTrue(any(item["path"] == "claim_manifest.csv" for item in snapshot["files"]))
+
+            manifest = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
+            self.assertGreaterEqual(manifest["category_counts"].get("figure_assembly", 0), 1)
+
+            claim_coverage = json.loads((out / "claim_coverage.json").read_text(encoding="utf-8"))
+            self.assertTrue(claim_coverage["supplied"])
+            self.assertEqual(claim_coverage["claims_declared"], 2)
+            self.assertEqual(claim_coverage["claims_with_unresolved_evidence_gap"], 0)
+
+            summary = json.loads((out / "AUDIT_JSON_SUMMARY.json").read_text(encoding="utf-8"))
+            self.assertIn("claim_coverage", summary)
+            self.assertEqual(summary["claim_coverage"]["claims_with_raw_records"], 2)
+
+            pipeline_summary = json.loads((out / "pipeline_summary.json").read_text(encoding="utf-8"))
+            packet = pipeline_summary["submission_qc_packet"]
+            self.assertIn("author_signoff.yaml", packet["files"])
+            self.assertIn("audit-report.html", packet["files"])
+            self.assertIn("unresolved_actions.csv", packet["files"])
+            self.assertTrue((out / "unresolved_actions.csv").is_file())
+            self.assertTrue((out / "missing_materials.csv").is_file())
+            self.assertTrue((out / "verified_traceability.csv").is_file())
+            self.assertIn("## Claim Coverage", (out / "audit-report.md").read_text(encoding="utf-8"))
+
+    def test_re_audit_diff_script_compares_submission_qc_metrics(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            old = tmp_path / "old"
+            new = tmp_path / "new"
+            old.mkdir()
+            new.mkdir()
+            for path, risk, missing, provenance, actions, claim_gaps in [
+                (old, "R3", ["source data"], [], ["ACT-0001", "ACT-0002"], 2),
+                (new, "R1", [], [{"provenance_id": "PROV-0001"}], ["ACT-0001"], 0),
+            ]:
+                (path / "AUDIT_JSON_SUMMARY.json").write_text(json.dumps({
+                    "overall_risk": risk,
+                    "materials_missing": missing,
+                    "positive_provenance": provenance,
+                    "findings": [{"risk_level": risk, "finding_type": "example"}],
+                }), encoding="utf-8")
+                (path / "claim_coverage.json").write_text(json.dumps({
+                    "claims_with_unresolved_evidence_gap": claim_gaps,
+                }), encoding="utf-8")
+                (path / "unresolved_actions.csv").write_text(
+                    "action_id,risk_level,action_type,location,required_action,source\n"
+                    + "".join(f"{item},R1,example,,,test\n" for item in actions),
+                    encoding="utf-8",
+                )
+            output = tmp_path / "diff.json"
+            csv_output = tmp_path / "diff.csv"
+            run([
+                PYTHON,
+                "scripts/compare_audit_runs.py",
+                str(old),
+                str(new),
+                "--output",
+                str(output),
+                "--csv",
+                str(csv_output),
+            ])
+            diff = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual(diff["overall_risk"], {"previous": "R3", "current": "R1"})
+            self.assertEqual(diff["positive_provenance_count"], {"previous": 0, "current": 1})
+            self.assertEqual(diff["unresolved_action_count"], {"previous": 2, "current": 1})
+            self.assertIn("claim_evidence_gaps,2,0", csv_output.read_text(encoding="utf-8"))
+
     def test_report_includes_audit_coverage_scope(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             package = Path(tmp) / "pkg"

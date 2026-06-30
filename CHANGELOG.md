@@ -2,7 +2,21 @@
 
 ## Unreleased
 
+_No changes yet._
+
+## v0.6.0 - Submission QC Packet
+
 ### Added
+- Submission-QC artifact foundation: `audit_snapshot.json` with package file hashes,
+  `file_hash_manifest.json`, optional `claim_coverage.json` / `.csv` from `claim_manifest.csv`,
+  root-level `missing_materials.csv`, `verified_traceability.csv`, `unresolved_actions.csv`,
+  and a `submission_qc_packet/` leave-behind bundle with report HTML/PDF exports and an
+  `author_signoff.yaml` template.
+- Re-audit comparison support through `scripts/compare_audit_runs.py` and
+  `scripts/audit_package.py --compare-to`, summarizing changes in risk counts, missing materials,
+  verified traceability, unresolved actions, and claim-evidence gaps without pass/fail language.
+- Machine-readable submission-QC templates for `claim_manifest.csv`, author sign-off, ARRIVE 2.0,
+  ICMJE authorship/disclosure, Nature image integrity, and Nature data/code/material availability.
 - Local web app package-prep tools: inspect recommended package folders, create the scaffold
   without overwriting supplied files, and write `figure_assembly/assembly_manifest.csv` declared
   figure-to-source rows with package-relative path and relation-type validation.
@@ -19,6 +33,10 @@
 - Archived Codex-orchestrated eval evidence under `evals/llm_runs/2026-06-30-codex-orchestrated/`: 30 synthetic cases scored, 30 passed, 0 boundary violations, and 0 risk-cap violations, with a manifest that states this is not an independent third-party blinded LLM run.
 
 ### Changed
+- Package manifest classification now respects the top-level recommended package directories before
+  filename keyword heuristics, so `figure_assembly/assembly_manifest.csv` is no longer reported as
+  a missing figure-assembly category while source-data files with `Figure_*` names remain source data.
+- Project version advanced to `0.6.0`.
 - Image detectors now normalize high-bit-depth grayscale inputs before hashing or tile screening, preserving contrast instead of relying on default PIL RGB conversion.
 - The live skill, README, and architecture docs now describe same-image copy-move coverage and privacy-aware external literature search through `scripts/audit_package.py`.
 - Implementation-boundary alignment for statistics: removed the `benford_style` and `p_value_clustering` caps from `schemas/risk_rules.yaml` because no detector emits them, and updated README, SKILL, architecture, and the module checklist to state explicitly that Benford-style first-digit analysis and p-value clustering/distribution tests are manual checks, not automated detector outputs. Only p-value range/validity is screened automatically.

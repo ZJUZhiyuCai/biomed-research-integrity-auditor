@@ -40,7 +40,8 @@ Included:
 - Local FastAPI backend bound to `127.0.0.1`.
 - Background jobs that invoke `scripts/audit_package.py`.
 - JSON API for audit status, `AUDIT_JSON_SUMMARY.json`, `coverage.json`,
-  `calibrated_findings.json`, `pipeline_summary.json`, Markdown reports, and evidence crops.
+  `calibrated_findings.json`, `pipeline_summary.json`, Markdown reports, submission-QC artifact
+  paths, and evidence crops.
 - Path traversal protection for evidence serving and guarded zip-package extraction.
 - React/Vite report viewer with audit coverage, R0-R4 register, positive provenance evidence,
   missing materials, evidence images, local history, delete, and Chinese/English labels.
@@ -48,11 +49,12 @@ Included:
   `figure_assembly/assembly_manifest.csv` rows for declared figure-to-source relationships.
 - Package-prep guardrails: bounded directory inventory, visible scan warnings, package-relative
   path checks, and relation/source-role validation before manifest rows are written.
+- CLI-generated submission-QC artifacts are available in each audit output directory, including
+  `audit_snapshot.json`, `claim_coverage.*`, `unresolved_actions.csv`, and `submission_qc_packet/`.
 
 Not included yet:
 
-- Writing/submission-readiness module.
-- PDF export.
+- Dedicated web UI tabs/buttons for claim coverage, author sign-off, or QC-packet download.
 - Network reference/DOI/retraction checks.
 - Desktop packaging.
 

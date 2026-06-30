@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.org/biomed-research-integrity-auditor/claim_manifest.schema.json",
+  "title": "Claim Manifest CSV Contract",
+  "description": "Machine-readable contract for claim_manifest.csv rows. This schema describes row objects after CSV parsing.",
+  "type": "object",
+  "required": [
+    "claim_id",
+    "claim_text"
+  ],
+  "properties": {
+    "claim_id": {"type": "string"},
+    "claim_text": {"type": "string"},
+    "manuscript_location": {"type": "string"},
+    "figure_or_table": {"type": "string"},
+    "source_data": {
+      "type": "string",
+      "description": "Package-relative path(s), separated by semicolons when multiple files support the claim."
+    },
+    "raw_record": {
+      "type": "string",
+      "description": "Package-relative raw record path(s), separated by semicolons."
+    },
+    "analysis_code": {
+      "type": "string",
+      "description": "Package-relative analysis code, notebook, or script path(s), separated by semicolons."
+    },
+    "protocol": {
+      "type": "string",
+      "description": "Package-relative protocol, sample map, batch map, or methods record path(s), separated by semicolons."
+    },
+    "owner": {"type": "string"},
+    "status": {
+      "type": "string",
+      "description": "Recommended values: ready, needs_review, missing_materials, or not_applicable."
+    }
+  },
+  "additionalProperties": true
+}

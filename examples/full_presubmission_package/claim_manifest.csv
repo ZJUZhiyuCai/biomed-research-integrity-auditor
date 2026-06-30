@@ -1,0 +1,3 @@
+claim_id,claim_text,manuscript_location,figure_or_table,source_data,raw_record,analysis_code,protocol,owner,status
+C001,"Microscopy signal is traceable to the supplied acquisition record and source table.",Results p.2,Figure 1A,source_data/Figure_1_source.csv,raw_images/acquisition_001.png,statistics_code/analysis_notes.txt,protocols/methods_notes.txt,first_author,ready
+C002,"Blot quantification is traceable to the supplied membrane image and densitometry table.",Results p.3,Figure 2A,source_data/Figure_2_source.csv,raw_images/full_membrane_002.png,statistics_code/analysis_notes.txt,protocols/sample_map.txt,first_author,ready

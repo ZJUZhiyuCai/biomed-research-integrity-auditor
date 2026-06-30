@@ -147,8 +147,23 @@ Reports end with exactly one `AUDIT_JSON_SUMMARY` block. In addition to calibrat
 - `positive_provenance`: declared figure-to-raw/source traceability entries such as `expected_traceability`.
 - `traceability_gaps`: unresolved figure-to-raw/source similarities capped as R1 completeness gaps.
 - `audit_coverage`: which detector modules executed, which modules were not run (including offline external search and the always-manual methodology/reporting-standard compliance checks), image panels screened, unreadable image files, source tables screened, detector failures, and a scope note. This lets a reader separate "screened and clean within scope" from "not screened", so an empty finding list is not mistaken for a verified-correct manuscript.
+- `claim_coverage`: optional claim-to-evidence completeness counts when `claim_manifest.csv` is supplied. This records whether claims are linked to source data, raw records, analysis code, and protocols; it does not validate scientific truth.
 
 Positive provenance is not proof of authenticity; it only records traceability within supplied materials. Audit coverage is descriptive scope, not a quality score.
+
+## Submission QC Artifacts
+
+`scripts/audit_package.py` now writes submission-QC artifacts alongside the ordinary detector outputs:
+
+- `audit_snapshot.json`: audit id, tool version, package root hash, and per-file SHA-256 hashes.
+- `file_hash_manifest.json`: compact file hash manifest for leave-behind review.
+- `claim_coverage.json` / `claim_coverage.csv`: claim-to-evidence coverage from `claim_manifest.csv` if supplied.
+- `missing_materials.csv`, `verified_traceability.csv`, and `unresolved_actions.csv`: CSV exports for co-author review.
+- `submission_qc_packet/`: a bundled packet containing the report, machine-readable summary, coverage, calibrated findings, hash manifest, claim coverage, unresolved actions, and `author_signoff.yaml`.
+
+These outputs are versioning and review artifacts. They must not be displayed as a pass/fail approval, integrity score, or clean-manuscript certificate.
+
+Re-audit comparison is available through `scripts/compare_audit_runs.py` or `scripts/audit_package.py --compare-to <previous_output_dir>`. The diff summarizes changes in risk counts, missing materials, verified provenance, unresolved actions, and claim-evidence gaps.
 
 ## Risk Calibration
 

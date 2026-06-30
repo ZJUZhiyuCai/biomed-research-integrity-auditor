@@ -88,6 +88,21 @@
           "recommended_action": {"type": "string"}
         }
       }
+    },
+    "claim_coverage": {
+      "type": "object",
+      "properties": {
+        "supplied": {"type": "boolean"},
+        "claim_manifest": {"type": ["string", "null"]},
+        "claims_declared": {"type": "integer"},
+        "claims_with_source_data": {"type": "integer"},
+        "claims_with_raw_records": {"type": "integer"},
+        "claims_with_analysis_code": {"type": "integer"},
+        "claims_with_protocol_link": {"type": "integer"},
+        "claims_with_unresolved_evidence_gap": {"type": "integer"},
+        "unresolved_claims": {"type": "array"},
+        "scope_note": {"type": "string"}
+      }
     }
   }
 }

@@ -19,6 +19,22 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from calibrators.contract_validation import ContractError, validate_instance  # noqa: E402
+from scripts.submission_qc import (  # noqa: E402
+    build_audit_snapshot,
+    build_claim_coverage,
+    build_file_hash_manifest,
+    build_re_audit_diff,
+    export_submission_qc_packet,
+    find_claim_manifest,
+    pyproject_version,
+    unresolved_action_rows,
+    write_claim_coverage_csv,
+    write_missing_materials_csv,
+    write_json as write_qc_json,
+    write_re_audit_diff_csv,
+    write_unresolved_actions_csv,
+    write_verified_traceability_csv,
+)
 
 
 PYTHON = sys.executable
@@ -605,6 +621,7 @@ def run_report(
     case_id: str | None,
     output_dir: Path,
     coverage: Path | None = None,
+    claim_coverage: Path | None = None,
 ) -> Path:
     report = output_dir / "audit-report.md"
     cmd = [
@@ -623,6 +640,8 @@ def run_report(
         cmd.extend(["--positive-evidence", str(path)])
     if coverage is not None:
         cmd.extend(["--coverage", str(coverage)])
+    if claim_coverage is not None:
+        cmd.extend(["--claim-coverage", str(claim_coverage)])
     if case_id:
         cmd.extend(["--case-id", case_id])
     run(cmd)
@@ -647,9 +666,26 @@ def run_pipeline(
     case_id: str | None,
     external_literature_provider: str = "auto",
     external_literature_fixture: Path | None = None,
+    claim_manifest: Path | None = None,
+    compare_to: Path | None = None,
 ) -> dict[str, Any]:
     output_dir.mkdir(parents=True, exist_ok=True)
     manifest = build_manifest(package, mode, domains, output_dir)
+    manifest_payload = read_json(manifest)
+    audit_id = case_id or package.name
+    snapshot = build_audit_snapshot(manifest_payload, audit_id, pyproject_version(ROOT))
+    snapshot_path = output_dir / "audit_snapshot.json"
+    write_qc_json(snapshot_path, snapshot)
+    file_hash_manifest_path = output_dir / "file_hash_manifest.json"
+    write_qc_json(file_hash_manifest_path, build_file_hash_manifest(snapshot))
+
+    resolved_claim_manifest = find_claim_manifest(package, claim_manifest)
+    claim_coverage = build_claim_coverage(package, resolved_claim_manifest)
+    claim_coverage_path = output_dir / "claim_coverage.json"
+    write_qc_json(claim_coverage_path, claim_coverage)
+    claim_coverage_csv = output_dir / "claim_coverage.csv"
+    write_claim_coverage_csv(claim_coverage_csv, claim_coverage)
+
     provenance_graph = build_provenance(package, manifest, output_dir)
     detector_outputs = []
     detector_outputs.extend(run_source_detectors(package, output_dir))
@@ -672,16 +708,62 @@ def run_pipeline(
     coverage = build_coverage(package, output_dir, detector_outputs, resolved_provider)
     coverage_path = output_dir / "coverage.json"
     write_json(coverage_path, coverage)
-    report = run_report(manifest, calibrated, detector_outputs, mode, case_id, output_dir, coverage_path)
+    report = run_report(
+        manifest,
+        calibrated,
+        detector_outputs,
+        mode,
+        case_id,
+        output_dir,
+        coverage_path,
+        claim_coverage_path,
+    )
     audit_summary = extract_audit_summary(report)
     audit_summary_path = output_dir / "AUDIT_JSON_SUMMARY.json"
     write_json(audit_summary_path, audit_summary)
+    missing_materials_csv = output_dir / "missing_materials.csv"
+    write_missing_materials_csv(missing_materials_csv, manifest_payload)
+    verified_traceability_csv = output_dir / "verified_traceability.csv"
+    write_verified_traceability_csv(verified_traceability_csv, audit_summary)
+    unresolved_actions_csv = output_dir / "unresolved_actions.csv"
+    write_unresolved_actions_csv(
+        unresolved_actions_csv,
+        unresolved_action_rows(manifest_payload, audit_summary, claim_coverage),
+    )
+
+    re_audit_diff: dict[str, Any] | None = None
+    re_audit_diff_path: Path | None = None
+    re_audit_diff_csv: Path | None = None
+    if compare_to is not None:
+        re_audit_diff = build_re_audit_diff(compare_to, output_dir)
+        re_audit_diff_path = output_dir / "re_audit_diff.json"
+        re_audit_diff_csv = output_dir / "re_audit_diff.csv"
+        write_qc_json(re_audit_diff_path, re_audit_diff)
+        write_re_audit_diff_csv(re_audit_diff_csv, re_audit_diff)
+
+    qc_packet = export_submission_qc_packet(
+        output_dir,
+        manifest_payload,
+        audit_summary,
+        coverage,
+        read_json(calibrated),
+        snapshot,
+        claim_coverage,
+        re_audit_diff,
+    )
 
     result = {
         "package": str(package),
         "mode": mode,
         "output_dir": str(output_dir),
         "manifest": str(manifest),
+        "audit_snapshot": str(snapshot_path),
+        "file_hash_manifest": str(file_hash_manifest_path),
+        "claim_coverage": str(claim_coverage_path),
+        "claim_coverage_csv": str(claim_coverage_csv),
+        "missing_materials_csv": str(missing_materials_csv),
+        "verified_traceability_csv": str(verified_traceability_csv),
+        "unresolved_actions_csv": str(unresolved_actions_csv),
         "provenance_graph": str(provenance_graph),
         "detector_outputs": [str(path) for path in detector_outputs],
         "calibrated_findings": str(calibrated),
@@ -692,7 +774,11 @@ def run_pipeline(
         "overall_risk": audit_summary.get("overall_risk"),
         "external_literature_provider": resolved_provider,
         "coverage": str(coverage_path),
+        "submission_qc_packet": qc_packet,
     }
+    if re_audit_diff_path is not None:
+        result["re_audit_diff"] = str(re_audit_diff_path)
+        result["re_audit_diff_csv"] = str(re_audit_diff_csv)
     positive_count = 0
     for path in detector_outputs:
         payload = read_json(path)
@@ -723,12 +809,28 @@ def main() -> int:
         type=Path,
         help="Deterministic fixture JSON for external_literature_search.py.",
     )
+    parser.add_argument(
+        "--claim-manifest",
+        type=Path,
+        help="Optional claim_manifest.csv linking manuscript claims to source data, raw records, analysis code, and protocols.",
+    )
+    parser.add_argument(
+        "--compare-to",
+        type=Path,
+        help="Optional previous audit output directory for re-audit diff generation.",
+    )
     args = parser.parse_args()
 
     package = args.package_dir.expanduser().resolve()
     if not package.exists() or not package.is_dir():
         raise SystemExit(f"Package directory not found: {package}")
     output_dir = (args.output_dir or (ROOT / "audit_outputs" / package.name)).expanduser().resolve()
+    claim_manifest = args.claim_manifest.expanduser().resolve() if args.claim_manifest else None
+    if claim_manifest is not None and not claim_manifest.is_file():
+        raise SystemExit(f"Claim manifest not found: {claim_manifest}")
+    compare_to = args.compare_to.expanduser().resolve() if args.compare_to else None
+    if compare_to is not None and not compare_to.is_dir():
+        raise SystemExit(f"Previous audit output directory not found: {compare_to}")
     result = run_pipeline(
         package,
         args.mode,
@@ -737,6 +839,8 @@ def main() -> int:
         args.case_id or package.name,
         args.external_literature_provider,
         args.external_literature_fixture.expanduser().resolve() if args.external_literature_fixture else None,
+        claim_manifest,
+        compare_to,
     )
     print(json.dumps(result, indent=2, ensure_ascii=False))
     return 0

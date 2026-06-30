@@ -196,6 +196,7 @@ def build_summary(
     findings: list[dict[str, Any]],
     positive_evidence: list[dict[str, Any]] | None = None,
     coverage: dict[str, Any] | None = None,
+    claim_coverage: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     caps = []
     normalized = normalized_mode(mode)
@@ -217,6 +218,7 @@ def build_summary(
         "traceability_gaps": summary_traceability_gaps(findings),
         "findings": [summary_finding(item) for item in findings],
         **({"audit_coverage": coverage} if coverage else {}),
+        **({"claim_coverage": claim_coverage} if claim_coverage else {}),
     }
 
 
@@ -246,6 +248,39 @@ def render_coverage(coverage: dict[str, Any] | None) -> list[str]:
     return lines
 
 
+def render_claim_coverage(claim_coverage: dict[str, Any] | None) -> list[str]:
+    if not claim_coverage:
+        return []
+    lines = ["## Claim Coverage", ""]
+    if not claim_coverage.get("supplied"):
+        lines += [
+            "No `claim_manifest.csv` was supplied for this audit run.",
+            "",
+            "> Claim coverage is a claim-to-evidence completeness check, not a correctness verdict.",
+            "",
+        ]
+        return lines
+    lines += [table([
+        ["Metric", "Count"],
+        ["Claims declared", str(claim_coverage.get("claims_declared", 0))],
+        ["Claims with source data", str(claim_coverage.get("claims_with_source_data", 0))],
+        ["Claims with raw records", str(claim_coverage.get("claims_with_raw_records", 0))],
+        ["Claims with analysis code", str(claim_coverage.get("claims_with_analysis_code", 0))],
+        ["Claims with protocol link", str(claim_coverage.get("claims_with_protocol_link", 0))],
+        ["Claims with unresolved evidence gap", str(claim_coverage.get("claims_with_unresolved_evidence_gap", 0))],
+    ])]
+    if claim_coverage.get("unresolved_claims"):
+        lines += ["Unresolved claim-to-evidence gaps:", ""]
+        for item in claim_coverage.get("unresolved_claims", []):
+            reasons = ", ".join(item.get("gap_reasons", []) or ["not documented"])
+            lines.append(f"- {item.get('claim_id', '')}: {reasons}")
+        lines.append("")
+    scope_note = claim_coverage.get("scope_note")
+    if scope_note:
+        lines += [f"> {scope_note}", ""]
+    return lines
+
+
 def render_report(
     mode: str,
     manifest: dict[str, Any],
@@ -253,16 +288,18 @@ def render_report(
     case_id: str | None,
     positive_evidence: list[dict[str, Any]] | None = None,
     coverage: dict[str, Any] | None = None,
+    claim_coverage: dict[str, Any] | None = None,
 ) -> str:
     normalized = normalized_mode(mode)
     title = "Biomedical Research Integrity Pre-submission Audit" if normalized == "internal_presubmission" else "Biomedical Literature Concern Triage"
     positive_evidence = positive_evidence or []
-    summary = build_summary(mode, case_id, manifest, findings, positive_evidence, coverage)
+    summary = build_summary(mode, case_id, manifest, findings, positive_evidence, coverage, claim_coverage)
     validate_instance(summary, SUMMARY_SCHEMA, "audit summary")
     lines = [f"# {title}", ""]
     lines += ["## Scope", ""]
     lines += [f"- Mode: {mode}", f"- Package root: {manifest.get('root', 'not supplied')}", ""]
     lines += render_coverage(coverage)
+    lines += render_claim_coverage(claim_coverage)
 
     lines += ["## Missing Materials Matrix", ""]
     missing_rows = [["Category", "Risk", "Reason"]]
@@ -340,6 +377,7 @@ def main() -> int:
     parser.add_argument("--findings", type=Path, action="append", default=[])
     parser.add_argument("--positive-evidence", type=Path, action="append", default=[])
     parser.add_argument("--coverage", type=Path)
+    parser.add_argument("--claim-coverage", type=Path)
     parser.add_argument("--case-id")
     parser.add_argument("--output", type=Path, default=Path("audit-report.md"))
     args = parser.parse_args()
@@ -350,8 +388,9 @@ def main() -> int:
     findings = normalize_findings(finding_payloads)
     positive_evidence = normalize_positive_evidence(positive_payloads)
     coverage = load_json(args.coverage, None) if args.coverage else None
+    claim_coverage = load_json(args.claim_coverage, None) if args.claim_coverage else None
     args.output.write_text(
-        render_report(args.mode, manifest, findings, args.case_id, positive_evidence, coverage),
+        render_report(args.mode, manifest, findings, args.case_id, positive_evidence, coverage, claim_coverage),
         encoding="utf-8",
     )
     print(json.dumps({"output": str(args.output), "findings": len(findings)}, indent=2))

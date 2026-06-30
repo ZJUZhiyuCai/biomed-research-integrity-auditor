@@ -12,8 +12,9 @@ Read the full walkthrough in [`../docs/self-audit-guide.md`](../docs/self-audit-
   risk `R1` with completeness gaps.
 - `full_presubmission_package/` — a realistic pre-submission layout with figures, raw images, a
   structured `figure_assembly/assembly_manifest.csv`, source data, protocols, and analysis
-  notes. Expect overall risk `R1`, two verified figure-to-raw traceability links, and an honest
-  Missing Materials list.
+  notes. It also includes `claim_manifest.csv` with two claim-to-evidence rows. Expect overall
+  risk `R1`, two verified figure-to-raw traceability links, claim coverage with no unresolved
+  claim-evidence gaps, and an honest Missing Materials list.
 
 ## Run
 

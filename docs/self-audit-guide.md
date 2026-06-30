@@ -59,7 +59,8 @@ my_package/
 │   └── assembly_manifest.csv   declares which raw file each figure panel came from
 ├── source_data/                the numbers behind the figures (CSV / TSV / XLSX)
 ├── protocols/                  sample maps, methods notes, batch records
-└── statistics_code/            analysis notes or scripts
+├── statistics_code/            analysis notes or scripts
+└── claim_manifest.csv          optional: links each manuscript claim to evidence files
 ```
 
 ### The assembly manifest (strongly recommended)
@@ -77,6 +78,18 @@ A manifest line is a *claim*, not proof. The tool cross-checks it: a declared
 "same field / same channel" relationship between two figure panels that are actually
 whole-image duplicates is reported as a `manifest_conflict`, not cleared. So you cannot make a
 real duplicate disappear by writing a manifest line.
+
+### The claim manifest (recommended for submission QC)
+
+If you provide `claim_manifest.csv`, the report includes **Claim Coverage**: how many manuscript
+claims have links to source data, raw records, analysis code, and protocols. Format:
+
+```csv
+claim_id,claim_text,manuscript_location,figure_or_table,source_data,raw_record,analysis_code,protocol,owner,status
+C001,"Treatment increases signal intensity",Results p.4,Fig1A,source_data/Fig1.csv,raw_images/acq_001.tif,statistics_code/fig1.ipynb,protocols/microscopy.md,first_author,ready
+```
+
+Claim coverage is only a completeness check. It does not say whether the claim is true.
 
 ---
 
@@ -99,6 +112,10 @@ Outputs land in `audit_outputs/my_package/`:
 - `audit-report.md` — the human-readable report.
 - `AUDIT_JSON_SUMMARY.json` — a machine-readable summary.
 - `coverage.json`, `calibrated_findings.json`, and detector outputs — supporting detail.
+- `audit_snapshot.json` / `file_hash_manifest.json` — file hashes for the exact package version reviewed.
+- `claim_coverage.json` / `claim_coverage.csv` — claim-to-evidence coverage when `claim_manifest.csv` is supplied.
+- `submission_qc_packet/` — a leave-behind packet with unresolved actions, verified traceability,
+  missing materials, file hashes, claim coverage, and an author sign-off template.
 
 ---
 
@@ -127,7 +144,7 @@ python3 scripts/audit_package.py examples/full_presubmission_package --output-di
 
 What to expect: overall risk **R1**, **two positive-traceability links** (each figure panel
 confirmed against its declared raw acquisition, shown under "Verified Traceability Evidence"),
-no risk findings, and a short Missing Materials list. This is the honest "clean within scope,
+two declared claims with source/raw/code/protocol coverage, no risk findings, and a short Missing Materials list. This is the honest "clean within scope,
 with verified traceability, but not a complete audit" result.
 
 > Regenerate the example images with `python3 examples/generate_example_assets.py` (optional;

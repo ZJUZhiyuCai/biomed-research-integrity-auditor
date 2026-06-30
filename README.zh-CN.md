@@ -16,6 +16,7 @@
 
 - 筛查图像近重复、局部 patch 复用、同图内 copy-move 候选。
 - 交叉核对你在 figure assembly manifest 中声明的 figure-to-raw 关系，并记录正向 provenance 证据。
+- 记录本次审计的文件哈希快照、可选 claim-to-evidence 覆盖情况，并导出投稿前 QC packet。
 - 检查源数据或汇总表中的数值/统计一致性，例如 SD/SEM/n、p-value 范围、整数计数可行性。
 - 筛查包内文本重叠，并可选择运行外部短语检索 triage。
 - 输出带有 `R0` 到 `R4` 风险表、证据台账和 Audit Coverage 的中性报告。
@@ -61,6 +62,9 @@ python3 scripts/audit_package.py examples/full_presubmission_package --output-di
 - `audit-report.md`：给人读的报告，包含 scope、coverage、缺失材料、风险表和证据台账。
 - `AUDIT_JSON_SUMMARY.json`：同一批信息的机器可读摘要。
 - `coverage.json`、`calibrated_findings.json` 和各检测器输出：用于复核的结构化细节。
+- `audit_snapshot.json` 和 `file_hash_manifest.json`：记录本次审计到底审了哪个版本的材料，包括 SHA-256。
+- `claim_coverage.json` / `claim_coverage.csv`：如果提供 `claim_manifest.csv`，这里会列出 claim-to-evidence 覆盖情况。
+- `submission_qc_packet/`：投稿前留档包，包含报告、coverage、未解决动作、已验证 traceability、缺失材料、文件哈希、claim coverage 和 author sign-off 模板。
 
 审计你自己的材料包时，把命令指向你的目录即可。默认模式是 `internal_presubmission`，也支持 `external_public_material` 和 `response_to_concern`：
 
@@ -69,6 +73,31 @@ python3 scripts/audit_package.py /path/to/my_package --output-dir audit_outputs/
 ```
 
 **作者用户：**请先读 [`docs/self-audit-guide.md`](docs/self-audit-guide.md)。它会说明材料目录怎么准备、报告怎么看，以及哪些结论不能从工具输出中推出。
+
+### 可选：claim-to-evidence manifest
+
+如果想做更完整的投稿前自查，可以在材料包根目录放一个 `claim_manifest.csv`，或运行时传
+`--claim-manifest /path/to/claim_manifest.csv`。每一行把论文中的一个 claim 连接到 source data、
+raw record、analysis code 和 protocol：
+
+```csv
+claim_id,claim_text,manuscript_location,figure_or_table,source_data,raw_record,analysis_code,protocol,owner,status
+C001,"Treatment increases signal intensity",Results p.4,Fig1A,source_data/Fig1.csv,raw_images/acq_001.tif,statistics_code/fig1.ipynb,protocols/microscopy.md,first_author,ready
+```
+
+报告会新增 **Claim Coverage** 区块。它只表示证据链完整性，不表示该科学结论已被证明正确。
+
+### Re-audit diff
+
+修改材料、补齐缺口后，可以比较两次审计输出：
+
+```bash
+python3 scripts/compare_audit_runs.py audit_outputs/v1 audit_outputs/v2 \
+  --output audit_outputs/v2/re_audit_diff.json \
+  --csv audit_outputs/v2/re_audit_diff.csv
+```
+
+也可以在第二次运行 `scripts/audit_package.py` 时加 `--compare-to audit_outputs/v1`。diff 会比较风险计数、缺失材料、已验证 traceability、未解决动作和 claim-evidence gaps；它不是通过/不通过判定。
 
 ### 本地 Web App（V0.5）
 

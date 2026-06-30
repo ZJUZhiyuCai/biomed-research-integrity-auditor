@@ -56,10 +56,14 @@ Use when the user is responding to reviewer, journal, or PubPeer-style concerns.
    - Treat unsupported keys in `schemas/risk_rules.yaml` as configuration errors, not comments.
    - If files are missing, keep them as R1 completeness gaps before doing deeper analysis.
    - Never imply that an audit is complete when source data or raw records are unavailable.
+   - The orchestrator also writes `audit_snapshot.json`, `file_hash_manifest.json`, `claim_coverage.*`, CSV review exports, and `submission_qc_packet/`. Treat these as versioning/review artifacts, not approval certificates.
+   - If a package includes `claim_manifest.csv`, or the user passes `--claim-manifest`, read Claim Coverage as claim-to-evidence completeness only; it does not prove the claim is true.
+   - To compare a repaired package against an earlier audit, use `scripts/compare_audit_runs.py <old_output> <new_output>` or run the new audit with `--compare-to <old_output>`.
 
 2. Build the raw record hierarchy.
    - Map each figure panel to its published figure, assembly file, source data, processed data, raw instrument output, protocol/batch/sample map, and notebook/ELN record when available.
    - For biomedical work, distinguish presentation-layer files from research-record files.
+   - When available, use `claim_manifest.csv` to connect manuscript claims to figure/table, source data, raw records, analysis code, protocols, owner, and review status.
 
 3. Map figures to sources.
    - Run `scripts/figure_source_map.py manifest.json` to create candidate figure-source relationships.
@@ -199,6 +203,8 @@ Scripts are screening aids. Read or patch them before relying on them in unfamil
 
 - `scripts/build_package_manifest.py`: inventory files, classify materials, compute hashes, and create a missing-materials matrix.
 - `../../scripts/audit_package.py`: default orchestrator for package audits; validates detector, calibrated-finding, and summary contracts.
+- `../../scripts/submission_qc.py`: helper module for audit snapshots, claim coverage, submission QC packet exports, author sign-off template, and re-audit diff metrics.
+- `../../scripts/compare_audit_runs.py`: compare two audit output directories after remediation.
 - `../../provenance/build_resource_graph.py`: build file/resource nodes and provenance edges used for negative calibration.
 - `../../provenance/parse_assembly_manifest.py`: extract declared figure-to-raw/source links from assembly manifests without executing manifest text.
 - `scripts/figure_source_map.py`: propose filename-based figure-source relationships.
