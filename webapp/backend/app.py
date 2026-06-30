@@ -30,6 +30,11 @@ from pydantic import BaseModel, Field
 
 
 ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from provenance.panel_modality import CANONICAL_MODALITIES, normalize_modality  # noqa: E402
+
 DEFAULT_RUNS_ROOT = ROOT / "audit_outputs" / "webapp"
 MODES = {"internal_presubmission", "external_public_material", "response_to_concern"}
 SCAN_PROFILES = {"quick", "standard", "deep"}
@@ -356,6 +361,7 @@ def package_inventory(package: Path) -> dict[str, Any]:
         "relation_allowed_source_roles": {
             key: sorted(value) for key, value in RELATION_ALLOWED_SOURCE_ROLES.items()
         },
+        "modality_options": list(CANONICAL_MODALITIES),
         "inventory_warnings": inventory_warnings,
         "scan_limit_reached": limit_reached,
         "scan_limits": {
@@ -472,7 +478,7 @@ def validated_manifest_row(package: Path, row: ManifestRowInput) -> dict[str, st
         "figure_panel": figure,
         "source_record": source,
         "relation_type": relation_type,
-        "modality": row.modality.strip(),
+        "modality": normalize_modality(row.modality),
         "notes": row.notes.strip(),
     }
 

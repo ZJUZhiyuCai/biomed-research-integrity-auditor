@@ -16,6 +16,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from detectors.image.image_io import normalized_rgb
+from provenance.panel_modality import resolve_panel_modality_routing
 
 
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp"}
@@ -568,10 +569,17 @@ def scan(
 
     provenance = load_provenance(provenance_path)
     excluded_pairs = expected_traceability_pairs(provenance)
+    routing = resolve_panel_modality_routing(provenance)
+    excluded_panel_paths = {item["panel"] for item in routing.excluded_panels}
     image_paths = collect_images(root)
     images = []
     errors = []
+    panels_excluded_from_deep_scan = list(routing.excluded_panels)
+    modality_conflicts = list(routing.modality_conflicts)
     for path in image_paths:
+        rel_path = str(path.relative_to(root))
+        if rel_path.startswith("figures/") and rel_path in excluded_panel_paths:
+            continue
         try:
             with Image.open(path) as img:
                 base = normalized_rgb(img)
@@ -663,10 +671,11 @@ def scan(
 
     return {
         "detector_name": "image.local_patch_reuse",
-        "detector_version": "0.4.0",
+        "detector_version": "0.4.1",
         "input": {
             "root": str(root),
             "provenance_graph": str(provenance_path) if provenance_path else None,
+            "modality_routing_enabled": True,
             "tile_size": tile_size,
             "stride": stride,
             "hash_size": hash_size,
@@ -683,6 +692,8 @@ def scan(
             "transforms": list(TRANSFORMS),
         },
         "images_screened": len(images),
+        "panels_excluded_from_deep_scan": panels_excluded_from_deep_scan,
+        "modality_conflicts": modality_conflicts,
         "candidate_pair_count": len(candidates),
         "same_image_candidate_count": same_image_candidate_count,
         "excluded_expected_traceability_pairs": excluded_pair_count,

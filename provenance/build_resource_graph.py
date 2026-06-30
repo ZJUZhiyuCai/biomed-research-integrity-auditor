@@ -85,7 +85,7 @@ def build_edges(links: list[dict[str, Any]], path_to_id: dict[str, str]) -> tupl
         if key in seen:
             continue
         seen.add(key)
-        edges.append({
+        edge = {
             "edge_id": f"edge_{len(edges) + 1:04d}",
             "source": source_id,
             "target": target_id,
@@ -95,7 +95,11 @@ def build_edges(links: list[dict[str, Any]], path_to_id: dict[str, str]) -> tupl
             "evidence_source": str(link.get("evidence_source", "")),
             "confidence": float(link.get("confidence", 0.5)),
             "risk_effect": str(link.get("risk_effect", "candidate_traceability")),
-        })
+        }
+        modality = str(link.get("modality", "") or "").strip()
+        if modality:
+            edge["modality"] = modality
+        edges.append(edge)
     return edges, warnings
 
 
@@ -103,7 +107,7 @@ def build_graph(manifest: dict[str, Any], link_paths: list[Path]) -> dict[str, A
     nodes, path_to_id = build_nodes(manifest)
     edges, warnings = build_edges(load_links(link_paths), path_to_id)
     graph = {
-        "graph_version": "0.3.1",
+        "graph_version": "0.3.2",
         "package_root": str(manifest.get("root", "")),
         "nodes": nodes,
         "edges": edges,

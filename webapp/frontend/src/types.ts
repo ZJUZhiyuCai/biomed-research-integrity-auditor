@@ -32,6 +32,7 @@ export interface PackageInventory {
   assembly_manifest: AssemblyManifestInventory;
   relation_types: string[];
   relation_allowed_source_roles?: Record<string, string[]>;
+  modality_options?: string[];
   inventory_warnings?: string[];
   scan_limit_reached?: boolean;
   scan_limits?: {

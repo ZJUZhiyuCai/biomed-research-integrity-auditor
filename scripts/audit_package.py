@@ -549,6 +549,28 @@ def build_coverage(
             local_payload = load_safe("local_patch_candidates.json")
             if local_payload:
                 coverage["image_files_unreadable"] += len(local_payload.get("errors", []) or [])
+                coverage["modality_routing_enabled"] = bool(
+                    (local_payload.get("input") or {}).get("modality_routing_enabled")
+                )
+                excluded = local_payload.get("panels_excluded_from_deep_scan", []) or []
+                conflicts = local_payload.get("modality_conflicts", []) or []
+                if conflicts:
+                    coverage["modality_conflicts"] = conflicts
+                    coverage["modality_conflict_note"] = (
+                        "Panels listed below have mixed experimental and schematic/chart declarations on "
+                        "authoritative manifest edges. Deep image screening was retained; this is not clearance."
+                    )
+                if excluded:
+                    coverage["panels_excluded_from_deep_scan"] = excluded
+                    coverage["deep_scan_exclusion_note"] = (
+                        "Panels listed below were excluded from local patch / same-image copy-move "
+                        "screening because of their declared modality. Exclusion records audit scope "
+                        "only; it is not clearance, approval, or evidence that those panels are correct."
+                    )
+                    coverage["modules_not_executed"].append(
+                        "local patch / same-image copy-move screening on "
+                        f"{len(excluded)} schematic/chart panel(s) (modality-aware exclusion; not a clean result)"
+                    )
     else:
         coverage["modules_not_executed"].append("image screening (no image files supplied)")
 

@@ -27,6 +27,7 @@ if str(ROOT) not in sys.path:
 from calibrators.contract_validation import ContractError, validate_instance  # noqa: E402
 from calibrators.risk_cap_engine import calibrate_payload, load_rules  # noqa: E402
 from detectors.image.image_io import normalized_rgb  # noqa: E402
+from provenance.panel_modality import normalize_modality, resolve_panel_modality_routing  # noqa: E402
 
 
 def run(cmd: list[str]) -> None:
@@ -686,6 +687,294 @@ class ContractPipelineTests(unittest.TestCase):
             payload = json.loads(output.read_text(encoding="utf-8"))
             self.assertEqual(payload["candidates"], [])
             self.assertEqual(payload["excluded_expected_traceability_pairs"], 1)
+
+    def test_panel_modality_aliases_normalize_without_breaking_legacy_labels(self) -> None:
+        self.assertEqual(normalize_modality("blot"), "western_blot")
+        self.assertEqual(normalize_modality("gel"), "western_blot")
+        self.assertEqual(normalize_modality("image"), "other")
+        self.assertEqual(normalize_modality(""), "other")
+        self.assertEqual(normalize_modality("microscopy"), "microscopy")
+        self.assertEqual(normalize_modality("SCHEMATIC"), "schematic")
+
+    def test_resolve_panel_modality_routing_requires_unanimous_schematic_or_chart(self) -> None:
+        routing = resolve_panel_modality_routing({
+            "edges": [
+                {
+                    "source_path": "figures/Figure_1A.png",
+                    "target_path": "raw_images/acq.png",
+                    "relation_type": "declared_derived_from",
+                    "risk_effect": "expected_traceability",
+                    "modality": "microscopy",
+                },
+                {
+                    "source_path": "figures/Figure_1A.png",
+                    "target_path": "source_data/Figure_1A.csv",
+                    "relation_type": "declared_derived_from",
+                    "risk_effect": "expected_traceability",
+                    "modality": "chart",
+                },
+            ]
+        })
+        self.assertEqual(routing.excluded_panels, [])
+        self.assertEqual(len(routing.modality_conflicts), 1)
+
+        exclude_only = resolve_panel_modality_routing({
+            "edges": [
+                {
+                    "source_path": "figures/Figure_schematic.png",
+                    "target_path": "raw_images/icon.png",
+                    "relation_type": "declared_derived_from",
+                    "risk_effect": "expected_traceability",
+                    "modality": "schematic",
+                },
+            ]
+        })
+        self.assertEqual(len(exclude_only.excluded_panels), 1)
+        self.assertEqual(exclude_only.modality_conflicts, [])
+
+        ignored = resolve_panel_modality_routing({
+            "edges": [
+                {
+                    "source_path": "figures/Figure_schematic.png",
+                    "target_path": "figures/Figure_other.png",
+                    "relation_type": "declared_derived_from",
+                    "risk_effect": "candidate_traceability",
+                    "modality": "schematic",
+                },
+            ]
+        })
+        self.assertEqual(ignored.excluded_panels, [])
+        self.assertEqual(ignored.modality_conflicts, [])
+
+    def test_local_patch_detector_excludes_schematic_and_chart_panels(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "pkg"
+            (package / "figures").mkdir(parents=True)
+            (package / "raw_images").mkdir()
+            schematic = textured_image(501, size=(576, 576))
+            schematic_patch = schematic.crop((64, 64, 256, 256))
+            schematic.paste(schematic_patch, (320, 320))
+            write_png(package / "figures/Figure_schematic.png", schematic)
+
+            chart = textured_image(502, size=(576, 576))
+            chart_patch = chart.crop((64, 64, 256, 256))
+            chart.paste(chart_patch, (320, 320))
+            write_png(package / "figures/Figure_chart.png", chart)
+
+            left = textured_image(601)
+            right = textured_image(602)
+            right.paste(left.crop((64, 64, 192, 192)), (64, 64))
+            write_png(package / "figures/Figure_microscopy_A.png", left)
+            write_png(package / "figures/Figure_microscopy_B.png", right)
+            write_png(package / "raw_images/raw_a.png", left)
+            write_png(package / "raw_images/raw_b.png", right)
+
+            provenance = Path(tmp) / "provenance.json"
+            provenance.write_text(json.dumps({
+                "edges": [
+                    {
+                        "source_path": "figures/Figure_schematic.png",
+                        "target_path": "raw_images/raw_a.png",
+                        "relation_type": "declared_derived_from",
+                        "risk_effect": "expected_traceability",
+                        "modality": "schematic",
+                    },
+                    {
+                        "source_path": "figures/Figure_chart.png",
+                        "target_path": "raw_images/raw_b.png",
+                        "relation_type": "declared_derived_from",
+                        "risk_effect": "expected_traceability",
+                        "modality": "chart",
+                    },
+                    {
+                        "source_path": "figures/Figure_microscopy_A.png",
+                        "target_path": "raw_images/raw_a.png",
+                        "relation_type": "declared_derived_from",
+                        "risk_effect": "expected_traceability",
+                        "modality": "microscopy",
+                    },
+                    {
+                        "source_path": "figures/Figure_microscopy_B.png",
+                        "target_path": "raw_images/raw_b.png",
+                        "relation_type": "declared_derived_from",
+                        "risk_effect": "expected_traceability",
+                        "modality": "microscopy",
+                    },
+                ]
+            }), encoding="utf-8")
+            output = Path(tmp) / "local_patch.json"
+            run([
+                PYTHON,
+                "detectors/image/local_patch_reuse.py",
+                str(package),
+                "--provenance",
+                str(provenance),
+                "--tile-size",
+                "64",
+                "--stride",
+                "32",
+                "--output",
+                str(output),
+            ])
+            payload = json.loads(output.read_text(encoding="utf-8"))
+            excluded = {item["panel"] for item in payload["panels_excluded_from_deep_scan"]}
+            self.assertEqual(
+                excluded,
+                {"figures/Figure_schematic.png", "figures/Figure_chart.png"},
+            )
+            self.assertTrue(payload["input"]["modality_routing_enabled"])
+            candidate_paths = {
+                candidate["evidence"]["representative_edge"]["left"]
+                for candidate in payload["candidates"]
+            } | {
+                candidate["evidence"]["representative_edge"]["right"]
+                for candidate in payload["candidates"]
+            }
+            self.assertNotIn("figures/Figure_schematic.png", candidate_paths)
+            self.assertNotIn("figures/Figure_chart.png", candidate_paths)
+            self.assertTrue(payload["candidates"])
+            self.assertTrue(
+                any(
+                    {
+                        candidate["evidence"]["representative_edge"]["left"],
+                        candidate["evidence"]["representative_edge"]["right"],
+                    }
+                    & {"figures/Figure_microscopy_A.png", "figures/Figure_microscopy_B.png"}
+                    for candidate in payload["candidates"]
+                )
+            )
+
+    def test_local_patch_retains_deep_scan_for_mixed_modality_declarations(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "pkg"
+            (package / "figures").mkdir(parents=True)
+            (package / "raw_images").mkdir()
+            (package / "source_data").mkdir()
+            image = textured_image(801, size=(576, 576))
+            image.paste(image.crop((64, 64, 256, 256)), (320, 320))
+            write_png(package / "figures/Figure_mixed.png", image)
+            write_png(package / "raw_images/acq.png", textured_image(802))
+            (package / "source_data/Figure_mixed.csv").write_text("group,value\nA,1\n", encoding="utf-8")
+
+            provenance = Path(tmp) / "provenance.json"
+            provenance.write_text(json.dumps({
+                "edges": [
+                    {
+                        "source_path": "figures/Figure_mixed.png",
+                        "target_path": "raw_images/acq.png",
+                        "relation_type": "declared_derived_from",
+                        "risk_effect": "expected_traceability",
+                        "modality": "microscopy",
+                    },
+                    {
+                        "source_path": "figures/Figure_mixed.png",
+                        "target_path": "source_data/Figure_mixed.csv",
+                        "relation_type": "declared_derived_from",
+                        "risk_effect": "expected_traceability",
+                        "modality": "chart",
+                    },
+                ]
+            }), encoding="utf-8")
+            output = Path(tmp) / "local_patch.json"
+            run([
+                PYTHON,
+                "detectors/image/local_patch_reuse.py",
+                str(package),
+                "--provenance",
+                str(provenance),
+                "--tile-size",
+                "64",
+                "--stride",
+                "32",
+                "--output",
+                str(output),
+            ])
+            payload = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual(payload["panels_excluded_from_deep_scan"], [])
+            self.assertEqual(len(payload["modality_conflicts"]), 1)
+            self.assertEqual(payload["modality_conflicts"][0]["panel"], "figures/Figure_mixed.png")
+            self.assertGreaterEqual(payload["images_screened"], 1)
+            self.assertGreaterEqual(payload["same_image_candidate_count"], 1)
+
+    def test_local_patch_ignores_candidate_traceability_for_modality_routing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "pkg"
+            (package / "figures").mkdir(parents=True)
+            image = textured_image(901, size=(576, 576))
+            image.paste(image.crop((64, 64, 256, 256)), (320, 320))
+            write_png(package / "figures/Figure_candidate_only.png", image)
+
+            provenance = Path(tmp) / "provenance.json"
+            provenance.write_text(json.dumps({
+                "edges": [
+                    {
+                        "source_path": "figures/Figure_candidate_only.png",
+                        "target_path": "figures/Figure_other.png",
+                        "relation_type": "declared_derived_from",
+                        "risk_effect": "candidate_traceability",
+                        "modality": "schematic",
+                    },
+                ]
+            }), encoding="utf-8")
+            output = Path(tmp) / "local_patch.json"
+            run([
+                PYTHON,
+                "detectors/image/local_patch_reuse.py",
+                str(package),
+                "--provenance",
+                str(provenance),
+                "--tile-size",
+                "64",
+                "--stride",
+                "32",
+                "--output",
+                str(output),
+            ])
+            payload = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual(payload["panels_excluded_from_deep_scan"], [])
+            self.assertEqual(payload["modality_conflicts"], [])
+            self.assertGreaterEqual(payload["same_image_candidate_count"], 1)
+
+    def test_pipeline_coverage_records_modality_excluded_panels(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "pkg"
+            (package / "figures").mkdir(parents=True)
+            (package / "figure_assembly").mkdir(parents=True)
+            (package / "raw_images").mkdir()
+            write_minimal_source(package)
+            schematic = textured_image(701, size=(576, 576))
+            schematic.paste(schematic.crop((64, 64, 256, 256)), (320, 320))
+            write_png(package / "figures/Figure_schematic.png", schematic)
+            write_png(package / "raw_images/acq.png", textured_image(702))
+            (package / "manuscript.pdf").write_text("Methods section for screening.\n", encoding="utf-8")
+            (package / "figure_assembly/assembly_manifest.csv").write_text(
+                "figure_panel,source_record,relation_type,modality,notes\n"
+                "figures/Figure_schematic.png,raw_images/acq.png,declared_derived_from,schematic,workflow icon\n",
+                encoding="utf-8",
+            )
+            out = Path(tmp) / "out"
+            run([
+                PYTHON,
+                "scripts/audit_package.py",
+                str(package),
+                "--output-dir",
+                str(out),
+                "--case-id",
+                "modality_exclusion_case",
+            ])
+            summary = json.loads((out / "AUDIT_JSON_SUMMARY.json").read_text(encoding="utf-8"))
+            coverage = summary["audit_coverage"]
+            excluded = coverage.get("panels_excluded_from_deep_scan") or []
+            self.assertEqual(len(excluded), 1)
+            self.assertEqual(excluded[0]["panel"], "figures/Figure_schematic.png")
+            self.assertEqual(excluded[0]["modality"], "schematic")
+            self.assertTrue(coverage.get("deep_scan_exclusion_note"))
+            self.assertTrue(
+                any("modality-aware exclusion" in item for item in coverage["modules_not_executed"])
+            )
+            report = (out / "audit-report.md").read_text(encoding="utf-8")
+            self.assertIn("Panels excluded from deep image screening", report)
+            self.assertIn("figures/Figure_schematic.png", report)
 
     def test_local_patch_detector_skips_low_information_compression_artifact(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -36,6 +36,13 @@ const labels = {
     sourceRecord: "Source record",
     relationType: "关系类型",
     modality: "类型",
+    modalityLabels: {
+      microscopy: "显微镜",
+      western_blot: "Western blot / 凝胶",
+      chart: "统计图",
+      schematic: "示意图 / 流程图",
+      other: "其他 / 未分类"
+    },
     notes: "备注",
     addRelationship: "添加关系",
     saveManifest: "写入 manifest",
@@ -129,6 +136,13 @@ const labels = {
     sourceRecord: "Source record",
     relationType: "Relation type",
     modality: "Modality",
+    modalityLabels: {
+      microscopy: "Microscopy",
+      western_blot: "Western blot / gel",
+      chart: "Chart / plot",
+      schematic: "Schematic / flowchart",
+      other: "Other / unclassified"
+    },
     notes: "Notes",
     addRelationship: "Add Relationship",
     saveManifest: "Write Manifest",

@@ -703,6 +703,56 @@ def render_coverage(coverage: dict[str, Any] | None) -> list[str]:
             "",
             *[f"- {item}" for item in coverage["detector_failures"]],
         ]
+    excluded = coverage.get("panels_excluded_from_deep_scan") or []
+    if excluded:
+        lines += [
+            "",
+            "**Panels excluded from deep image screening / 未做深扫的面板**",
+            "",
+            table([
+                ["Panel / 面板", "Modality / 类型", "Reason / 原因"],
+                *[
+                    [
+                        str(item.get("panel", "")),
+                        str(item.get("modality", "")),
+                        str(item.get("reason", "")),
+                    ]
+                    for item in excluded
+                ],
+            ]),
+        ]
+        note = coverage.get("deep_scan_exclusion_note")
+        if note:
+            lines += [
+                "",
+                f"> {note}",
+                "> 中文提示：下列面板因 declared modality 未进入 local patch / copy-move 深扫；这不代表这些面板已通过检查。",
+            ]
+    conflicts = coverage.get("modality_conflicts") or []
+    if conflicts:
+        lines += [
+            "",
+            "**Modality conflicts retained for deep screening / 混合 modality，仍执行深扫**",
+            "",
+            table([
+                ["Panel / 面板", "Declared modalities / 声明类型", "Reason / 原因"],
+                *[
+                    [
+                        str(item.get("panel", "")),
+                        ", ".join(str(value) for value in (item.get("modalities") or [])),
+                        str(item.get("reason", "")),
+                    ]
+                    for item in conflicts
+                ],
+            ]),
+        ]
+        conflict_note = coverage.get("modality_conflict_note")
+        if conflict_note:
+            lines += [
+                "",
+                f"> {conflict_note}",
+                "> 中文提示：同一 panel 同时声明实验图与 schematic/chart 时，系统默认继续深扫，而不是整张跳过。",
+            ]
     if coverage.get("audit_coverage_gap"):
         lines += [
             "- No detector could run on the supplied materials; this is a completeness gap, not a clean result.",

@@ -7,10 +7,17 @@ import argparse
 import csv
 import json
 import re
+import sys
 from pathlib import Path
 from typing import Any
 
 import yaml
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from provenance.panel_modality import normalize_modality
 
 
 IMAGE_OR_DATA_RE = re.compile(
@@ -154,9 +161,7 @@ def structured_link_from_row(
         "risk_effect": risk_effect,
         "extraction_method": extraction_method,
     }
-    modality = str(row.get("modality", "") or "").strip()
-    if modality:
-        link["modality"] = modality
+    link["modality"] = normalize_modality(str(row.get("modality", "") or ""))
     return link
 
 
@@ -303,7 +308,7 @@ def parse_package(package: Path) -> dict[str, Any]:
         warnings.append("No figure_assembly manifest files were supplied.")
     return {
         "parser": "provenance.parse_assembly_manifest",
-        "parser_version": "0.3.2",
+        "parser_version": "0.3.3",
         "package": str(package),
         "parsed_files": parsed_files,
         "links": unique_links,

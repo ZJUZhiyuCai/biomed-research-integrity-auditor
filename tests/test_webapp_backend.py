@@ -118,6 +118,7 @@ class WebappBackendTests(unittest.TestCase):
                 inspect = client.post("/api/packages/inspect", json={"package_path": str(package)})
                 inspect.raise_for_status()
                 inventory = inspect.json()["inventory"]
+                self.assertIn("microscopy", inventory["modality_options"])
                 self.assertIn("figures/Figure_1A.png", inventory["files_by_role"]["figures"])
                 self.assertIn("raw_images/Acq_001.tif", inventory["files_by_role"]["raw_images"])
                 self.assertIn("source_data/Figure_1_values.csv", inventory["files_by_role"]["source_data"])
@@ -148,6 +149,8 @@ class WebappBackendTests(unittest.TestCase):
                 manifest_text = (package / "figure_assembly" / "assembly_manifest.csv").read_text(encoding="utf-8")
                 self.assertIn("figure_panel,source_record,relation_type,modality,notes", manifest_text)
                 self.assertIn("raw_images/Acq_001.tif", manifest_text)
+                self.assertIn(",other,", manifest_text)
+                self.assertIn(",chart,", manifest_text)
 
     def test_package_prep_manifest_rejects_unsafe_or_unsupported_rows(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

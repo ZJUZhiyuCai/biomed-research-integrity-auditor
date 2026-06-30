@@ -3,6 +3,13 @@
 ## Unreleased
 
 ### Added
+- Modality-aware panel routing for local patch / same-image copy-move screening: schematic and
+  chart panels declared in `assembly_manifest.csv` are excluded from deep image screening, with
+  explicit coverage records that exclusion is scope control rather than clearance. Legacy modality
+  labels such as `blot`, `gel`, and `image` normalize to `western_blot` or `other`. Mixed modality
+  declarations on the same panel default to deep scan with an explicit `modality_conflicts` record;
+  only authoritative expected-traceability edges may control routing.
+- Webapp manifest builder modality dropdown aligned to the canonical panel types.
 - Scan profiles for the default audit entrypoint: `--scan-profile quick|standard|deep`.
   Quick runs skip expensive local-patch/copy-move deep image screening and external phrase search,
   and coverage records those scope limits explicitly.

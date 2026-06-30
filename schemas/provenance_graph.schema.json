@@ -47,7 +47,8 @@
           "relation_type": {"type": "string"},
           "evidence_source": {"type": "string"},
           "confidence": {"type": "number"},
-          "risk_effect": {"type": "string"}
+          "risk_effect": {"type": "string"},
+          "modality": {"type": "string"}
         }
       }
     },

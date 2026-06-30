@@ -17,6 +17,8 @@ interface PackagePrepPanelProps {
   onSaveManifest: (rows: ManifestRow[]) => Promise<void>;
 }
 
+const DEFAULT_MODALITIES = ["microscopy", "western_blot", "chart", "schematic", "other"] as const;
+
 const ROLE_LABELS = [
   "figures",
   "raw_images",
@@ -35,6 +37,13 @@ function sourceRole(path: string): string {
   return "other";
 }
 
+function modalityLabel(t: Labels, value: string): string {
+  if (Object.prototype.hasOwnProperty.call(t.modalityLabels, value)) {
+    return t.modalityLabels[value as keyof Labels["modalityLabels"]];
+  }
+  return value;
+}
+
 export function PackagePrepPanel({
   t,
   packagePath,
@@ -48,7 +57,7 @@ export function PackagePrepPanel({
   const [figure, setFigure] = useState("");
   const [source, setSource] = useState("");
   const [relationType, setRelationType] = useState("declared_derived_from");
-  const [modality, setModality] = useState("image");
+  const [modality, setModality] = useState("other");
   const [notes, setNotes] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -59,6 +68,9 @@ export function PackagePrepPanel({
   const figures = inventory?.files_by_role.figures || [];
   const rawImages = inventory?.files_by_role.raw_images || [];
   const sourceData = inventory?.files_by_role.source_data || [];
+  const modalityOptions = inventory?.modality_options?.length
+    ? inventory.modality_options
+    : [...DEFAULT_MODALITIES];
   const relationTypes = inventory?.relation_types?.length
     ? inventory.relation_types
     : ["declared_derived_from", "same_field_different_channel", "same_membrane_reprobe"];
@@ -260,7 +272,11 @@ export function PackagePrepPanel({
               </label>
               <label>
                 <span>{t.modality}</span>
-                <input value={modality} onChange={(e) => setModality(e.target.value)} />
+                <select value={modality} onChange={(e) => setModality(e.target.value)}>
+                  {modalityOptions.map((value) => (
+                    <option key={value} value={value}>{modalityLabel(t, value)}</option>
+                  ))}
+                </select>
               </label>
               <label className="relationship-notes">
                 <span>{t.notes}</span>
