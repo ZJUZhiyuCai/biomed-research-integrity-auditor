@@ -151,3 +151,34 @@
 - 本文档是**导师体验视角**，新增覆盖：webapp 交互闭环、intake 真实格式兼容、re-audit diff 价值、self-audit-guide 入口断层。
 - 两份文档的交集是 P0.1（manifest 压制）和 intake 静默丢弃——前者是上次评审的半个口子，后者是本次新识别的、与"诚实不误导"核心价值直接冲突的根因 A。
 - 修复优先级建议：S1 闭环止血（体验）与 S2 真实材料兼容（intake）捆绑推进，再回到 S3 关 P0.1（对抗根因）。
+
+---
+
+## 附二：2026-07-02 复核校正
+
+> 校正基线：project-owner 核验 + `4c619ba Align webapp action tracker statuses`
+> 记录目的：保留本文原始诊断不动，同时标出已经被当前代码事实推翻或收口的判断，避免后续读者按过时状态继续排期。
+
+### 已校正的过时判断
+
+1. **P0.7 / manifest 魔法短语旁路已关闭。** `provenance/parse_assembly_manifest.py` 仍识别 `"figure panels map to"` / `"figures map to"` 文本，但当前行为是产生 ordered-prose warning；它不再自动创建 `expected_traceability` edge，也不再形成 figure-to-source 压制链接。`contextual_joiner.py` 对 figure-to-figure local-patch 声明使用 `declared_local_patch_requires_verification`，`positive_evidence=false`，并要求 raw/source 核验。因此，"声明是材料，不是证据；压制前必须交叉核验" 已作为当前 invariant 落地。
+
+2. **Webapp onboarding 已有样例入口。** `/api/health` 暴露 `minimal_package` 和 `full_presubmission_package`，前端空状态提供 "Try an example / 试跑样例" 按钮，可直接启动最小样例或完整投稿包样例。本文 P1 中"webapp 零引用 examples / 无 onboarding"应视为历史诊断。
+
+3. **P1 体验群大部分已关闭。** 当前代码已有 mode/provider 人话翻译、finding 默认按 R4->R0 排序、action tracker 不再用 `slice(0,8)` 截断、`@media print`、失败状态的人话提示、response-to-concern guide、candidate-level disclosure window，以及 true-PDF/scanned-PDF/real-image benchmark 证据。本文中对应 P1 条目应按当前 main 重新核验，不应继续作为开放缺口引用。
+
+4. **Action tracker 状态契约已补齐。** `4c619ba` 将前端 action 状态对齐到 schema 级别的 `unresolved` / `resolved` / `accepted_with_reason` / `false_positive`，并让 `false_positive` / non-actionable 状态从 unresolved tracker 移入 accepted-with-reason tracker，同时同步 `submission_qc_packet/`。这修正了"能 inline 编辑"但可能进入错误留档桶的真实残留。
+
+### 当前状态判断
+
+- **P0 全清。** 本文列出的 7 个 P0 已由当前代码实质修复或以显式 coverage gap 方式关闭误导风险。
+- **可信门槛已跨过。** `docs/REVIEW-2026-06-29.md` 中"可信主要靠文档和合成 demo 支撑"这一结论已不再适用于当前 main：intake 不再静默误导，manifest 声明不再单独清除局部复用风险，检测器/校准/报告层失败都会保留部分结果或显式 coverage/action 项。
+- **仍然诚实保留的产品增强：** `.docx` / `.pzfx` / legacy `.xls` 目前是显式 gap 和导出指引，不是真解析；这已经修复"虚假干净"问题，但还不是最省事的 PI 体验。真解析属于便利性增强，不是当前诚信边界漏洞。
+- **仍然诚实声明的能力天花板：** 任意角度旋转、透视/弹性形变、splice 取证、JPEG ghost、CFA/噪声不一致、跨论文图像库搜索等仍需 OpenCV/专业图像取证或外接 ImageTwin/Proofig 类工具。本项目应继续定位为投稿前第一道本地自查和证据组织工具，而不是专业图像取证替代品。
+
+### 后续建议
+
+后续排期不应再优先修本文原始 P0/P1 的过时表述，而应聚焦两类工作：
+
+1. **体验增强：** 真读取 `.docx`，更好地引导 GraphPad/Prism 导出 CSV/XLSX，进一步简化首次上手路径。
+2. **能力扩展或外接：** 若要覆盖任意旋转/透视/拼接取证，应作为新的 OpenCV/keypoint/forensics 工程阶段单独立项；在此之前，报告中继续显眼声明当前 detector boundary。
