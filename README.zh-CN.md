@@ -20,7 +20,8 @@
 - 交叉核对你在 figure assembly manifest 中声明的 figure-to-raw 关系，并记录正向 provenance 证据。
 - 记录本次审计的文件哈希快照、可选 claim-to-evidence 覆盖情况，并导出投稿前 QC packet。
 - 检查源数据或汇总表中的数值/统计一致性，例如 SD/SEM/n、p-value 范围、整数计数可行性，
-  以及满足样本量门槛后的 Benford-style 和 p-value clustering 弱提示。
+  以及满足样本量门槛后的 Benford-style 首位数字和 p-value clustering 弱分布提示。这些
+  分布提示只有在达到最小样本量门槛时才自动运行，且不能单独作为证据。
 - 筛查包内文本重叠，并可选择运行外部短语检索 triage。
 - 输出结构化方法学/报告规范准备度清单，供 ARRIVE、CONSORT、ICMJE、MIFlowCyt、组学 accession 等人工复核使用。
 - 输出独立的 Writing & Submission Readiness artifact，用于提示占位文字、通用投稿文件和可选 DOI/reference 元数据问题；该模块不会并入研究诚信风险登记。
@@ -354,7 +355,7 @@ python3 evals/run_eval.py generate-prompts
 - 文本重叠筛查是 package-internal；可选外部短语检索只是 triage，不是穷尽式查重数据库覆盖，也不是 verdict。
 - true-PDF intake 支持 machine-readable text 和可 OCR 的 scanned PDF；figure/caption extraction 仍有限。
 - 图像 intake 会归一化 high-bit-depth 灰度 TIFF，并把 multi-frame TIFF-like 文件按 frame-level item 筛查到配置上限；对供应商专有 Z-stack/channel microscopy 格式的广泛验证仍是未来工作。
-- 统计筛查覆盖 p-value range/validity、SD/SEM/n 一致性、integer-count feasibility、弱取证模式、Benford-style first-digit prompts 和 p-value clustering prompts。弱 digit/rounding screen 默认至少需要 8 个可比值；Benford-style 至少需要 30 个正值；p-value clustering 至少需要 20 个 p 值；integer-count feasibility 需要 n ≥ 6，并考虑报告精度。这些分布提示只是弱 triage，不能单独作为强证据。
+- 统计筛查覆盖 p-value range/validity、SD/SEM/n 一致性、integer-count feasibility、弱取证模式，以及样本量门槛控制的 Benford-style first-digit 和 p-value clustering 弱分布提示。弱 digit/rounding screen 默认至少需要 8 个可比值；Benford-style 至少需要 30 个正值；p-value clustering 至少需要 20 个 p 值；integer-count feasibility 需要 n ≥ 6，并考虑报告精度。这些分布提示只有在达到门槛时才自动运行，只能作为弱 triage，不能单独作为证据。
 - reference checking 需要 opt-in，目前只限 DOI/reference 元数据提示（Crossref-style lookup）；它不是完整 citation-integrity 或 retraction database 服务。
 - 公开材料 review 受 source/raw records 缺失限制，不能被读成学术不端结论。
 

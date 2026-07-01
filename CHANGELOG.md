@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- No changes yet.
+
+## v0.6.2 - Local Usability and Coverage Hardening
+
 ### Added
 - User-facing safety hardening for human reports: Quick Read now surfaces open actions, unreadable
   image counts, modules not run, and detector activity (`raw candidates -> positive provenance ->
@@ -54,8 +58,11 @@
   statistical triage signals.
 - Release artifact tooling: `make release-artifacts`, `scripts/build_release_artifacts.py`,
   GitHub Release/frontend-smoke workflow templates, and Homebrew/macOS packaging templates.
+- External literature search query provenance now records provider, query timestamp, result count,
+  and per-query failure count for every executed external query.
 
 ### Changed
+- Project version advanced to `0.6.2`.
 - Structured assembly manifests now reject unsupported `relation_type` values with warnings instead
   of treating arbitrary strings as high-confidence expected traceability.
 - The report no longer shows a misleading Quick Read row named `Coverage gap: no`; scope limits are
@@ -66,6 +73,8 @@
 - Human-facing CSV exports in the submission QC packet and webapp-created assembly manifests now
   neutralize spreadsheet formula-like cells, and webapp audit endpoints reject malformed audit IDs
   before filesystem lookup.
+- Uploaded webapp zip packages now reject symlink members in addition to unsafe absolute or
+  traversal paths.
 - `evals/run_script_baseline.py` now runs all synthetic cases by default when neither `--case` nor
   `--package` is supplied, matching the downstream audit-output assertion workflow.
 - Python support metadata now matches the documented and CI-tested requirement: Python 3.10+.

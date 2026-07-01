@@ -1,6 +1,6 @@
 [project]
 name = "biomed-research-integrity-auditor"
-version = "0.6.1"
+version = "0.6.2"
 description = "Codex skill and detector pipeline for biomedical research integrity risk auditing"
 readme = "README.md"
 requires-python = ">=3.10"

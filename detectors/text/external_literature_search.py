@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
 import json
 import re
 import sys
@@ -24,6 +25,10 @@ PROVIDER_ENDPOINTS = {
     "europepmc": "https://www.ebi.ac.uk/europepmc/webservices/rest/search",
     "crossref": "https://api.crossref.org/works",
 }
+
+
+def utc_timestamp() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
 def anchor_phrase(text: str, words: int) -> str | None:
@@ -98,7 +103,7 @@ def crossref_search(query: str, rows: int, timeout: float) -> list[dict[str, Any
         "https://api.crossref.org/works",
         params={"query.bibliographic": query, "rows": rows},
         timeout=timeout,
-        headers={"User-Agent": "biomed-research-integrity-auditor/0.4"},
+        headers={"User-Agent": "biomed-research-integrity-auditor/0.6.2"},
     )
     response.raise_for_status()
     payload = response.json()
@@ -260,18 +265,32 @@ def scan(
         query = anchor_phrase(paragraph.text, phrase_words)
         if not query:
             continue
-        queries.append({"paragraph_id": paragraph.paragraph_id, "query": query})
+        queried_at = utc_timestamp()
+        queries.append({
+            "paragraph_id": paragraph.paragraph_id,
+            "provider": provider,
+            "query": query,
+            "queried_at": queried_at,
+        })
         try:
             results = search_provider(provider, query, rows, timeout, fixture)
         except Exception as exc:  # noqa: BLE001 - external search failure is a coverage limitation, not a verdict.
-            errors.append({"paragraph_id": paragraph.paragraph_id, "provider": provider, "query": query, "error": str(exc)})
+            errors.append({
+                "paragraph_id": paragraph.paragraph_id,
+                "provider": provider,
+                "query": query,
+                "queried_at": queried_at,
+                "error": str(exc),
+            })
             search_provenance.append({
                 "paragraph_id": paragraph.paragraph_id,
                 "provider": provider,
                 "provider_endpoint": PROVIDER_ENDPOINTS.get(provider, provider),
                 "query": query,
+                "queried_at": queried_at,
                 "status": "error",
                 "result_count": 0,
+                "failure_count": 1,
             })
             continue
         search_provenance.append({
@@ -279,8 +298,10 @@ def scan(
             "provider": provider,
             "provider_endpoint": PROVIDER_ENDPOINTS.get(provider, provider),
             "query": query,
+            "queried_at": queried_at,
             "status": "ok",
             "result_count": len(results),
+            "failure_count": 0,
             "result_source_ids": [
                 result_source_id(provider, result, index)
                 for index, result in enumerate(results[:5], start=1)
@@ -295,7 +316,7 @@ def scan(
 
     return {
         "detector_name": "text.external_literature_search",
-        "detector_version": "0.2.0",
+        "detector_version": "0.2.1",
         "input": {
             "root": str(root),
             "provider": provider,

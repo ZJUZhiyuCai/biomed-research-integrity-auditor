@@ -83,7 +83,7 @@ Text overlap candidates are never plagiarism findings. Human review must check c
 - `external_public_material` mode defaults to Europe PMC phrase search;
 - private `internal_presubmission` mode stays offline unless a fixture is present or a provider is explicitly requested with `--external-literature-provider`.
 
-External search candidates are capped and reported as `external_text_match_candidate` observations with query and result provenance. Provider failures can emit an `external_literature_search_gap` R1 coverage finding rather than being treated as clean external coverage. These outputs are not plagiarism findings; they require manual comparison, disclosure/citation review, and journal-policy context.
+External search candidates are capped and reported as `external_text_match_candidate` observations with query and result provenance. Each executed external query records the provider, query text, query timestamp, result count, and per-query failure count. Provider failures can emit an `external_literature_search_gap` R1 coverage finding rather than being treated as clean external coverage. These outputs are not plagiarism findings; they require manual comparison, disclosure/citation review, and journal-policy context.
 
 ## True-PDF Benchmark
 

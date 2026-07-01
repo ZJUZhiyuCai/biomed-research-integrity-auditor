@@ -14,6 +14,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import threading
@@ -144,7 +145,7 @@ def create_app(output_root: Optional[Path] = None) -> FastAPI:
 
     app = FastAPI(
         title="Biomedical Research Integrity Self-Audit",
-        version="0.5.0",
+        version="0.6.2",
         description="Local-first wrapper around scripts/audit_package.py.",
     )
     app.state.settings = settings
@@ -854,6 +855,9 @@ def extract_zip_safely(zip_path: Path, destination: Path) -> None:
             member = Path(info.filename)
             if member.is_absolute() or any(part in {"..", ""} for part in member.parts):
                 raise ValueError("Uploaded zip contains an unsafe path")
+            mode = (info.external_attr >> 16) & 0o170000
+            if mode == stat.S_IFLNK:
+                raise ValueError("Uploaded zip contains a symlink, which is not accepted for local audit packages")
             target = (destination / member).resolve()
             if not is_relative_to(target, destination.resolve()):
                 raise ValueError("Uploaded zip contains a path outside the package")

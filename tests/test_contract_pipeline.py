@@ -1164,6 +1164,10 @@ class ContractPipelineTests(unittest.TestCase):
             payload = json.loads(output.read_text(encoding="utf-8"))
             validate_instance(payload, ROOT / "schemas" / "detector_output.schema.json", "external literature detector")
             self.assertEqual(payload["detector_name"], "text.external_literature_search")
+            self.assertEqual(payload["queries"][0]["provider"], "fixture")
+            self.assertIn("queried_at", payload["queries"][0])
+            self.assertEqual(payload["external_search_provenance"][0]["failure_count"], 0)
+            self.assertIn("queried_at", payload["external_search_provenance"][0])
             self.assertEqual(len(payload["candidates"]), 1)
             candidate = payload["candidates"][0]
             self.assertEqual(candidate["candidate_type"], "external_text_match_candidate")
@@ -1173,6 +1177,54 @@ class ContractPipelineTests(unittest.TestCase):
             calibrated = calibrate_payload([output], "external_public_material", ROOT / "schemas" / "risk_rules.yaml")
             self.assertTrue(calibrated["findings"])
             self.assertLessEqual(risk_value(calibrated["findings"][0]["calibrated_risk_level"]), risk_value("R3"))
+
+    def test_internal_presubmission_auto_external_search_stays_offline(self) -> None:
+        from scripts import audit_package as audit
+
+        self.assertIsNone(audit.resolve_external_literature_provider("internal_presubmission", "auto", None))
+        self.assertEqual(audit.resolve_external_literature_provider("external_public_material", "auto", None), "europepmc")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "pkg"
+            output_dir = Path(tmp) / "out"
+            output_dir.mkdir()
+            write_text_package(package, "clean")
+
+            def fake_run_detector(name, _package, _output_dir, _cmd, output):
+                payload = {
+                    "detector_name": f"text.{name}",
+                    "detector_version": "test",
+                    "input": {},
+                    "candidates": [],
+                    "errors": [],
+                }
+                output.write_text(json.dumps(payload), encoding="utf-8")
+                return audit.DetectorRunResult(output=output, ok=True)
+
+            with mock.patch.object(audit, "run_detector", side_effect=fake_run_detector) as run_detector:
+                outputs = audit.run_text_detectors(package, output_dir, "internal_presubmission", "auto", None)
+
+            self.assertEqual(len(outputs), 1)
+            self.assertEqual(outputs[0].name, "text_overlap_candidates.json")
+            commands = [" ".join(str(part) for part in call.args[3]) for call in run_detector.call_args_list]
+            self.assertFalse(any("external_literature_search.py" in command for command in commands))
+
+    def test_release_artifacts_exclude_python_cache_files(self) -> None:
+        from scripts import build_release_artifacts as release
+
+        manifest = (ROOT / "MANIFEST.in").read_text(encoding="utf-8")
+        self.assertIn("global-exclude *.py[cod]", manifest)
+        self.assertFalse(release.should_include(
+            ROOT
+            / "skill"
+            / "biomed-research-integrity-auditor"
+            / "scripts"
+            / "__pycache__"
+            / "report_assembler.cpython-311.pyc"
+        ))
+        self.assertFalse(release.should_include(
+            ROOT / "detectors" / "text" / "__pycache__" / "external_literature_search.cpython-311.pyc"
+        ))
 
 
 class RiskCapTests(unittest.TestCase):
@@ -1385,6 +1437,17 @@ class RiskCapTests(unittest.TestCase):
         detector_caps = rules["detector_caps"]
         for tag in ("benford_style", "p_value_clustering"):
             self.assertEqual(detector_caps[tag]["max"], "R2")
+
+    def test_readmes_describe_distributional_stats_as_weak_sample_gated_prompts(self) -> None:
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        readme_zh = (ROOT / "README.zh-CN.md").read_text(encoding="utf-8")
+
+        self.assertIn("sample-gated weak distributional prompts", readme)
+        self.assertIn("not standalone evidence", readme)
+        self.assertIn("minimum sample-size gates", readme)
+        self.assertIn("弱分布提示", readme_zh)
+        self.assertIn("最小样本量门槛", readme_zh)
+        self.assertIn("不能单独作为证据", readme_zh)
 
     def test_local_patch_r4_requires_direct_contradiction_tag(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1869,6 +1932,14 @@ class EndToEndTests(unittest.TestCase):
             gap = next(item for item in result["candidates"] if item["candidate_type"] == "external_literature_search_gap")
             self.assertEqual(gap["risk_suggestion"], "R1_max")
             self.assertIn("external_literature_search_gap", gap["risk_cap_tags"])
+            failed = next(item for item in result["external_search_provenance"] if item["status"] == "error")
+            successful = next(item for item in result["external_search_provenance"] if item["status"] == "ok")
+            self.assertEqual(failed["failure_count"], 1)
+            self.assertEqual(failed["result_count"], 0)
+            self.assertIn("queried_at", failed)
+            self.assertEqual(successful["failure_count"], 0)
+            self.assertGreaterEqual(successful["result_count"], 1)
+            self.assertIn("queried_at", result["errors"][0])
 
     def test_example_packages_run_with_coverage_and_no_verdict(self) -> None:
         for name in ("minimal_package", "full_presubmission_package"):

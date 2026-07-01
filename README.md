@@ -28,7 +28,9 @@ Under the hood it is an installable local **CLI**, a local-first **web app**, a 
 - Cross-check declared figure-to-raw traceability and record positive provenance evidence.
 - Record an audit snapshot with file hashes, optional claim-to-evidence coverage, and a submission QC packet.
 - Check numeric/statistical consistency in source or summary tables (SD/SEM/n, p-value range,
-  integer counts, weak Benford-style and p-value-clustering triage when sample-size gates are met).
+  integer counts, and sample-gated weak distributional prompts such as Benford-style
+  first-digit and p-value clustering patterns). Distributional prompts are automated only when
+  their minimum sample-size gates are met, and they are not standalone evidence.
 - Screen package-internal text overlap, with optional external phrase-search triage.
 - Emit a structured methodology/reporting-standard readiness checklist for manual ARRIVE / CONSORT / ICMJE / MIFlowCyt / omics review.
 - Emit a separate Writing & Submission Readiness artifact for language placeholders, generic
@@ -425,11 +427,12 @@ python3 evals/run_eval.py generate-prompts
   as frame-level items up to the configured frame cap. Broad validation on vendor-specific
   Z-stack/channel microscopy formats remains future work.
 - Statistical screening covers p-value range/validity, SD/SEM/n consistency, integer-count
-  feasibility, weak forensic patterns, Benford-style first-digit prompts, and p-value clustering
-  prompts. Weak digit/rounding screens need at least 8 comparable values, Benford-style prompts
-  need at least 30 positive values, p-value clustering prompts need at least 20 p-values, and
-  integer-count feasibility needs n ≥ 6 while respecting reported precision. These distributional
-  checks are weak triage only, not standalone evidence.
+  feasibility, weak forensic patterns, and sample-gated weak distributional prompts for
+  Benford-style first-digit and p-value clustering patterns. Weak digit/rounding screens need at
+  least 8 comparable values, Benford-style prompts need at least 30 positive values,
+  p-value-clustering prompts need at least 20 p-values, and integer-count feasibility needs n ≥ 6
+  while respecting reported precision. These distributional checks are automated weak triage only
+  when the gates are met; they are not standalone evidence.
 - Reference checking is opt-in and currently limited to DOI/reference metadata prompts through
   Crossref-style lookups; it is not a full citation-integrity or retraction-database service.
 - Public-material review is capped by missing source/raw records and must never be read as a

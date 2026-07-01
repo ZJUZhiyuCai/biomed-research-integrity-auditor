@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 from pathlib import Path
+import stat
 import tempfile
 import time
 import unittest
@@ -127,6 +128,15 @@ class WebappBackendTests(unittest.TestCase):
             traversal = client.get(f"/api/audits/{audit_id}/evidence/%2E%2E/%2E%2E/README.md")
             self.assertEqual(traversal.status_code, 400)
 
+            artifact_traversal = client.get(f"/api/audits/{audit_id}/artifact/%2E%2E/README.md")
+            self.assertEqual(artifact_traversal.status_code, 400)
+
+            output_dir = Path(job["output_dir"])
+            self.assertTrue(output_dir.is_dir())
+            deleted = client.delete(f"/api/audits/{audit_id}")
+            deleted.raise_for_status()
+            self.assertFalse(output_dir.exists())
+
     def test_zip_upload_rejects_unsafe_members(self) -> None:
         buffer = io.BytesIO()
         with zipfile.ZipFile(buffer, "w") as archive:
@@ -140,6 +150,23 @@ class WebappBackendTests(unittest.TestCase):
             )
             self.assertEqual(response.status_code, 400)
             self.assertIn("unsafe path", response.text)
+
+    def test_zip_upload_rejects_symlink_members(self) -> None:
+        buffer = io.BytesIO()
+        with zipfile.ZipFile(buffer, "w") as archive:
+            info = zipfile.ZipInfo("figures/link.png")
+            info.create_system = 3
+            info.external_attr = (stat.S_IFLNK | 0o777) << 16
+            archive.writestr(info, "raw_images/target.png")
+        buffer.seek(0)
+
+        with TestClient(create_app(output_root=ROOT / "tmp" / "webapp_upload_symlink_runs")) as client:
+            response = client.post(
+                "/api/audits/upload",
+                files={"file": ("symlink.zip", buffer.getvalue(), "application/zip")},
+            )
+            self.assertEqual(response.status_code, 400)
+            self.assertIn("symlink", response.text)
 
     def test_package_prep_scaffold_inspect_and_manifest_round_trip(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -221,6 +248,19 @@ class WebappBackendTests(unittest.TestCase):
                 self.assertEqual(traversal.status_code, 400)
                 self.assertIn("Invalid package-relative path", traversal.text)
 
+                absolute = client.post("/api/packages/assembly-manifest", json={
+                    "package_path": str(package),
+                    "rows": [
+                        {
+                            "figure_panel": str(package / "figures" / "Figure_1A.png"),
+                            "source_record": "raw_images/Acq_001.tif",
+                            "relation_type": "declared_derived_from",
+                        }
+                    ],
+                })
+                self.assertEqual(absolute.status_code, 400)
+                self.assertIn("Invalid package-relative path", absolute.text)
+
                 unsupported = client.post("/api/packages/assembly-manifest", json={
                     "package_path": str(package),
                     "rows": [
@@ -251,6 +291,23 @@ class WebappBackendTests(unittest.TestCase):
             self.assertTrue(inventory["scan_limit_reached"])
             self.assertEqual(inventory["scan_limits"]["max_files"], 3)
             self.assertTrue(any("Inventory stopped after 3 files" in item for item in inventory["inventory_warnings"]))
+
+    def test_package_prep_inventory_skips_symlinks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            package = tmp_path / "package"
+            outside = tmp_path / "outside.png"
+            (package / "figures").mkdir(parents=True)
+            outside.write_bytes(b"outside")
+            (package / "figures" / "linked.png").symlink_to(outside)
+
+            with TestClient(create_app(output_root=tmp_path / "runs")) as client:
+                response = client.post("/api/packages/inspect", json={"package_path": str(package)})
+                response.raise_for_status()
+                inventory = response.json()["inventory"]
+
+            self.assertNotIn("figures/linked.png", inventory["files_by_role"]["figures"])
+            self.assertTrue(any("Skipped symlink: figures/linked.png" in item for item in inventory["inventory_warnings"]))
 
     def test_package_prep_manifest_rejects_relation_source_role_mismatch(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
