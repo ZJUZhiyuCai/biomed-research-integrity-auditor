@@ -140,7 +140,16 @@ biomed-audit-diff audit_outputs/v1 audit_outputs/v2 \
 
 ### 本地 Web App（V0.5）
 
-如果你更想用浏览器界面，可以构建并启动本地自查 app：
+如果你更想用浏览器界面，在源码目录里优先使用一键启动：
+
+```bash
+make run
+```
+
+它会创建或复用 `.venv`、安装本地包、在检测到 `npm` 时构建前端、启动
+`127.0.0.1:8765`，并自动打开浏览器。如果该端口已有本地服务在运行，它会直接打开现有界面。
+
+开发或排错时仍可手动执行：
 
 ```bash
 cd webapp/frontend && npm install && npm run build && cd ../..

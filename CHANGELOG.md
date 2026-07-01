@@ -13,6 +13,10 @@
 - Plain-language module notes in Audit Coverage explain what each executed screening module did.
 - Webapp overview counters now include unresolved actions, and the R-level pill has an inline
   scope explanation.
+- `make run` source-checkout launcher for non-developer local webapp use: it prepares `.venv`,
+  installs dependencies, builds the frontend, starts the local server, and opens the browser.
+- Assembly-manifest parser warnings now appear in Audit Coverage, Materials Needed, and the
+  presubmission action queue instead of remaining only in `assembly_links.json`.
 - Modality-aware panel routing for local patch / same-image copy-move screening: schematic and
   chart panels declared in `assembly_manifest.csv` are excluded from deep image screening, with
   explicit coverage records that exclusion is scope control rather than clearance. Legacy modality

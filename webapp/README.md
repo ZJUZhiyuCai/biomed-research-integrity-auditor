@@ -6,7 +6,17 @@ background subprocess and the UI reads the artifacts the CLI writes.
 
 ## Run
 
-Install the Python package with a Python 3.10+ interpreter, then build the frontend:
+From a source checkout, the shortest path is:
+
+```bash
+make run
+```
+
+This creates or reuses `.venv`, installs Python dependencies and the editable package, builds the
+React frontend when `npm` is available, starts the local app on `127.0.0.1:8765`, and opens your
+browser. If a local server is already running on that port, it opens the existing app.
+
+Manual setup remains available for development or troubleshooting:
 
 ```bash
 python3.11 -m venv .venv

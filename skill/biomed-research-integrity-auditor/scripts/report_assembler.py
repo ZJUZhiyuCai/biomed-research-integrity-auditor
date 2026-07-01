@@ -274,6 +274,8 @@ def overall_risk(
     coverage = coverage or {}
     if coverage.get("audit_coverage_gap") or coverage.get("unreadable_image_action_required"):
         risks.append("R1")
+    if int(coverage.get("assembly_manifest_warning_count", 0) or 0) > 0:
+        risks.append("R1")
     return max(risks or ["R0"], key=lambda risk: RISK_ORDER.get(risk, -1))
 
 
@@ -285,6 +287,8 @@ def missing_materials(manifest: dict[str, Any], coverage: dict[str, Any] | None 
     rows = [humanize(item.get("category", "")) for item in manifest.get("missing_materials", []) if item.get("category")]
     if (coverage or {}).get("unreadable_image_action_required"):
         rows.append("unreadable image files")
+    if int((coverage or {}).get("assembly_manifest_warning_count", 0) or 0) > 0:
+        rows.append("assembly manifest warnings")
     return rows
 
 
@@ -668,6 +672,22 @@ def build_action_queue(
             "Unreadable image files",
         )
 
+    manifest_warnings = [str(item) for item in coverage.get("assembly_manifest_warnings", []) or [] if str(item).strip()]
+    if manifest_warnings:
+        location = "figure_assembly/assembly_manifest"
+        append(
+            "low_priority_checks",
+            "R1",
+            "assembly_manifest_warning",
+            location,
+            (
+                f"Review {len(manifest_warnings)} assembly manifest warning(s). Ignored rows do not contribute "
+                "to traceability calibration until relation_type/path fields are corrected."
+            ),
+            "audit_coverage",
+            "Assembly manifest warnings",
+        )
+
     claim_coverage = claim_coverage or {}
     if not claim_coverage.get("supplied"):
         append(
@@ -802,6 +822,16 @@ def render_coverage(coverage: dict[str, Any] | None) -> list[str]:
             "**Detector execution failures / 检测器执行失败**",
             "",
             *[f"- {item}" for item in coverage["detector_failures"]],
+        ]
+    manifest_warnings = coverage.get("assembly_manifest_warnings") or []
+    if manifest_warnings:
+        lines += [
+            "",
+            "**Assembly manifest warnings / 组图 manifest 提示**",
+            "",
+            *[f"- {item}" for item in manifest_warnings],
+            "- Rows with unsupported relation types or unreadable paths are ignored for traceability calibration until corrected.",
+            "- relation_type 不被识别或路径无法解析的行，在修正前不会用于可追溯校准。",
         ]
     excluded = coverage.get("panels_excluded_from_deep_scan") or []
     if excluded:
@@ -1433,6 +1463,17 @@ def render_report(
                 f"{unreadable_count} supplied image file(s) could not be read by the audit; "
                 "provide readable PNG/JPG/TIFF exports or document why screening is not possible. / "
                 f"{unreadable_count} 个已提供图像文件无法读取；请补充可读取导出，或说明为何无法筛查。"
+            ),
+        ])
+    manifest_warning_count = int((coverage or {}).get("assembly_manifest_warning_count", 0) or 0)
+    if manifest_warning_count:
+        missing_rows.append([
+            "Corrected assembly manifest rows / 修正后的组图 manifest 行",
+            risk_label("R1"),
+            (
+                f"{manifest_warning_count} assembly manifest warning(s) were recorded; ignored rows do not "
+                "support traceability calibration until corrected. / "
+                f"记录到 {manifest_warning_count} 条组图 manifest 提示；被忽略的行在修正前不会用于可追溯校准。"
             ),
         ])
     if len(missing_rows) > 1:

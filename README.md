@@ -161,7 +161,17 @@ actions, and claim-evidence gaps. It is not a pass/fail decision.
 
 ### Local web app (V0.5)
 
-If you prefer a browser UI, build and launch the local self-audit app:
+If you prefer a browser UI from a source checkout, use the one-command launcher:
+
+```bash
+make run
+```
+
+It creates or reuses `.venv`, installs the local package, builds the frontend when `npm` is
+available, starts the app on `127.0.0.1:8765`, and opens your browser. If a local server is already
+running on that port, it opens the existing app instead.
+
+Manual setup remains available for development or troubleshooting:
 
 ```bash
 cd webapp/frontend && npm install && npm run build && cd ../..

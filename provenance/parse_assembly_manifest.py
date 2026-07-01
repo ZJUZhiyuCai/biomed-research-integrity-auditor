@@ -187,6 +187,7 @@ def parse_structured_csv(path: Path, package: Path, files: dict[str, list[str]])
     if not required.issubset(fieldnames):
         warnings.append(f"{rel} missing required structured manifest columns: figure_panel, source_record")
         return [], warnings
+    row_warning_start = len(warnings)
     links = []
     for index, row in enumerate(reader, start=2):
         link, warning = structured_link_from_row(row, files, rel, "structured_csv_manifest", index)
@@ -194,7 +195,7 @@ def parse_structured_csv(path: Path, package: Path, files: dict[str, list[str]])
             warnings.append(warning)
         if link:
             links.append(link)
-    if not links:
+    if not links and len(warnings) == row_warning_start:
         warnings.append(f"{rel} did not contain parseable structured figure-source rows.")
     return links, warnings
 
@@ -218,6 +219,7 @@ def parse_structured_yaml(path: Path, package: Path, files: dict[str, list[str]]
     if not records:
         warnings.append(f"{rel} did not contain a list of structured figure-source rows.")
         return [], warnings
+    row_warning_start = len(warnings)
     links = []
     for index, row in enumerate(records, start=1):
         link, warning = structured_link_from_row(row, files, rel, "structured_yaml_manifest", index)
@@ -225,7 +227,7 @@ def parse_structured_yaml(path: Path, package: Path, files: dict[str, list[str]]
             warnings.append(warning)
         if link:
             links.append(link)
-    if not links:
+    if not links and len(warnings) == row_warning_start:
         warnings.append(f"{rel} did not contain parseable structured figure-source rows.")
     return links, warnings
 

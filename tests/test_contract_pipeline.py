@@ -2269,6 +2269,51 @@ class EndToEndTests(unittest.TestCase):
                 unresolved_rows = list(csv.DictReader(handle))
             self.assertTrue(any(row["action_type"] == "unreadable_image_file" for row in unresolved_rows))
 
+    def test_assembly_manifest_warnings_are_reported_to_humans(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "pkg"
+            (package / "figures").mkdir(parents=True)
+            (package / "raw_images").mkdir()
+            (package / "figure_assembly").mkdir()
+            write_png(package / "figures/Figure_1A.png", textured_image(61))
+            write_png(package / "raw_images/raw_1A.png", textured_image(62))
+            (package / "manuscript.pdf").write_text("Methods\n\nNeutral manifest warning test.\n", encoding="utf-8")
+            (package / "figure_assembly/assembly_manifest.csv").write_text(
+                "figure_panel,source_record,relation_type,modality,notes\n"
+                "figures/Figure_1A.png,raw_images/raw_1A.png,decalred_derived_from,microscopy,"
+                "typo should be reported to the user\n",
+                encoding="utf-8",
+            )
+            out = Path(tmp) / "out"
+            run([
+                PYTHON,
+                "scripts/audit_package.py",
+                str(package),
+                "--output-dir",
+                str(out),
+                "--case-id",
+                "manifest_warning_case",
+            ])
+            summary = json.loads((out / "AUDIT_JSON_SUMMARY.json").read_text(encoding="utf-8"))
+            coverage = summary["audit_coverage"]
+            self.assertEqual(coverage["assembly_manifest_warning_count"], 1)
+            self.assertTrue(any("unsupported relation_type" in item for item in coverage["assembly_manifest_warnings"]))
+            self.assertIn("assembly manifest warnings", summary["materials_missing"])
+            action_rows = [
+                row
+                for rows in summary["action_queue"]["categories"].values()
+                for row in rows
+                if row.get("action_type") == "assembly_manifest_warning"
+            ]
+            self.assertEqual(len(action_rows), 1)
+            report = (out / "audit-report.md").read_text(encoding="utf-8")
+            self.assertIn("Assembly manifest warnings / 组图 manifest 提示", report)
+            self.assertIn("unsupported relation_type", report)
+            self.assertIn("Corrected assembly manifest rows / 修正后的组图 manifest 行", report)
+            with (out / "unresolved_actions.csv").open(encoding="utf-8") as handle:
+                unresolved_rows = list(csv.DictReader(handle))
+            self.assertTrue(any(row["action_type"] == "assembly_manifest_warning" for row in unresolved_rows))
+
     def test_coverage_reports_detector_payload_errors(self) -> None:
         audit_package = load_audit_package()
         with tempfile.TemporaryDirectory() as tmp:
@@ -2291,6 +2336,20 @@ class EndToEndTests(unittest.TestCase):
             coverage = audit_package.build_coverage(package, out, [stats_output], None)
             self.assertTrue(any("stats.consistency_check" in item for item in coverage["detector_failures"]))
             self.assertTrue(any("broken.csv" in item for item in coverage["detector_failures"]))
+
+    def test_make_run_entrypoint_is_documented_and_helpful(self) -> None:
+        makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
+        self.assertIn("\nrun:\n\t$(PYTHON) scripts/run_local_webapp.py", makefile)
+        result = subprocess.run(
+            [PYTHON, "scripts/run_local_webapp.py", "--help"],
+            cwd=ROOT,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=True,
+        )
+        self.assertIn("--skip-install", result.stdout)
+        self.assertIn("--skip-frontend-build", result.stdout)
 
     def test_case001_clean_expected_traceability_no_r3(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

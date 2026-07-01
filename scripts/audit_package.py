@@ -572,6 +572,8 @@ def build_coverage(
         "detector_failures": [],
         "raw_detector_candidate_count": 0,
         "positive_provenance_count": 0,
+        "assembly_manifest_warnings": [],
+        "assembly_manifest_warning_count": 0,
         "audit_coverage_gap": False,
         "external_literature_provider": external_provider,
         "scan_profile": scan_profile,
@@ -665,6 +667,17 @@ def build_coverage(
     coverage["modules_not_executed"].append(
         "journal-specific writing, language, and reference correctness determination: manual review required"
     )
+
+    assembly_payload = load_safe("assembly_links.json")
+    if assembly_payload and assembly_payload.get("parsed_files"):
+        warnings = [
+            str(item)
+            for item in assembly_payload.get("warnings", []) or []
+            if str(item).strip()
+        ]
+        if warnings:
+            coverage["assembly_manifest_warnings"] = warnings
+            coverage["assembly_manifest_warning_count"] = len(warnings)
 
     raw_candidate_count = 0
     for name in RAW_CANDIDATE_ARTIFACTS:
