@@ -7,6 +7,9 @@
   cross-correlation path and records explicit tile/comparison budget limits. If
   a local image run is capped before all tile pairs are examined, the detector emits
   an R1 `audit_coverage_gap` rather than letting partial screening look complete.
+- Human reports and `AUDIT_JSON_SUMMARY.audit_coverage` now include an explicit image-screening
+  boundary: automated checks performed, manipulation classes not covered by current image
+  detectors, and the reminder that no image finding is not complete image-forensics clearance.
 
 ### Fixed
 - Decimal-comma numeric parsing in the statistics detector: unambiguous European decimals such

@@ -203,6 +203,15 @@ Re-audit comparison is available through `scripts/compare_audit_runs.py` or `scr
 - `detectors/stats/pseudoreplication_screen.py`: possible unit-of-analysis mismatch candidates from biological and technical replicate columns.
 - `skill/.../stats_consistency_check.py`: direct summary consistency (SD/SEM/n, p-value range/validity, integer-count feasibility) plus weak forensic statistical screens. Digit/rounding weak screens require at least 8 comparable values by default; integer-count feasibility requires n >= 6 and propagates reported mean/SD precision. Benford-style first-digit prompts and p-value-clustering prompts are implemented as weak, sample-gated triage screens capped at R2.
 - `provenance/parse_assembly_manifest.py`: declared figure-to-raw/source links from assembly manifests.
+
+Image screening boundaries are part of `audit_coverage`, not hidden in developer notes. The report
+states that current automated image detectors cover package-local whole-image near-duplicates,
+D4 whole-image transforms, local patch reuse, same-image copy-move, limited low-contrast probing,
+and multi-frame TIFF-like frame screening. It also states that arbitrary-angle rotations,
+perspective/elastic deformation, substantial rescaling, splice forensics, JPEG ghosting,
+CFA/noise inconsistency, and lighting/shadow inconsistency are not covered by the current automated
+image screens. This keeps a "no image finding" result from reading like complete image-forensics
+clearance.
 - `provenance/build_resource_graph.py`: package-level resource graph for provenance-aware calibration.
 
 ## Baseline Runner

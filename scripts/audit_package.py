@@ -73,6 +73,44 @@ RAW_CANDIDATE_ARTIFACTS = (
     "external_literature_candidates.json",
     "audit_coverage_candidates.json",
 )
+IMAGE_SCREENING_BOUNDARY = {
+    "automated_checks": [
+        "whole-image near-duplicate screening within the supplied package",
+        "D4 transforms for whole-image matches (identity, 90/180/270 rotation, horizontal/vertical flip, transpose, transverse)",
+        "overlapping-tile local patch reuse across supplied images",
+        "same-image copy-move screening for non-overlapping repeated regions",
+        "limited low-contrast same-image probing and multi-frame TIFF-like frame screening",
+    ],
+    "automated_checks_zh": [
+        "在所供材料包内部做整图近重复筛查",
+        "整图匹配支持 D4 变换（原图、90/180/270 度旋转、水平/垂直翻转、转置、反转置）",
+        "在所供图像之间做重叠 tile 的局部 patch 复用筛查",
+        "在同一图像内部筛查非重叠区域的 copy-move 候选",
+        "有限的低对比同图探测，以及 multi-frame TIFF-like 文件的逐帧筛查",
+    ],
+    "not_covered": [
+        "cross-paper or external image-corpus search",
+        "arbitrary-angle rotation, perspective warp, elastic deformation, or substantial rescaling",
+        "general splice forensics such as ELA, JPEG ghost analysis, CFA/noise inconsistency, or lighting/shadow inconsistency",
+        "manual verification of whether a repeated region is scientifically justified by sample maps, lanes, channels, or raw acquisition metadata",
+        "proof that a figure is authentic or free of manipulation",
+    ],
+    "not_covered_zh": [
+        "跨论文或外部图像库检索",
+        "任意角度旋转、透视变换、弹性形变或大幅缩放",
+        "通用拼接取证，例如 ELA、JPEG ghost、CFA/噪声不一致或光照/阴影不一致",
+        "人工核验重复区域是否能被样本图、泳道、通道或原始采集元数据合理解释",
+        "证明图像真实、未被处理或完全无问题",
+    ],
+    "interpretation_note": (
+        "No image finding means no candidate was detected within these automated checks, supplied files, "
+        "and runtime budgets. It is not a complete image-forensics clearance."
+    ),
+    "interpretation_note_zh": (
+        "没有图像 finding 只代表在这些自动检查、所供文件和运行预算内未检出候选；"
+        "这不是完整图像取证结论。"
+    ),
+}
 
 
 @dataclass(frozen=True)
@@ -575,6 +613,7 @@ def build_coverage(
         "assembly_manifest_warnings": [],
         "assembly_manifest_warning_count": 0,
         "audit_coverage_gap": False,
+        "image_screening_boundary": IMAGE_SCREENING_BOUNDARY,
         "external_literature_provider": external_provider,
         "scan_profile": scan_profile,
         "profile_parameters": (

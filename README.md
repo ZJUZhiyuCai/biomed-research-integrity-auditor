@@ -420,6 +420,10 @@ python3 evals/run_eval.py generate-prompts
 
 - Image, local-patch, and same-image copy-move detection are single-package only; they do not
   search across papers or external image corpora.
+- Image screening does not yet provide general-purpose splice forensics or robust detection for
+  arbitrary-angle rotation, perspective warps, elastic deformation, substantial rescaling, JPEG
+  ghosting, CFA/noise inconsistency, or lighting/shadow inconsistency. Reports now state this
+  boundary explicitly.
 - Local-patch and same-image copy-move screening uses runtime tile/comparison budgets for large
   image packages. If a budget is reached, the report records an R1 coverage gap and recommends
   a focused deep scan; it is not treated as a clean image result.

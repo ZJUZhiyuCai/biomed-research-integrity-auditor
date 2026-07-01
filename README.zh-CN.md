@@ -352,6 +352,9 @@ python3 evals/run_eval.py generate-prompts
 ## 当前限制
 
 - 图像、local patch 和 same-image copy-move 检测只在单个 package 内运行，不跨论文或外部图像库搜索。
+- 图像筛查尚不是通用图像取证系统：任意角度旋转、透视变换、弹性形变、大幅缩放、
+  splice forensics、JPEG ghost、CFA/噪声不一致、光照/阴影不一致等不属于当前自动覆盖范围。
+  报告会显式列出这一边界。
 - local patch 和 same-image copy-move 深度筛查对大图包有 tile/comparison 运行预算。若预算触发，
   报告会记录 R1 覆盖缺口并建议 focused deep scan；这不是“图像已干净”的结论。
 - 文本重叠筛查是 package-internal；可选外部短语检索只是 triage，不是穷尽式查重数据库覆盖，也不是 verdict。

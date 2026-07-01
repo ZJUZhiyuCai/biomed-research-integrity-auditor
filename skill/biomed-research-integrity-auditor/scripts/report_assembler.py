@@ -797,6 +797,40 @@ def render_coverage(coverage: dict[str, Any] | None) -> list[str]:
         ["Raw detector candidates / 原始检测候选", str(coverage.get("raw_detector_candidate_count", 0))],
         ["Positive provenance records / 正向可追溯记录", str(coverage.get("positive_provenance_count", 0))],
     ])]
+    image_boundary = coverage.get("image_screening_boundary") or {}
+    if image_boundary:
+        automated = [str(item) for item in image_boundary.get("automated_checks", []) if str(item).strip()]
+        automated_zh = [str(item) for item in image_boundary.get("automated_checks_zh", []) if str(item).strip()]
+        not_covered = [str(item) for item in image_boundary.get("not_covered", []) if str(item).strip()]
+        not_covered_zh = [str(item) for item in image_boundary.get("not_covered_zh", []) if str(item).strip()]
+        automated_rows = [
+            [automated[idx], automated_zh[idx] if idx < len(automated_zh) else ""]
+            for idx in range(len(automated))
+        ]
+        not_covered_rows = [
+            [not_covered[idx], not_covered_zh[idx] if idx < len(not_covered_zh) else ""]
+            for idx in range(len(not_covered))
+        ]
+        lines += [
+            "",
+            "**Image screening boundary / 图像筛查边界**",
+            "",
+            "Automated image checks in this run / 本次自动图像检查：",
+            table([["Automated check / 自动检查", "中文说明"], *automated_rows])
+            if automated_rows else "- No automated image checks recorded / 未记录自动图像检查\n",
+            "",
+            "Not covered by the current automated image screens / 当前自动图像筛查未覆盖：",
+            table([["Not covered / 未覆盖", "中文说明"], *not_covered_rows])
+            if not_covered_rows else "- No explicit image-screening exclusions recorded / 未记录未覆盖范围\n",
+        ]
+        interpretation_note = str(image_boundary.get("interpretation_note", "")).strip()
+        interpretation_note_zh = str(image_boundary.get("interpretation_note_zh", "")).strip()
+        if interpretation_note:
+            lines += [
+                "",
+                f"> {interpretation_note}",
+                f"> 中文提示：{interpretation_note_zh or '图像模块未发现候选，只代表在当前自动检查、所供文件和运行预算内未检出；这不是完整图像取证结论。'}",
+            ]
     unreadable_files = coverage.get("unreadable_image_files") or []
     if coverage.get("image_files_unreadable"):
         lines += [

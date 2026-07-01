@@ -2320,6 +2320,13 @@ class EndToEndTests(unittest.TestCase):
             self.assertTrue(any("image" in item for item in coverage["modules_not_executed"]))
             self.assertTrue(any("methodology" in item for item in coverage["modules_not_executed"]))
             self.assertTrue(coverage["scope_note"])
+            image_boundary = coverage["image_screening_boundary"]
+            self.assertIn("whole-image near-duplicate screening", image_boundary["automated_checks"][0])
+            self.assertTrue(any("arbitrary-angle rotation" in item for item in image_boundary["not_covered"]))
+            self.assertIn("not a complete image-forensics clearance", image_boundary["interpretation_note"])
+            self.assertIn("Image screening boundary / 图像筛查边界", report)
+            self.assertIn("arbitrary-angle rotation", report)
+            self.assertIn("不是完整图像取证结论", report)
 
     def test_report_is_bilingual_and_human_readable_for_no_finding_r1(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
