@@ -1537,6 +1537,7 @@ class RiskCapTests(unittest.TestCase):
             "local_patch_cross_context",
             "same_image_copy_move",
             "local_patch_within_declared_raw_source",
+            "declared_local_patch_requires_verification",
             "local_patch_direct_source_conflict",
             "text_overlap_candidate",
             "methods_boilerplate_overlap",
@@ -1883,6 +1884,70 @@ class EndToEndTests(unittest.TestCase):
             summary = json.loads((out / "AUDIT_JSON_SUMMARY.json").read_text(encoding="utf-8"))
             self.assertTrue(any(item["finding_type"] == "audit_coverage_gap" for item in summary["findings"]))
 
+    def test_relevant_unsupported_formats_emit_human_visible_coverage_gaps(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "format_gap_case"
+            (package / "manuscript").mkdir(parents=True)
+            (package / "source_data").mkdir()
+            (package / "supplementary").mkdir()
+            (package / "manuscript" / "draft.docx").write_bytes(b"word container placeholder")
+            (package / "source_data" / "figure_values.xls").write_bytes(b"legacy excel placeholder")
+            (package / "source_data" / "figure_values.pzfx").write_text("<GraphPadPrismFile />", encoding="utf-8")
+            (package / "supplementary" / "Figure_S1.pdf").write_text(
+                "Supplementary figure container placeholder.\n",
+                encoding="utf-8",
+            )
+            out = Path(tmp) / "out"
+            run([
+                PYTHON,
+                "scripts/audit_package.py",
+                str(package),
+                "--output-dir",
+                str(out),
+                "--case-id",
+                "format_gap_case",
+            ])
+
+            summary = json.loads((out / "pipeline_summary.json").read_text(encoding="utf-8"))
+            self.assertTrue(any(path.endswith("format_coverage_candidates.json") for path in summary["detector_outputs"]))
+            calibrated = json.loads((out / "calibrated_findings.json").read_text(encoding="utf-8"))
+            format_gaps = [
+                item
+                for item in calibrated["findings"]
+                if item.get("module") == "audit.format_coverage"
+            ]
+            self.assertEqual(len(format_gaps), 4)
+            self.assertTrue(all(item["calibrated_risk_level"] == "R1" for item in format_gaps))
+            gap_types = {
+                item["evidence"]["gap_type"]
+                for item in format_gaps
+            }
+            self.assertEqual(gap_types, {
+                "document_text_container_not_screened",
+                "legacy_excel_source_not_screened",
+                "graphpad_prism_project_not_screened",
+                "pdf_embedded_figures_not_image_screened",
+            })
+
+            audit_summary = json.loads((out / "AUDIT_JSON_SUMMARY.json").read_text(encoding="utf-8"))
+            coverage = audit_summary["audit_coverage"]
+            self.assertEqual(coverage["unsupported_relevant_file_count"], 4)
+            self.assertIn("unsupported relevant file formats", audit_summary["materials_missing"])
+            actions = [
+                row
+                for rows in audit_summary["action_queue"]["categories"].values()
+                for row in rows
+                if row.get("source") == "AUDIT_JSON_SUMMARY.findings"
+                and row.get("action_type") == "audit_coverage_gap"
+            ]
+            self.assertEqual(len(actions), 4)
+            report = (out / "audit-report.md").read_text(encoding="utf-8")
+            self.assertIn("Relevant files not automatically screened / 相关但未自动筛查的文件", report)
+            self.assertIn("draft.docx", report)
+            self.assertIn("figure_values.xls", report)
+            self.assertIn("figure_values.pzfx", report)
+            self.assertIn("Figure_S1.pdf", report)
+
     def test_text_results_overlap_without_disclosure_can_reach_r3(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             package = Path(tmp) / "text_results_case"
@@ -1979,6 +2044,31 @@ class EndToEndTests(unittest.TestCase):
             self.assertTrue(any(item["calibrated_risk_level"] == "R3" for item in local_findings))
             self.assertTrue((out / "evidence" / "local_patch").exists())
 
+    def test_disclosed_reuse_cap_is_candidate_specific(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "unrelated_disclosure_case"
+            write_local_patch_package(package)
+            (package / "PACKAGE_NOTE.txt").write_text(
+                "Figure 9A and Figure 9B reuse the same GAPDH loading control from a reprobed membrane; "
+                "that unrelated reuse is disclosed here.\n",
+                encoding="utf-8",
+            )
+            out = Path(tmp) / "out"
+            run([
+                PYTHON,
+                "scripts/audit_package.py",
+                str(package),
+                "--output-dir",
+                str(out),
+                "--case-id",
+                "unrelated_disclosure_case",
+            ])
+            calibrated = json.loads((out / "calibrated_findings.json").read_text(encoding="utf-8"))
+            local_findings = [item for item in calibrated["findings"] if item["finding_type"] == "local_patch_reuse"]
+            self.assertTrue(local_findings)
+            self.assertFalse(any("disclosed_legitimate_reuse" in item.get("source_candidate_tags", []) for item in local_findings))
+            self.assertTrue(any(item["calibrated_risk_level"] == "R3" for item in local_findings))
+
     def test_same_image_copy_move_reaches_r3_in_pipeline(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             package = Path(tmp) / "copy_move_case"
@@ -2073,14 +2163,17 @@ class EndToEndTests(unittest.TestCase):
                 "same_field_case",
             ])
             local_payload = json.loads((out / "local_patch_candidates.json").read_text(encoding="utf-8"))
-            self.assertEqual(local_payload["candidates"], [])
-            self.assertGreaterEqual(local_payload["excluded_expected_traceability_pairs"], 1)
+            self.assertTrue(local_payload["candidates"])
+            self.assertEqual(local_payload["excluded_expected_traceability_pairs"], 0)
+            contextual = json.loads((out / "local_patch_contextual_candidates.json").read_text(encoding="utf-8"))
+            self.assertEqual(contextual.get("positive_evidence", []), [])
             calibrated = json.loads((out / "calibrated_findings.json").read_text(encoding="utf-8"))
-            self.assertFalse(any(
-                item["finding_type"] == "local_patch_reuse"
-                and risk_value(item["calibrated_risk_level"]) >= risk_value("R3")
-                for item in calibrated["findings"]
-            ))
+            declared_findings = [
+                item for item in calibrated["findings"]
+                if "declared_local_patch_requires_verification" in item.get("source_candidate_tags", [])
+            ]
+            self.assertTrue(declared_findings)
+            self.assertTrue(all(item["calibrated_risk_level"] == "R1" for item in declared_findings))
 
     def test_default_pipeline_runs_external_literature_fixture_with_provenance(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -2143,7 +2236,7 @@ class EndToEndTests(unittest.TestCase):
                 return [{"title": "partial hit", "doi": "10.5555/partial", "url": "https://example.org/partial"}]
 
             with mock.patch.object(els, "search_provider", side_effect=fake_search):
-                result = els.scan(package, "crossref", None, 5, 5, 1.0, 8, 5, 8)
+                result = els.scan(package, "crossref", None, 5, 5, 1.0, 8, 5, 8, retries=0)
 
             validate_instance(result, ROOT / "schemas" / "detector_output.schema.json", "partial external search")
             types = [item["candidate_type"] for item in result["candidates"]]
@@ -2161,6 +2254,47 @@ class EndToEndTests(unittest.TestCase):
             self.assertEqual(successful["failure_count"], 0)
             self.assertGreaterEqual(successful["result_count"], 1)
             self.assertIn("queried_at", result["errors"][0])
+
+    def test_external_search_retries_and_caches_network_results(self) -> None:
+        from detectors.text import external_literature_search as els
+
+        with tempfile.TemporaryDirectory() as tmp:
+            calls: list[str] = []
+
+            def flaky_search(provider, query, rows, timeout, fixture):
+                calls.append(query)
+                if len(calls) == 1:
+                    raise RuntimeError("temporary provider failure")
+                return [{"title": "Recovered result", "doi": "10.0000/example"}]
+
+            cache_dir = Path(tmp) / "cache"
+            with mock.patch.object(els, "search_provider", side_effect=flaky_search):
+                results, meta = els.cached_search_provider(
+                    "europepmc",
+                    "recovered phrase",
+                    2,
+                    0.1,
+                    None,
+                    cache_dir,
+                    retries=1,
+                )
+                self.assertEqual(results[0]["title"], "Recovered result")
+                self.assertEqual(meta["attempts"], 2)
+                self.assertEqual(meta["cache_status"], "miss")
+                self.assertEqual(len(calls), 2)
+
+                cached_results, cached_meta = els.cached_search_provider(
+                    "europepmc",
+                    "recovered phrase",
+                    2,
+                    0.1,
+                    None,
+                    cache_dir,
+                    retries=1,
+                )
+                self.assertEqual(cached_results, results)
+                self.assertEqual(cached_meta["cache_status"], "hit")
+                self.assertEqual(len(calls), 2)
 
     def test_example_packages_run_with_coverage_and_no_verdict(self) -> None:
         for name in ("minimal_package", "full_presubmission_package"):
@@ -2188,6 +2322,13 @@ class EndToEndTests(unittest.TestCase):
                 report = (out / "audit-report.md").read_text(encoding="utf-8")
                 self.assertIn("## Audit Coverage", report)
                 self.assertIn("## Methodology Readiness", report)
+                start_here = (out / "START_HERE.md").read_text(encoding="utf-8")
+                self.assertIn("audit-report.md", start_here)
+                self.assertIn("submission_qc_packet", start_here)
+                pipeline_summary = json.loads((out / "pipeline_summary.json").read_text(encoding="utf-8"))
+                packet = Path(pipeline_summary["submission_qc_packet"]["packet_dir"])
+                packet_start = (packet / "START_HERE.md").read_text(encoding="utf-8")
+                self.assertIn("unresolved_actions.csv", packet_start)
                 if name == "full_presubmission_package":
                     # The full example demonstrates verified figure-to-raw traceability.
                     self.assertGreaterEqual(len(summary["positive_provenance"]), 2)
@@ -2351,6 +2492,29 @@ class EndToEndTests(unittest.TestCase):
                 (path / "claim_coverage.json").write_text(json.dumps({
                     "claims_with_unresolved_evidence_gap": claim_gaps,
                 }), encoding="utf-8")
+                findings = [
+                    {
+                        "finding_id": "F-PERSIST",
+                        "calibrated_risk_level": risk,
+                        "finding_type": "example_persisted",
+                        "location": "Figure 1",
+                    }
+                ]
+                if path == old:
+                    findings.append({
+                        "finding_id": "F-FIXED",
+                        "calibrated_risk_level": "R3",
+                        "finding_type": "example_fixed",
+                        "location": "Figure 2",
+                    })
+                else:
+                    findings.append({
+                        "finding_id": "F-NEW",
+                        "calibrated_risk_level": "R2",
+                        "finding_type": "example_new",
+                        "location": "Figure 3",
+                    })
+                (path / "calibrated_findings.json").write_text(json.dumps({"findings": findings}), encoding="utf-8")
                 (path / "unresolved_actions.csv").write_text(
                     "action_id,risk_level,action_type,location,required_action,source\n"
                     + "".join(f"{item},R1,example,,,test\n" for item in actions),
@@ -2372,7 +2536,14 @@ class EndToEndTests(unittest.TestCase):
             self.assertEqual(diff["overall_risk"], {"previous": "R3", "current": "R1"})
             self.assertEqual(diff["positive_provenance_count"], {"previous": 0, "current": 1})
             self.assertEqual(diff["unresolved_action_count"], {"previous": 2, "current": 1})
+            self.assertEqual(diff["finding_changes"]["fixed_count"], 1)
+            self.assertEqual(diff["finding_changes"]["new_count"], 1)
+            self.assertEqual(diff["finding_changes"]["persisted_count"], 1)
+            self.assertEqual(diff["finding_changes"]["fixed"][0]["finding_id"], "F-FIXED")
+            self.assertEqual(diff["finding_changes"]["new"][0]["finding_id"], "F-NEW")
             self.assertIn("claim_evidence_gaps,2,0", csv_output.read_text(encoding="utf-8"))
+            self.assertIn("fixed:F-FIXED,R3,", csv_output.read_text(encoding="utf-8"))
+            self.assertIn("new:F-NEW,,R2", csv_output.read_text(encoding="utf-8"))
 
     def test_report_includes_audit_coverage_scope(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -692,12 +692,31 @@ def export_submission_qc_packet(
     if re_audit_diff is not None:
         write_json(packet_dir / "re_audit_diff.json", re_audit_diff)
 
+    start_here_lines = [
+        "# START HERE",
+        "",
+        "Read these files in order:",
+        "",
+        "1. `audit-report.md` or `audit-report.html` — human report with scope, candidate findings, and action queue.",
+        "2. `unresolved_actions.csv` — team tracker for required follow-up.",
+        "3. `correction_plan.md` — short correction-plan view derived from open actions.",
+        "4. `AUDIT_JSON_SUMMARY.json` — machine-readable summary for re-audit or webapp import.",
+        "5. `file_hash_manifest.json` — hashes of the reviewed package files.",
+        "",
+        "Boundary: this packet is not a clean-manuscript certificate and does not determine misconduct, intent, or author responsibility.",
+        "",
+        "中文提示：请先读 `audit-report.md` 或 `audit-report.html`，再用 `unresolved_actions.csv` 跟踪处理项。"
+        " 本包不是“论文无问题证明”，也不判断作者意图或责任。",
+    ]
+    (packet_dir / "START_HERE.md").write_text("\n".join(start_here_lines) + "\n", encoding="utf-8")
+
     readme_lines = [
         "# Submission QC Packet",
         "",
         "This packet records the supplied audit materials, traceability outputs, unresolved actions, and sign-off template.",
         "It is not a clean-manuscript certificate and does not determine misconduct, intent, or author guilt.",
         "",
+        "- Start with `START_HERE.md` for the reading order.",
         "- `audit_snapshot.json` and `file_hash_manifest.json` record the package version reviewed.",
         "- `claim_coverage.*` records claim-to-evidence coverage when a claim manifest was supplied.",
         "- `methodology_checklist.*` records reporting-standard readiness prompts and supporting-material gaps.",
@@ -734,6 +753,79 @@ def load_optional_json(path: Path) -> dict[str, Any]:
     return read_json(path) if path.is_file() else {}
 
 
+def finding_risk(finding: dict[str, Any]) -> str:
+    return str(finding.get("calibrated_risk_level") or finding.get("risk_level") or "")
+
+
+def finding_key(finding: dict[str, Any]) -> str:
+    finding_id = str(finding.get("finding_id") or "").strip()
+    if finding_id:
+        return finding_id
+    signature = {
+        "finding_type": finding.get("finding_type"),
+        "module": finding.get("module"),
+        "location": finding.get("location"),
+        "evidence_type": finding.get("evidence_type"),
+        "source_candidate_tags": finding.get("source_candidate_tags", []),
+    }
+    digest = hashlib.sha256(json.dumps(signature, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()[:12]
+    return f"finding-signature-{digest}"
+
+
+def finding_summary(key: str, finding: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "finding_key": key,
+        "finding_id": finding.get("finding_id") or key,
+        "risk": finding_risk(finding),
+        "finding_type": finding.get("finding_type", ""),
+        "module": finding.get("module", ""),
+        "location": finding.get("location", ""),
+        "recommended_action": finding.get("recommended_action", ""),
+    }
+
+
+def finding_map(findings_payload: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    findings = findings_payload.get("findings", []) or []
+    return {finding_key(item): item for item in findings}
+
+
+def build_finding_changes(previous_dir: Path, current_dir: Path) -> dict[str, Any]:
+    previous = finding_map(load_optional_json(previous_dir / "calibrated_findings.json"))
+    current = finding_map(load_optional_json(current_dir / "calibrated_findings.json"))
+    previous_keys = set(previous)
+    current_keys = set(current)
+
+    fixed = [
+        finding_summary(key, previous[key])
+        for key in sorted(previous_keys - current_keys)
+    ]
+    new = [
+        finding_summary(key, current[key])
+        for key in sorted(current_keys - previous_keys)
+    ]
+    persisted = []
+    for key in sorted(previous_keys & current_keys):
+        persisted.append({
+            "finding_key": key,
+            "finding_id": current[key].get("finding_id") or previous[key].get("finding_id") or key,
+            "finding_type": current[key].get("finding_type") or previous[key].get("finding_type", ""),
+            "module": current[key].get("module") or previous[key].get("module", ""),
+            "location": current[key].get("location") or previous[key].get("location", ""),
+            "previous_risk": finding_risk(previous[key]),
+            "current_risk": finding_risk(current[key]),
+            "risk_changed": finding_risk(previous[key]) != finding_risk(current[key]),
+            "recommended_action": current[key].get("recommended_action", ""),
+        })
+    return {
+        "fixed_count": len(fixed),
+        "new_count": len(new),
+        "persisted_count": len(persisted),
+        "fixed": fixed,
+        "new": new,
+        "persisted": persisted,
+    }
+
+
 def build_re_audit_diff(previous_dir: Path, current_dir: Path) -> dict[str, Any]:
     previous_summary = load_optional_json(previous_dir / "AUDIT_JSON_SUMMARY.json")
     current_summary = load_optional_json(current_dir / "AUDIT_JSON_SUMMARY.json")
@@ -741,11 +833,15 @@ def build_re_audit_diff(previous_dir: Path, current_dir: Path) -> dict[str, Any]
     current_claims = load_optional_json(current_dir / "claim_coverage.json")
     previous_actions = list(csv.DictReader((previous_dir / "unresolved_actions.csv").open(encoding="utf-8"))) if (previous_dir / "unresolved_actions.csv").is_file() else []
     current_actions = list(csv.DictReader((current_dir / "unresolved_actions.csv").open(encoding="utf-8"))) if (current_dir / "unresolved_actions.csv").is_file() else []
+    finding_changes = build_finding_changes(previous_dir, current_dir)
     return {
         "schema_version": "0.1.0",
         "previous_dir": str(previous_dir),
         "current_dir": str(current_dir),
-        "scope_note": "A re-audit diff shows changes between two audit outputs; it is not a pass/fail decision.",
+        "scope_note": (
+            "A re-audit diff shows which calibrated findings appear fixed, new, or still present "
+            "between two audit outputs; it is not a pass/fail decision."
+        ),
         "overall_risk": {
             "previous": previous_summary.get("overall_risk"),
             "current": current_summary.get("overall_risk"),
@@ -770,6 +866,7 @@ def build_re_audit_diff(previous_dir: Path, current_dir: Path) -> dict[str, Any]
             "previous": previous_claims.get("claims_with_unresolved_evidence_gap"),
             "current": current_claims.get("claims_with_unresolved_evidence_gap"),
         },
+        "finding_changes": finding_changes,
     }
 
 
@@ -802,6 +899,22 @@ def write_re_audit_diff_csv(path: Path, diff: dict[str, Any]) -> None:
             f"finding_count_{risk}",
             diff["risk_counts"]["previous"].get(risk, 0),
             diff["risk_counts"]["current"].get(risk, 0),
+        ))
+    finding_changes = diff.get("finding_changes", {})
+    rows.extend([
+        ("findings_fixed", finding_changes.get("fixed_count", 0), ""),
+        ("findings_new", "", finding_changes.get("new_count", 0)),
+        ("findings_persisted", finding_changes.get("persisted_count", 0), finding_changes.get("persisted_count", 0)),
+    ])
+    for item in finding_changes.get("fixed", []) or []:
+        rows.append((f"fixed:{item.get('finding_id')}", item.get("risk"), ""))
+    for item in finding_changes.get("new", []) or []:
+        rows.append((f"new:{item.get('finding_id')}", "", item.get("risk")))
+    for item in finding_changes.get("persisted", []) or []:
+        rows.append((
+            f"persisted:{item.get('finding_id')}",
+            item.get("previous_risk"),
+            item.get("current_risk"),
         ))
     with path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.writer(handle)

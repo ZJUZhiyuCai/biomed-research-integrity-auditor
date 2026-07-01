@@ -2,8 +2,8 @@
 // QC-packet downloads, and writing/submission readiness. Integrity Boundary:
 // these readiness artifacts are never rendered as findings and never modify R0-R4.
 
-import type React from "react";
-import { ClipboardList, Download, FileArchive, GitCompare, PencilLine } from "lucide-react";
+import { useState, type ReactNode } from "react";
+import { ClipboardList, Download, FileArchive, GitCompare, PencilLine, Save } from "lucide-react";
 import { artifactUrl, qcPacketUrl } from "../api";
 import type {
   ActionTrackerRow,
@@ -24,6 +24,7 @@ export function SubmissionWorkspacePanel({
   reAuditDiff,
   qcPacket,
   writingReadiness,
+  onActionUpdate,
   t
 }: {
   auditId: string;
@@ -33,6 +34,10 @@ export function SubmissionWorkspacePanel({
   reAuditDiff?: ReAuditDiff | null;
   qcPacket?: SubmissionQCPacket;
   writingReadiness?: WritingReadiness | null;
+  onActionUpdate: (
+    actionId: string,
+    patch: Pick<ActionTrackerRow, "owner" | "status" | "human_note" | "accepted_with_reason">
+  ) => Promise<void>;
   t: Labels;
 }) {
   return (
@@ -44,7 +49,7 @@ export function SubmissionWorkspacePanel({
       <p className="scope-line">{t.readinessBoundary}</p>
       <div className="submission-grid">
         <ClaimCoverageCard claimCoverage={claimCoverage} t={t} />
-        <ActionTrackerCard auditId={auditId} rows={actionRows} t={t} />
+        <ActionTrackerCard auditId={auditId} rows={actionRows} onActionUpdate={onActionUpdate} t={t} />
         <CorrectionPlanCard auditId={auditId} rows={correctionRows} t={t} />
         <ReAuditDiffCard reAuditDiff={reAuditDiff} t={t} />
         <QCPacketCard auditId={auditId} qcPacket={qcPacket} t={t} />
@@ -84,10 +89,15 @@ function ClaimCoverageCard({
 function ActionTrackerCard({
   auditId,
   rows,
+  onActionUpdate,
   t
 }: {
   auditId: string;
   rows: ActionTrackerRow[];
+  onActionUpdate: (
+    actionId: string,
+    patch: Pick<ActionTrackerRow, "owner" | "status" | "human_note" | "accepted_with_reason">
+  ) => Promise<void>;
   t: Labels;
 }) {
   return (
@@ -103,27 +113,98 @@ function ActionTrackerCard({
         <EmptyState text={t.notExecutedYet} />
       ) : (
         <div className="tracker-table-wrap">
-          <table className="compact-table">
+          <table className="compact-table action-edit-table">
             <thead>
               <tr>
                 <th>ID</th>
                 <th>{t.module}</th>
                 <th>{t.action}</th>
+                <th>{t.owner}</th>
+                <th>{t.status}</th>
+                <th>{t.note}</th>
+                <th>{t.acceptedReason}</th>
+                <th>{t.save}</th>
               </tr>
             </thead>
             <tbody>
-              {rows.slice(0, 8).map((row) => (
-                <tr key={row.action_id || row.required_action}>
-                  <td className="mono">{row.action_id}</td>
-                  <td>{row.owner || row.action_category}</td>
-                  <td>{row.required_action}</td>
-                </tr>
+              {rows.map((row) => (
+                <ActionEditorRow
+                  key={row.action_id || row.required_action}
+                  row={row}
+                  onActionUpdate={onActionUpdate}
+                  t={t}
+                />
               ))}
             </tbody>
           </table>
         </div>
       )}
     </MiniPanel>
+  );
+}
+
+function ActionEditorRow({
+  row,
+  onActionUpdate,
+  t
+}: {
+  row: ActionTrackerRow;
+  onActionUpdate: (
+    actionId: string,
+    patch: Pick<ActionTrackerRow, "owner" | "status" | "human_note" | "accepted_with_reason">
+  ) => Promise<void>;
+  t: Labels;
+}) {
+  const [owner, setOwner] = useState(row.owner || "");
+  const [status, setStatus] = useState(row.status || "open");
+  const [humanNote, setHumanNote] = useState(row.human_note || "");
+  const [acceptedReason, setAcceptedReason] = useState(row.accepted_with_reason || "");
+  const [saving, setSaving] = useState(false);
+  const actionId = row.action_id || "";
+
+  async function save() {
+    if (!actionId) return;
+    setSaving(true);
+    try {
+      await onActionUpdate(actionId, {
+        owner,
+        status,
+        human_note: humanNote,
+        accepted_with_reason: acceptedReason
+      });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <tr>
+      <td className="mono">{row.action_id}</td>
+      <td>{row.action_category || row.action_type}</td>
+      <td>{row.required_action}</td>
+      <td>
+        <input className="compact-input" value={owner} onChange={(e) => setOwner(e.target.value)} aria-label={t.owner} />
+      </td>
+      <td>
+        <select className="compact-input" value={status} onChange={(e) => setStatus(e.target.value)} aria-label={t.status}>
+          <option value="open">{t.open}</option>
+          <option value="in_progress">{t.inProgress}</option>
+          <option value="resolved">{t.resolved}</option>
+          <option value="accepted_with_reason">{t.acceptedWithReason}</option>
+        </select>
+      </td>
+      <td>
+        <input className="compact-input" value={humanNote} onChange={(e) => setHumanNote(e.target.value)} aria-label={t.note} />
+      </td>
+      <td>
+        <input className="compact-input" value={acceptedReason} onChange={(e) => setAcceptedReason(e.target.value)} aria-label={t.acceptedReason} />
+      </td>
+      <td>
+        <button type="button" className="icon-button small" onClick={save} disabled={!actionId || saving} aria-label={t.save}>
+          <Save size={14} aria-hidden="true" />
+        </button>
+      </td>
+    </tr>
   );
 }
 
@@ -164,7 +245,7 @@ function CorrectionPlanCard({
               </tr>
             </thead>
             <tbody>
-              {rows.slice(0, 8).map((row) => (
+              {rows.map((row) => (
                 <tr key={row.finding_id || row.source_action_id || row.required_correction}>
                   <td className="mono">{row.finding_id}</td>
                   <td>{row.risk}</td>
@@ -194,6 +275,9 @@ function ReAuditDiffCard({
     <MiniPanel title={t.reAuditDiff} icon={<GitCompare size={15} aria-hidden="true" />}>
       <dl className="readiness-list">
         <Row label="Overall R" value={`${reAuditDiff.overall_risk?.previous ?? "—"} → ${reAuditDiff.overall_risk?.current ?? "—"}`} />
+        <Row label={t.fixedFindings} value={reAuditDiff.finding_changes?.fixed_count ?? 0} />
+        <Row label={t.newFindings} value={reAuditDiff.finding_changes?.new_count ?? 0} />
+        <Row label={t.persistedFindings} value={reAuditDiff.finding_changes?.persisted_count ?? 0} />
         <Row label="Missing materials" value={delta(reAuditDiff.missing_material_count)} />
         <Row label="Traceability" value={delta(reAuditDiff.positive_provenance_count)} />
         <Row label="Actions" value={delta(reAuditDiff.unresolved_action_count)} />
@@ -233,7 +317,7 @@ function QCPacketCard({
             <span>files</span>
           </div>
           <ul className="compact-file-list">
-            {files.slice(0, 8).map((file) => (
+            {files.map((file) => (
               <li key={file} className="mono">
                 <a href={artifactUrl(auditId, `submission_qc_packet/${file}`)}>{file}</a>
               </li>
@@ -278,9 +362,9 @@ function MiniPanel({
   children
 }: {
   title: string;
-  icon?: React.ReactNode;
-  action?: React.ReactNode;
-  children: React.ReactNode;
+  icon?: ReactNode;
+  action?: ReactNode;
+  children: ReactNode;
 }) {
   return (
     <article className="mini-panel">

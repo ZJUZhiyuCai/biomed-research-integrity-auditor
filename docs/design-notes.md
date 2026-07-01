@@ -46,7 +46,7 @@ The eval set contains synthetic packages covering:
 - pseudo-replication;
 - weak animal reporting with otherwise consistent source data;
 - prompt-injection text embedded in audit material;
-- true binary PDF intake where extraction is a known, explicitly recorded gap.
+- true binary PDF intake where compressed machine text should be extracted and regression-tested.
 
 The harness scores both detection and restraint. A model can fail by missing real risk, but it can also fail by overclaiming, ignoring benign explanations, exceeding risk caps, or using defamatory verdict language.
 

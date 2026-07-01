@@ -2,8 +2,8 @@
 // panel stack (coverage, provenance+missing, findings, report). Counters are
 // neutral counts only — never a score or verdict.
 
-import { RefreshCw, Trash2 } from "lucide-react";
-import type { AuditJob, ManifestRow, PackageInventory, SummaryPayload } from "../types";
+import { CircleStop, RefreshCw, Trash2 } from "lucide-react";
+import type { ActionTrackerRow, AuditJob, ManifestRow, PackageInventory, SummaryPayload } from "../types";
 import type { Labels } from "../i18n";
 import { CoveragePanel } from "./CoveragePanel";
 import { FindingsPanel } from "./FindingsPanel";
@@ -31,6 +31,11 @@ interface WorkspaceProps {
   onSaveManifest: (rows: ManifestRow[]) => Promise<void>;
   onRefresh: () => void;
   onDelete: () => void;
+  onCancel: () => void;
+  onActionUpdate: (
+    actionId: string,
+    patch: Pick<ActionTrackerRow, "owner" | "status" | "human_note" | "accepted_with_reason">
+  ) => Promise<void>;
   onEvidence: (images: string[], index: number) => void;
 }
 
@@ -106,7 +111,18 @@ export function Workspace(props: WorkspaceProps) {
           >
             <RefreshCw size={16} aria-hidden="true" />
           </button>
-          {audit.status !== "running" && audit.status !== "queued" && (
+          {(audit.status === "queued" || audit.status === "running" || audit.status === "cancel_requested") && (
+            <button
+              type="button"
+              className="icon-button danger"
+              onClick={props.onCancel}
+              aria-label={t.cancelAudit}
+              title={t.cancelAudit}
+            >
+              <CircleStop size={16} aria-hidden="true" />
+            </button>
+          )}
+          {audit.status !== "running" && audit.status !== "queued" && audit.status !== "cancel_requested" && (
             <button
               type="button"
               className="icon-button danger"
@@ -124,11 +140,17 @@ export function Workspace(props: WorkspaceProps) {
       {audit.status === "failed" && (
         <section className="panel">
           <h3>{t.failureLog}</h3>
-          <pre className="log-pre">{audit.error || audit.stderr_tail || audit.stdout_tail}</pre>
+          <p className="scope-line">{audit.error || t.auditFailedHuman}</p>
+          {(audit.stderr_tail || audit.stdout_tail) && (
+            <details className="log-details">
+              <summary>{t.technicalLog}</summary>
+              <pre className="log-pre">{audit.stderr_tail || audit.stdout_tail}</pre>
+            </details>
+          )}
         </section>
       )}
 
-      {(audit.status === "queued" || audit.status === "running") && (
+      {(audit.status === "queued" || audit.status === "running" || audit.status === "cancel_requested") && (
         <section className="panel live-panel">
           <h3>{statusLabel(t, audit.status)}</h3>
           <pre className="log-pre">{audit.stdout_tail || audit.stderr_tail || t.waiting}</pre>
@@ -164,6 +186,7 @@ export function Workspace(props: WorkspaceProps) {
             reAuditDiff={detail.re_audit_diff}
             qcPacket={detail.submission_qc_packet}
             writingReadiness={detail.writing_readiness}
+            onActionUpdate={props.onActionUpdate}
             t={t}
           />
           <MethodologyPanel checklist={detail.audit_summary?.methodology_checklist} t={t} />

@@ -153,8 +153,13 @@ def is_authoritative_traceability_edge(edge: dict[str, Any]) -> bool:
 def expected_traceability_pairs(provenance: dict[str, Any]) -> set[tuple[str, str]]:
     pairs: set[tuple[str, str]] = set()
     for edge in provenance.get("edges", []) or []:
-        if is_authoritative_traceability_edge(edge):
-            pairs.add(undirected_pair(str(edge.get("source_path", "")), str(edge.get("target_path", ""))))
+        if not is_authoritative_traceability_edge(edge):
+            continue
+        source_path = str(edge.get("source_path", ""))
+        target_path = str(edge.get("target_path", ""))
+        roles = {role_from_path(source_path), role_from_path(target_path)}
+        if roles == {"figure_panel", "raw_image"} or roles == {"figure_panel", "source_data"}:
+            pairs.add(undirected_pair(source_path, target_path))
     return pairs
 
 

@@ -7,6 +7,7 @@ import { Sidebar } from "./components/Sidebar";
 import { Workspace } from "./components/Workspace";
 import { EvidenceLightbox } from "./components/EvidenceLightbox";
 import {
+  cancelAudit,
   createAudit,
   deleteAudit,
   getAudit,
@@ -16,6 +17,7 @@ import {
   listAudits,
   saveAssemblyManifest,
   scaffoldPackage,
+  updateAction,
   uploadZip
 } from "./api";
 import { getLabels } from "./i18n";
@@ -72,7 +74,9 @@ function AppInner() {
   const selectedAudit = audits.find((a) => a.audit_id === selectedId) || null;
   const selectedAuditId = selectedAudit?.audit_id;
   const isLive =
-    selectedAudit?.status === "queued" || selectedAudit?.status === "running";
+    selectedAudit?.status === "queued" ||
+    selectedAudit?.status === "running" ||
+    selectedAudit?.status === "cancel_requested";
 
   async function loadAudits() {
     setAuditsLoading(true);
@@ -252,6 +256,31 @@ function AppInner() {
     }
   }
 
+  async function handleCancel() {
+    if (!selectedAuditId) return;
+    try {
+      const job = await cancelAudit(selectedAuditId);
+      setAudits((items) => [job, ...items.filter((i) => i.audit_id !== selectedAuditId)]);
+      toast("success", t.cancelRequested);
+    } catch (err) {
+      setError(String(err));
+      toast("error", String(err));
+    }
+  }
+
+  async function handleActionUpdate(actionId: string, patch: Parameters<typeof updateAction>[2]) {
+    if (!selectedAuditId) return;
+    try {
+      await updateAction(selectedAuditId, actionId, patch);
+      const summary = await getSummary(selectedAuditId);
+      setDetail(summary);
+      toast("success", t.actionSaved);
+    } catch (err) {
+      setError(String(err));
+      toast("error", String(err));
+    }
+  }
+
   function openEvidence(images: string[], index: number) {
     if (!selectedAuditId || images.length === 0) return;
     setLightbox({ auditId: selectedAuditId, images, index });
@@ -302,6 +331,8 @@ function AppInner() {
         onSaveManifest={handleSaveManifest}
         onRefresh={() => selectedAuditId && loadSelected(selectedAuditId)}
         onDelete={handleDelete}
+        onCancel={handleCancel}
+        onActionUpdate={handleActionUpdate}
         onEvidence={openEvidence}
       />
       {lightbox && (

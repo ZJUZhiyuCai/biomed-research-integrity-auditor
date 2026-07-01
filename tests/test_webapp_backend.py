@@ -4,7 +4,9 @@ import io
 import json
 from pathlib import Path
 import stat
+import sys
 import tempfile
+import threading
 import time
 import unittest
 from unittest import mock
@@ -35,6 +37,139 @@ def wait_for_audit(client: TestClient, audit_id: str, timeout: float = 90.0) -> 
 
 
 class WebappBackendTests(unittest.TestCase):
+    def test_webapp_action_patch_updates_tracker_csvs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            app = create_app(output_root=tmp_path / "runs")
+            settings = app.state.settings
+            audit_id = "20260702-action-edit"
+            output_dir = settings.audits_dir / audit_id
+            output_dir.mkdir(parents=True)
+            job = webapp_app.AuditJob(
+                audit_id=audit_id,
+                status="completed",
+                package_path=str(ROOT / "examples" / "minimal_package"),
+                mode="internal_presubmission",
+                scan_profile="quick",
+                domains="wetlab,animal,cell",
+                external_literature_provider="none",
+                reference_check_provider="none",
+                output_dir=str(output_dir),
+                created_at=time.time(),
+                updated_at=time.time(),
+                command=[],
+            )
+            webapp_app.save_job(settings, job)
+            header = "action_id,action_category,risk_level,action_type,location,required_action,owner,status,human_note,accepted_with_reason,source\n"
+            (output_dir / "unresolved_actions.csv").write_text(
+                header + "ACT-0001,provide_materials,R1,missing_source,source_data,Add source table,suggested_owner,open,,,\n",
+                encoding="utf-8",
+            )
+            (output_dir / "resolved_actions.csv").write_text(header, encoding="utf-8")
+            (output_dir / "accepted_with_reason.csv").write_text(header, encoding="utf-8")
+            packet = output_dir / "submission_qc_packet"
+            packet.mkdir()
+            for name in ("unresolved_actions.csv", "resolved_actions.csv", "accepted_with_reason.csv"):
+                (packet / name).write_text((output_dir / name).read_text(encoding="utf-8"), encoding="utf-8")
+
+            with TestClient(app) as client:
+                response = client.patch(f"/api/audits/{audit_id}/actions/ACT-0001", json={
+                    "owner": "first_author",
+                    "status": "resolved",
+                    "human_note": "uploaded corrected table",
+                })
+                response.raise_for_status()
+                payload = response.json()["action_trackers"]
+                self.assertEqual(payload["unresolved"], [])
+                self.assertEqual(payload["resolved"][0]["owner"], "first_author")
+                self.assertEqual(payload["resolved"][0]["status"], "resolved")
+
+            resolved_text = (output_dir / "resolved_actions.csv").read_text(encoding="utf-8")
+            self.assertIn("first_author", resolved_text)
+            self.assertIn("uploaded corrected table", resolved_text)
+            self.assertEqual(resolved_text, (packet / "resolved_actions.csv").read_text(encoding="utf-8"))
+
+    def test_webapp_marks_orphaned_running_audits_failed_on_startup(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            runs = tmp_path / "runs"
+            audit_id = "20260702-orphan"
+            output_dir = runs / "audits" / audit_id
+            output_dir.mkdir(parents=True)
+            (output_dir / "job.json").write_text(json.dumps({
+                "audit_id": audit_id,
+                "status": "running",
+                "package_path": str(ROOT / "examples" / "minimal_package"),
+                "mode": "internal_presubmission",
+                "scan_profile": "quick",
+                "domains": "wetlab,animal,cell",
+                "external_literature_provider": "none",
+                "reference_check_provider": "none",
+                "output_dir": str(output_dir),
+                "created_at": time.time(),
+                "updated_at": time.time(),
+                "command": [],
+                "process_pid": 999999,
+            }), encoding="utf-8")
+
+            with TestClient(create_app(output_root=runs)) as client:
+                response = client.get(f"/api/audits/{audit_id}")
+                response.raise_for_status()
+                payload = response.json()
+                self.assertEqual(payload["status"], "failed")
+                self.assertIn("restarted", payload["error"])
+                deleted = client.delete(f"/api/audits/{audit_id}")
+                deleted.raise_for_status()
+                self.assertFalse(output_dir.exists())
+
+    def test_webapp_streams_stdout_tail_and_cancels_running_audit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            app = create_app(output_root=tmp_path / "runs")
+            settings = app.state.settings
+            audit_id = "20260702-stream-cancel"
+            output_dir = settings.audits_dir / audit_id
+            output_dir.mkdir(parents=True)
+            job = webapp_app.AuditJob(
+                audit_id=audit_id,
+                status="queued",
+                package_path=str(ROOT / "examples" / "minimal_package"),
+                mode="internal_presubmission",
+                scan_profile="quick",
+                domains="wetlab,animal,cell",
+                external_literature_provider="none",
+                reference_check_provider="none",
+                output_dir=str(output_dir),
+                created_at=time.time(),
+                updated_at=time.time(),
+                command=[
+                    sys.executable,
+                    "-c",
+                    "import time; print('stage-one', flush=True); time.sleep(20)",
+                ],
+            )
+            webapp_app.save_job(settings, job)
+
+            thread = threading.Thread(target=webapp_app.run_job, args=(settings, audit_id), daemon=True)
+            thread.start()
+            with TestClient(app) as client:
+                deadline = time.time() + 8
+                payload = {}
+                while time.time() < deadline:
+                    response = client.get(f"/api/audits/{audit_id}")
+                    response.raise_for_status()
+                    payload = response.json()
+                    if "stage-one" in payload.get("stdout_tail", ""):
+                        break
+                    time.sleep(0.2)
+                self.assertIn("stage-one", payload.get("stdout_tail", ""))
+                cancel = client.post(f"/api/audits/{audit_id}/cancel")
+                cancel.raise_for_status()
+                thread.join(timeout=8)
+                final = client.get(f"/api/audits/{audit_id}")
+                final.raise_for_status()
+                self.assertEqual(final.json()["status"], "canceled")
+
     def test_webapp_runs_example_package_and_serves_unmutated_artifacts(self) -> None:
         with self.subTest("minimal package"):
             with TestClient(create_app(output_root=ROOT / "tmp" / "webapp_test_runs")) as client:

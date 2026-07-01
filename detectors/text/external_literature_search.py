@@ -5,9 +5,11 @@ from __future__ import annotations
 
 import argparse
 from datetime import datetime, timezone
+import hashlib
 import json
 import re
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -157,6 +159,62 @@ def search_provider(provider: str, query: str, rows: int, timeout: float, fixtur
     raise ValueError(f"unsupported provider: {provider}")
 
 
+def cache_file(cache_dir: Path, provider: str, query: str, rows: int) -> Path:
+    digest = hashlib.sha256(f"{provider}\0{rows}\0{query}".encode("utf-8")).hexdigest()[:24]
+    return cache_dir / f"{provider}_{digest}.json"
+
+
+def cached_search_provider(
+    provider: str,
+    query: str,
+    rows: int,
+    timeout: float,
+    fixture: dict[str, Any] | None,
+    cache_dir: Path | None,
+    retries: int,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    if provider == "fixture":
+        return search_provider(provider, query, rows, timeout, fixture), {
+            "cache_status": "not_applicable",
+            "attempts": 1,
+        }
+
+    cache_path = cache_file(cache_dir, provider, query, rows) if cache_dir else None
+    if cache_path and cache_path.is_file():
+        payload = json.loads(cache_path.read_text(encoding="utf-8"))
+        return list(payload.get("results", []) or []), {
+            "cache_status": "hit",
+            "attempts": 0,
+            "cache_file": str(cache_path),
+        }
+
+    attempts = max(1, int(retries) + 1)
+    last_error: Exception | None = None
+    for attempt in range(1, attempts + 1):
+        try:
+            results = search_provider(provider, query, rows, timeout, fixture)
+            if cache_path:
+                cache_path.parent.mkdir(parents=True, exist_ok=True)
+                cache_path.write_text(json.dumps({
+                    "provider": provider,
+                    "query": query,
+                    "rows": rows,
+                    "cached_at": utc_timestamp(),
+                    "results": results,
+                }, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+            return results, {
+                "cache_status": "miss",
+                "attempts": attempt,
+                **({"cache_file": str(cache_path)} if cache_path else {}),
+            }
+        except Exception as exc:  # noqa: BLE001 - converted to a coverage gap after retries.
+            last_error = exc
+            if attempt < attempts:
+                time.sleep(min(1.0, 0.2 * attempt))
+    assert last_error is not None
+    raise last_error
+
+
 def candidate_from_results(
     paragraph: Paragraph,
     query: str,
@@ -254,6 +312,8 @@ def scan(
     phrase_words: int,
     ngram: int,
     min_tokens: int,
+    cache_dir: Path | None = None,
+    retries: int = 1,
 ) -> dict[str, Any]:
     fixture = load_fixture(fixture_path) if fixture_path else None
     paragraphs = collect_query_paragraphs(root, ngram, min_tokens, max_queries)
@@ -273,7 +333,7 @@ def scan(
             "queried_at": queried_at,
         })
         try:
-            results = search_provider(provider, query, rows, timeout, fixture)
+            results, retrieval_meta = cached_search_provider(provider, query, rows, timeout, fixture, cache_dir, retries)
         except Exception as exc:  # noqa: BLE001 - external search failure is a coverage limitation, not a verdict.
             errors.append({
                 "paragraph_id": paragraph.paragraph_id,
@@ -281,6 +341,7 @@ def scan(
                 "query": query,
                 "queried_at": queried_at,
                 "error": str(exc),
+                "attempts": max(1, int(retries) + 1),
             })
             search_provenance.append({
                 "paragraph_id": paragraph.paragraph_id,
@@ -302,6 +363,7 @@ def scan(
             "status": "ok",
             "result_count": len(results),
             "failure_count": 0,
+            **retrieval_meta,
             "result_source_ids": [
                 result_source_id(provider, result, index)
                 for index, result in enumerate(results[:5], start=1)
@@ -324,6 +386,8 @@ def scan(
             "max_queries": max_queries,
             "rows": rows,
             "timeout": timeout,
+            "retries": retries,
+            "cache_dir": str(cache_dir) if cache_dir else None,
             "phrase_words": phrase_words,
             "scope": "external_literature_phrase_search_triage",
         },
@@ -342,6 +406,8 @@ def main() -> int:
     parser.add_argument("--max-queries", type=int, default=6)
     parser.add_argument("--rows", type=int, default=5)
     parser.add_argument("--timeout", type=float, default=15.0)
+    parser.add_argument("--retries", type=int, default=1)
+    parser.add_argument("--cache-dir", type=Path)
     parser.add_argument("--phrase-words", type=int, default=12)
     parser.add_argument("--ngram", type=int, default=5)
     parser.add_argument("--min-tokens", type=int, default=24)
@@ -361,6 +427,8 @@ def main() -> int:
         phrase_words=args.phrase_words,
         ngram=args.ngram,
         min_tokens=args.min_tokens,
+        cache_dir=args.cache_dir.expanduser().resolve() if args.cache_dir else None,
+        retries=args.retries,
     )
     args.output.write_text(json.dumps(result, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     print(json.dumps({

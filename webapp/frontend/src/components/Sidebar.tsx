@@ -101,17 +101,17 @@ export function Sidebar(props: SidebarProps) {
         <label>
           <span>{t.mode}</span>
           <select value={props.mode} onChange={(e) => props.onMode(e.target.value)}>
-            <option value="internal_presubmission">internal_presubmission</option>
-            <option value="external_public_material">external_public_material</option>
-            <option value="response_to_concern">response_to_concern</option>
+            <option value="internal_presubmission">{t.modeLabels.internal_presubmission}</option>
+            <option value="external_public_material">{t.modeLabels.external_public_material}</option>
+            <option value="response_to_concern">{t.modeLabels.response_to_concern}</option>
           </select>
         </label>
         <label>
           <span>{t.scanProfile}</span>
           <select value={props.scanProfile} onChange={(e) => props.onScanProfile(e.target.value)}>
-            <option value="quick">quick</option>
-            <option value="standard">standard</option>
-            <option value="deep">deep</option>
+            <option value="quick">{t.scanProfileLabels.quick}</option>
+            <option value="standard">{t.scanProfileLabels.standard}</option>
+            <option value="deep">{t.scanProfileLabels.deep}</option>
           </select>
         </label>
         <label>
@@ -125,18 +125,18 @@ export function Sidebar(props: SidebarProps) {
         <label>
           <span>{t.provider}</span>
           <select value={props.provider} onChange={(e) => props.onProvider(e.target.value)}>
-            <option value="auto">auto</option>
-            <option value="none">none</option>
-            <option value="fixture">fixture</option>
-            <option value="europepmc">europepmc</option>
-            <option value="crossref">crossref</option>
+            <option value="auto">{t.providerLabels.auto}</option>
+            <option value="none">{t.providerLabels.none}</option>
+            <option value="fixture">{t.providerLabels.fixture}</option>
+            <option value="europepmc">{t.providerLabels.europepmc}</option>
+            <option value="crossref">{t.providerLabels.crossref}</option>
           </select>
         </label>
         <label>
           <span>{t.referenceProvider}</span>
           <select value={props.referenceProvider} onChange={(e) => props.onReferenceProvider(e.target.value)}>
-            <option value="none">none</option>
-            <option value="crossref">crossref</option>
+            <option value="none">{t.referenceProviderLabels.none}</option>
+            <option value="crossref">{t.referenceProviderLabels.crossref}</option>
           </select>
         </label>
         <label>
@@ -147,7 +147,7 @@ export function Sidebar(props: SidebarProps) {
               .filter((audit) => audit.status === "completed")
               .map((audit) => (
                 <option key={audit.audit_id} value={audit.audit_id}>
-                  {audit.audit_id}
+                  {auditLabel(audit)}
                 </option>
               ))}
           </select>
@@ -220,4 +220,11 @@ export function Sidebar(props: SidebarProps) {
       </div>
     </aside>
   );
+}
+
+function auditLabel(audit: AuditJob): string {
+  const packageName = audit.package_path.split(/[\\/]/).filter(Boolean).pop() || audit.audit_id;
+  const time = new Date(audit.created_at * 1000).toLocaleString();
+  const risk = audit.pipeline_summary?.overall_risk || audit.status;
+  return `${packageName} · ${time} · ${risk}`;
 }

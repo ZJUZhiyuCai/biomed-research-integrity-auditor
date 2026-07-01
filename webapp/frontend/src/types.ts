@@ -4,7 +4,7 @@
 // detectors and modes produce different shapes.
 
 export type Language = "zh" | "en";
-export type AuditStatus = "queued" | "running" | "completed" | "failed";
+export type AuditStatus = "queued" | "running" | "cancel_requested" | "completed" | "failed" | "canceled";
 export type RiskLevel = "R0" | "R1" | "R2" | "R3" | "R4";
 export type Theme = "light" | "dark";
 
@@ -110,6 +110,14 @@ export interface ReAuditDiff {
   positive_provenance_count?: { previous?: number; current?: number };
   unresolved_action_count?: { previous?: number; current?: number };
   claim_evidence_gaps?: { previous?: number | null; current?: number | null };
+  finding_changes?: {
+    fixed_count?: number;
+    new_count?: number;
+    persisted_count?: number;
+    fixed?: Array<Record<string, unknown>>;
+    new?: Array<Record<string, unknown>>;
+    persisted?: Array<Record<string, unknown>>;
+  };
   [key: string]: unknown;
 }
 
@@ -142,6 +150,7 @@ export interface AuditJob {
   created_at: number;
   updated_at: number;
   returncode: number | null;
+  process_pid?: number | null;
   error: string | null;
   stdout_tail: string;
   stderr_tail: string;

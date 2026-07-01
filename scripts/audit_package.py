@@ -56,6 +56,9 @@ SUMMARY_SCHEMA = ROOT / "schemas" / "audit_summary.schema.json"
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp"}
 SOURCE_EXTS = {".csv", ".tsv", ".xlsx"}
 TEXT_EXTS = {".txt", ".md", ".pdf"}
+DOCUMENT_CONTAINER_EXTS = {".doc", ".docx"}
+LEGACY_SOURCE_EXTS = {".xls", ".pzfx"}
+PDF_IMAGE_CONTAINER_CATEGORIES = {"figures", "figure_assembly", "supplementary"}
 MODES = ("internal_presubmission", "external_public_material", "response_to_concern")
 SCAN_PROFILES = ("quick", "standard", "deep")
 EXTERNAL_LITERATURE_PROVIDERS = ("auto", "none", "fixture", "europepmc", "crossref")
@@ -71,6 +74,7 @@ RAW_CANDIDATE_ARTIFACTS = (
     "local_patch_candidates.json",
     "text_overlap_candidates.json",
     "external_literature_candidates.json",
+    "format_coverage_candidates.json",
     "audit_coverage_candidates.json",
 )
 IMAGE_SCREENING_BOUNDARY = {
@@ -505,6 +509,13 @@ def run_text_detectors(
     if provider == "fixture":
         assert fixture_path is not None
         cmd.extend(["--fixture", str(fixture_path)])
+    else:
+        cmd.extend([
+            "--cache-dir",
+            str(output_dir / ".cache" / "external_literature"),
+            "--retries",
+            "1",
+        ])
     external_result = run_detector("external_literature_search", package, output_dir, cmd, external_output)
     outputs.append(external_result.output)
     return outputs
@@ -569,6 +580,130 @@ def write_audit_coverage_gap(package: Path, output_dir: Path) -> Path:
     return output
 
 
+def unsupported_format_groups(manifest: dict[str, Any]) -> list[dict[str, Any]]:
+    groups: dict[str, dict[str, Any]] = {}
+
+    def add(kind: str, file_item: dict[str, Any], message: str, action: str, exports: list[str]) -> None:
+        group = groups.setdefault(kind, {
+            "kind": kind,
+            "message": message,
+            "recommended_action": action,
+            "recommended_exports": exports,
+            "files": [],
+            "extensions": set(),
+            "categories": set(),
+        })
+        group["files"].append(str(file_item.get("path", "")))
+        group["extensions"].add(str(file_item.get("extension", "")).lower())
+        group["categories"].add(str(file_item.get("category", "")))
+
+    for file_item in manifest.get("files", []) or []:
+        path = str(file_item.get("path", ""))
+        category = str(file_item.get("category", ""))
+        extension = str(file_item.get("extension", "")).lower()
+        if not path:
+            continue
+        if extension in DOCUMENT_CONTAINER_EXTS and category in {"manuscript", "supplementary", "protocols"}:
+            add(
+                "document_text_container_not_screened",
+                file_item,
+                "Word document containers are inventoried but not text-screened by the current automated text detectors.",
+                "Export the current manuscript/protocol text to PDF or plain text and keep the original document for records.",
+                ["PDF with extractable text", "TXT/MD text export"],
+            )
+        elif extension == ".xls" and category in {"source_data", "statistics_code", "protocols"}:
+            add(
+                "legacy_excel_source_not_screened",
+                file_item,
+                "Legacy .xls workbooks are inventoried but not parsed by the current source-data detectors.",
+                "Export each relevant sheet to CSV/TSV or modern XLSX, then re-run the audit.",
+                ["CSV/TSV per sheet", "XLSX"],
+            )
+        elif extension == ".pzfx" and category in {"source_data", "statistics_code"}:
+            add(
+                "graphpad_prism_project_not_screened",
+                file_item,
+                "GraphPad Prism .pzfx projects are inventoried but not parsed by the current source-data detectors.",
+                "Export plotted values and statistical summary tables from Prism to CSV/TSV/XLSX, then re-run the audit.",
+                ["CSV/TSV exported data", "XLSX exported tables"],
+            )
+        elif extension == ".pdf" and category in PDF_IMAGE_CONTAINER_CATEGORIES:
+            add(
+                "pdf_embedded_figures_not_image_screened",
+                file_item,
+                "PDF figure/supplement containers may contain embedded panels that are not image-screened as pixels.",
+                "Export each figure panel or supplementary image to PNG/JPG/TIFF and include raw/uncropped images when available.",
+                ["PNG/JPG/TIFF panel exports", "raw or uncropped image files"],
+            )
+
+    result: list[dict[str, Any]] = []
+    for group in groups.values():
+        result.append({
+            "kind": group["kind"],
+            "message": group["message"],
+            "recommended_action": group["recommended_action"],
+            "recommended_exports": group["recommended_exports"],
+            "files": sorted(group["files"]),
+            "extensions": sorted(item for item in group["extensions"] if item),
+            "categories": sorted(item for item in group["categories"] if item),
+        })
+    return sorted(result, key=lambda item: item["kind"])
+
+
+def write_format_coverage_gaps(package: Path, output_dir: Path, manifest: dict[str, Any]) -> Path | None:
+    groups = unsupported_format_groups(manifest)
+    if not groups:
+        return None
+
+    candidates = []
+    for idx, group in enumerate(groups, start=1):
+        files = group["files"]
+        candidates.append({
+            "candidate_id": f"AUDIT-FORMAT-{idx:04d}",
+            "detector": "audit.format_coverage",
+            "candidate_type": "audit_coverage_gap",
+            "locations": files,
+            "evidence": {
+                "gap_type": group["kind"],
+                "message": group["message"],
+                "files": files,
+                "extensions": group["extensions"],
+                "categories": group["categories"],
+                "recommended_exports": group["recommended_exports"],
+                "screened_by_current_detectors": False,
+            },
+            "evidence_strength": "weak_signal",
+            "risk_suggestion": "R1_max",
+            "risk_cap_tags": ["audit_coverage_gap", "completeness_gap", group["kind"]],
+            "benign_explanations": [
+                "The files may be valid records, but they require export or manual review before the automated modules can screen them.",
+                "Equivalent supported exports may already exist elsewhere in the package; this item records that the listed containers themselves were not parsed.",
+            ],
+            "required_materials": [
+                *group["recommended_exports"],
+                "manual confirmation that each listed container is either duplicated by a supported export or intentionally out of scope",
+            ],
+            "recommended_action": group["recommended_action"],
+            "requires_contextual_calibration": True,
+        })
+
+    payload = {
+        "detector_name": "audit.format_coverage",
+        "detector_version": "0.1.0",
+        "input": {
+            "package": str(package),
+            "unsupported_relevant_format_groups": len(groups),
+            "unsupported_relevant_file_count": sum(len(group["files"]) for group in groups),
+        },
+        "candidates": candidates,
+        "errors": [],
+    }
+    output = output_dir / "format_coverage_candidates.json"
+    write_json(output, payload)
+    validate_detector(output)
+    return output
+
+
 def build_coverage(
     package: Path,
     output_dir: Path,
@@ -612,6 +747,8 @@ def build_coverage(
         "positive_provenance_count": 0,
         "assembly_manifest_warnings": [],
         "assembly_manifest_warning_count": 0,
+        "unsupported_relevant_files": [],
+        "unsupported_relevant_file_count": 0,
         "audit_coverage_gap": False,
         "image_screening_boundary": IMAGE_SCREENING_BOUNDARY,
         "external_literature_provider": external_provider,
@@ -695,6 +832,28 @@ def build_coverage(
             coverage["source_tables_screened"] = len(stats_payload.get("files_screened", []) or [])
     else:
         coverage["modules_not_executed"].append("statistics screening (no source_data CSV/TSV/XLSX supplied)")
+
+    format_payload = load_safe("format_coverage_candidates.json")
+    if format_payload:
+        unsupported_rows: list[dict[str, Any]] = []
+        for candidate in format_payload.get("candidates", []) or []:
+            evidence = candidate.get("evidence") if isinstance(candidate, dict) else {}
+            if not isinstance(evidence, dict):
+                continue
+            for path in evidence.get("files", []) or []:
+                unsupported_rows.append({
+                    "path": str(path),
+                    "gap_type": str(evidence.get("gap_type", "unsupported_relevant_format")),
+                    "message": str(evidence.get("message", "")),
+                    "recommended_exports": evidence.get("recommended_exports", []) or [],
+                })
+        if unsupported_rows:
+            coverage["unsupported_relevant_files"] = unsupported_rows
+            coverage["unsupported_relevant_file_count"] = len(unsupported_rows)
+            coverage["modules_not_executed"].append(
+                "screening of some supplied document/source-data/PDF container files "
+                "(unsupported format exports required; not a clean result)"
+            )
 
     if has_files(package, TEXT_EXTS):
         coverage["modules_executed"].append("package_internal_text_overlap")
@@ -838,6 +997,31 @@ def run_report(
     return report
 
 
+def write_start_here(output_dir: Path, package: Path, qc_packet: dict[str, Any], summary: dict[str, Any]) -> Path:
+    packet_dir = Path(str(qc_packet.get("packet_dir", output_dir / "submission_qc_packet")))
+    lines = [
+        "# START HERE",
+        "",
+        f"Package reviewed: `{package}`",
+        f"Overall audit risk band: `{summary.get('overall_risk', 'R0')}`",
+        "",
+        "Read these files in order:",
+        "",
+        "1. `audit-report.md` — human-first bilingual report.",
+        "2. `unresolved_actions.csv` — open action tracker for follow-up.",
+        "3. `correction_plan.md` — concise correction-plan view.",
+        f"4. `{packet_dir.relative_to(output_dir) if packet_dir.is_relative_to(output_dir) else packet_dir}` — leave-behind QC packet.",
+        "5. `AUDIT_JSON_SUMMARY.json` — machine-readable summary for re-audit or webapp import.",
+        "",
+        "Boundary: no finding is a misconduct verdict, and no-finding output is not proof that the manuscript is correct.",
+        "",
+        "中文提示：先读 `audit-report.md`，再用 `unresolved_actions.csv` 跟踪处理项；无发现不等于论文已被证明正确。",
+    ]
+    path = output_dir / "START_HERE.md"
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path
+
+
 def extract_audit_summary(report: Path) -> dict[str, Any]:
     text = report.read_text(encoding="utf-8")
     match = re.search(r"```json AUDIT_JSON_SUMMARY\n(.*?)\n```", text, flags=re.DOTALL)
@@ -900,6 +1084,9 @@ def run_pipeline(
         effective_external_provider,
         external_literature_fixture,
     ))
+    format_coverage = write_format_coverage_gaps(package, output_dir, manifest_payload)
+    if format_coverage is not None:
+        detector_outputs.append(format_coverage)
     if not detector_outputs:
         detector_outputs.append(write_audit_coverage_gap(package, output_dir))
     calibrated = run_calibrator(detector_outputs, mode, output_dir)
@@ -969,6 +1156,7 @@ def run_pipeline(
         writing_readiness,
         re_audit_diff,
     )
+    start_here = write_start_here(output_dir, package, qc_packet, audit_summary)
 
     result = {
         "package": str(package),
@@ -1002,6 +1190,7 @@ def run_pipeline(
         "external_literature_provider": resolved_provider,
         "coverage": str(coverage_path),
         "submission_qc_packet": qc_packet,
+        "start_here": str(start_here),
     }
     if re_audit_diff_path is not None:
         result["re_audit_diff"] = str(re_audit_diff_path)

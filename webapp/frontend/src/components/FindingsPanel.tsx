@@ -10,6 +10,7 @@ import { EmptyState, SectionTitle } from "./primitives";
 import { FindingCard } from "./FindingCard";
 
 const RISK_OPTIONS = ["all", "R0", "R1", "R2", "R3", "R4"];
+const RISK_ORDER: Record<string, number> = { R0: 0, R1: 1, R2: 2, R3: 3, R4: 4 };
 
 export function FindingsPanel({
   findings,
@@ -40,6 +41,10 @@ export function FindingsPanel({
         const riskOk = riskFilter === "all" || risk === riskFilter;
         const modOk = moduleFilter === "all" || f.module === moduleFilter;
         return riskOk && modOk;
+      }).sort((a, b) => {
+        const riskA = RISK_ORDER[a.calibrated_risk_level || a.risk_level || "R0"] ?? 0;
+        const riskB = RISK_ORDER[b.calibrated_risk_level || b.risk_level || "R0"] ?? 0;
+        return riskB - riskA;
       }),
     [findings, riskFilter, moduleFilter]
   );

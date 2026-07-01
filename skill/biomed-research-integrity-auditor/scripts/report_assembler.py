@@ -133,6 +133,10 @@ FINDING_LABELS = {
     "audit_coverage_gap": ("Audit coverage gap", "审计覆盖缺口"),
     "external_literature_search_gap": ("External-search coverage gap", "外部检索覆盖缺口"),
     "external_text_match_candidate": ("External text-match candidate", "外部文本匹配候选"),
+    "document_text_container_not_screened": ("Document text container not screened", "文档容器未自动文本筛查"),
+    "legacy_excel_source_not_screened": ("Legacy Excel source-data file not screened", "旧版 Excel 源数据未自动筛查"),
+    "graphpad_prism_project_not_screened": ("GraphPad Prism project not screened", "GraphPad Prism 项目未自动筛查"),
+    "pdf_embedded_figures_not_image_screened": ("PDF embedded figures not image-screened", "PDF 内嵌图像未做像素筛查"),
 }
 JSON_BLOCK_MARKER = "```json AUDIT_JSON_SUMMARY"
 
@@ -289,6 +293,8 @@ def missing_materials(manifest: dict[str, Any], coverage: dict[str, Any] | None 
         rows.append("unreadable image files")
     if int((coverage or {}).get("assembly_manifest_warning_count", 0) or 0) > 0:
         rows.append("assembly manifest warnings")
+    if int((coverage or {}).get("unsupported_relevant_file_count", 0) or 0) > 0:
+        rows.append("unsupported relevant file formats")
     return rows
 
 
@@ -371,6 +377,13 @@ def evidence_metric_lines(evidence: Any) -> list[str]:
         lines.append(f"Contextual edges reviewed: {len(evidence['contextual_edges'])}.")
     if isinstance(evidence.get("positive_traceability_edges"), list) and evidence["positive_traceability_edges"]:
         lines.append(f"Positive traceability edges in the same cluster: {len(evidence['positive_traceability_edges'])}.")
+    if isinstance(evidence.get("files"), list) and evidence["files"]:
+        shown = ", ".join(f"`{item}`" for item in evidence["files"][:5])
+        extra = f" (+{len(evidence['files']) - 5} more)" if len(evidence["files"]) > 5 else ""
+        lines.append(f"Files not screened by this automated module: {shown}{extra}.")
+    if isinstance(evidence.get("recommended_exports"), list) and evidence["recommended_exports"]:
+        exports = ", ".join(f"`{item}`" for item in evidence["recommended_exports"])
+        lines.append(f"Recommended export(s): {exports}.")
 
     scalar_keys = [
         "file",
@@ -437,6 +450,13 @@ def observation_text(item: dict[str, Any]) -> str:
             "This should be checked against source data and analysis code."
         )
     if "coverage" in finding_type:
+        evidence = item.get("evidence")
+        gap_type = str(evidence.get("gap_type", "")) if isinstance(evidence, dict) else ""
+        if gap_type:
+            return (
+                f"The supplied package contains material recorded as `{gap_type}`. "
+                "The listed files were inventoried but not automatically screened by the current detector set."
+            )
         return (
             "The supplied package did not allow one or more audit modules to run completely. "
             "This is a coverage/completeness gap."
@@ -856,6 +876,26 @@ def render_coverage(coverage: dict[str, Any] | None) -> list[str]:
             "**Detector execution failures / 检测器执行失败**",
             "",
             *[f"- {item}" for item in coverage["detector_failures"]],
+        ]
+    unsupported_files = coverage.get("unsupported_relevant_files") or []
+    if unsupported_files:
+        lines += [
+            "",
+            "**Relevant files not automatically screened / 相关但未自动筛查的文件**",
+            "",
+            table([
+                ["Path / 路径", "Coverage gap / 覆盖缺口", "Recommended export / 建议导出"],
+                *[
+                    [
+                        str(item.get("path", "")),
+                        finding_label(str(item.get("gap_type", ""))),
+                        ", ".join(str(value) for value in (item.get("recommended_exports") or [])),
+                    ]
+                    for item in unsupported_files
+                ],
+            ]),
+            "> These files may be valid records. They are listed because the automated modules need supported exports or manual review before this audit scope is complete.",
+            "> 中文提示：这些文件可以是有效记录；这里列出它们，是因为自动模块需要支持格式的导出文件或人工复核，审计范围才算完整。",
         ]
     manifest_warnings = coverage.get("assembly_manifest_warnings") or []
     if manifest_warnings:
@@ -1300,7 +1340,7 @@ def render_action_queue(summary: dict[str, Any]) -> list[str]:
             lines += ["- None currently listed / 当前无", ""]
             continue
         table_rows = [["ID", "Risk / 风险", "Item / 项目", "Required action / 所需动作", "Suggested owner / 建议负责人", "Status / 状态"]]
-        for row in rows[:8]:
+        for row in rows:
             item = row.get("item") or row.get("action_type", "")
             location = row.get("location", "")
             if location:
@@ -1314,8 +1354,6 @@ def render_action_queue(summary: dict[str, Any]) -> list[str]:
                 row.get("status", "unresolved"),
             ])
         lines += [table(table_rows)]
-        if len(rows) > 8:
-            lines += [f"_Additional actions in this category are in `unresolved_actions.csv`: {len(rows) - 8}._", ""]
     lines += [
         "Tracker fields / 跟踪字段: `unresolved`, `resolved`, `accepted_with_reason`, `false_positive`.",
         "Use `unresolved_actions.csv`, `resolved_actions.csv`, and `accepted_with_reason.csv` for team review.",

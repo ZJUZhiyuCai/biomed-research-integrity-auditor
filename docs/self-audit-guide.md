@@ -51,7 +51,7 @@ what you have. More complete packages can be checked more thoroughly.
 
 ```text
 my_package/
-├── manuscript.pdf              your manuscript (PDF or text)
+├── manuscript.pdf              your manuscript (PDF or extracted text)
 ├── supplementary/              supplementary files
 ├── figures/                    the figure panels as shown in the paper (PNG/JPG/TIFF)
 ├── raw_images/                 the original/uncropped acquisitions the figures came from
@@ -62,6 +62,12 @@ my_package/
 ├── statistics_code/            analysis notes or scripts
 └── claim_manifest.csv          optional: links each manuscript claim to evidence files
 ```
+
+If your working manuscript is a Word `.docx`, export a PDF or plain-text copy into the
+package before running the audit. You may keep the `.docx` for recordkeeping, but the current
+text detectors rely on PDF/text intake. If your source data live in legacy Excel `.xls` or
+GraphPad Prism `.pzfx`, also export CSV/XLSX tables under `source_data/`; otherwise the report
+should be read as incomplete for those statistical checks.
 
 ### The assembly manifest (strongly recommended)
 
@@ -93,10 +99,34 @@ Claim coverage is only a completeness check. It does not say whether the claim i
 
 ---
 
-## Step 2: Install and run
+## Step 2: Start the local web app
 
-Use a Python 3.10+ interpreter, then install the project in editable mode so
-the `biomed-audit` command is available:
+For most authors and PIs, the local web app is the easiest path. From the source checkout, run:
+
+```bash
+make run
+```
+
+This creates or reuses `.venv`, installs dependencies, builds the frontend when `npm` is
+available, starts the app at `http://127.0.0.1:8765`, and opens your browser. The app runs on
+your machine; uploaded zip packages are unpacked locally.
+
+In the browser:
+
+1. Enter your package folder path, or drag in a zip of the package.
+2. Pick `quick` for a first check, `standard` for normal pre-submission QC, or `deep` for a
+   focused recheck.
+3. Keep external literature search offline for private drafts unless you explicitly want a
+   public-provider query.
+4. Read **Audit Coverage** and the **Action Tracker** before reading the finding cards.
+
+The web app exposes the same outputs as the CLI and keeps the action tracker visible, so it is
+the recommended starting point for non-developers.
+
+### CLI alternative
+
+Use a Python 3.10+ interpreter, then install the project in editable mode so the
+`biomed-audit` command is available:
 
 ```bash
 python3.11 -m venv .venv
@@ -126,7 +156,7 @@ biomed-audit /path/to/my_package --scan-profile deep --output-dir audit_outputs/
 
 - `quick` is for a first pass. It keeps fast checks and explicitly skips expensive local-patch/copy-move deep image screening and external phrase search.
 - `standard` is the default pre-submission self-audit.
-- `deep` is for focused rechecks or response-to-concern work. It currently preserves all standard screens and marks the run as a deeper review surface.
+- `deep` is for focused rechecks or response-to-concern work. For journal/reviewer concerns, follow `docs/response-to-concern-guide.md`.
 
 Outputs land in `audit_outputs/my_package/`:
 

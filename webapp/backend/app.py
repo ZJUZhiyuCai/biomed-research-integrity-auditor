@@ -14,6 +14,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import signal
 import stat
 import subprocess
 import sys
@@ -36,6 +37,7 @@ if str(ROOT) not in sys.path:
 
 from provenance.panel_modality import CANONICAL_MODALITIES, normalize_modality  # noqa: E402
 from scripts.csv_safety import csv_safe_row  # noqa: E402
+from scripts.submission_qc import ACTION_FIELDNAMES  # noqa: E402
 
 DEFAULT_RUNS_ROOT = ROOT / "audit_outputs" / "webapp"
 MODES = {"internal_presubmission", "external_public_material", "response_to_concern"}
@@ -102,6 +104,13 @@ class AssemblyManifestRequest(BaseModel):
     rows: list[ManifestRowInput] = Field(default_factory=list)
 
 
+class ActionUpdateRequest(BaseModel):
+    owner: Optional[str] = None
+    status: Optional[str] = None
+    human_note: Optional[str] = None
+    accepted_with_reason: Optional[str] = None
+
+
 @dataclass
 class WebappSettings:
     repo_root: Path
@@ -131,6 +140,7 @@ class AuditJob:
     updated_at: float
     command: list[str]
     returncode: Optional[int] = None
+    process_pid: Optional[int] = None
     stdout_tail: str = ""
     stderr_tail: str = ""
     error: Optional[str] = None
@@ -142,6 +152,7 @@ def create_app(output_root: Optional[Path] = None) -> FastAPI:
     settings = WebappSettings(ROOT, (output_root or DEFAULT_RUNS_ROOT).expanduser().resolve())
     settings.audits_dir.mkdir(parents=True, exist_ok=True)
     settings.packages_dir.mkdir(parents=True, exist_ok=True)
+    mark_orphaned_jobs(settings)
 
     app = FastAPI(
         title="Biomedical Research Integrity Self-Audit",
@@ -170,6 +181,8 @@ def create_app(output_root: Optional[Path] = None) -> FastAPI:
     def list_audits() -> dict[str, Any]:
         jobs = [load_job(settings, audit_dir.name) for audit_dir in sorted(settings.audits_dir.iterdir()) if audit_dir.is_dir()]
         jobs = [job for job in jobs if job is not None]
+        for job in jobs:
+            finalize_from_completed_summary(settings, job)
         jobs.sort(key=lambda job: job.updated_at, reverse=True)
         return {"audits": [job_response(settings, job) for job in jobs]}
 
@@ -289,12 +302,15 @@ def create_app(output_root: Optional[Path] = None) -> FastAPI:
     def get_audit(audit_id: str) -> dict[str, Any]:
         job = require_job(settings, audit_id)
         refresh_pipeline_summary(job)
+        finalize_from_completed_summary(settings, job)
         save_job(settings, job)
         return job_response(settings, job)
 
     @app.get("/api/audits/{audit_id}/summary")
     def get_summary(audit_id: str) -> dict[str, Any]:
         job = require_job(settings, audit_id)
+        refresh_pipeline_summary(job)
+        finalize_from_completed_summary(settings, job)
         output_dir = Path(job.output_dir)
         return {
             "audit": job_response(settings, job),
@@ -313,6 +329,27 @@ def create_app(output_root: Optional[Path] = None) -> FastAPI:
             "submission_qc_packet": submission_qc_packet_summary(output_dir),
             "writing_readiness": read_optional_json_artifact(output_dir / "writing_readiness.json"),
         }
+
+    @app.post("/api/audits/{audit_id}/cancel")
+    def cancel_audit(audit_id: str) -> dict[str, Any]:
+        job = require_job(settings, audit_id)
+        if job.status not in {"queued", "running", "cancel_requested"}:
+            return job_response(settings, job)
+        job.status = "cancel_requested"
+        job.error = "Cancellation requested by the local user"
+        save_job(settings, job)
+        if job.process_pid:
+            terminate_process(job.process_pid)
+        return job_response(settings, job)
+
+    @app.patch("/api/audits/{audit_id}/actions/{action_id}")
+    def update_action(audit_id: str, action_id: str, request: ActionUpdateRequest) -> dict[str, Any]:
+        job = require_job(settings, audit_id)
+        if job.status not in {"completed", "failed", "canceled"}:
+            raise HTTPException(status_code=409, detail="Action trackers are editable after an audit writes outputs")
+        output_dir = Path(job.output_dir).resolve()
+        trackers = update_action_trackers(output_dir, action_id, request)
+        return {"action_trackers": trackers}
 
     @app.get("/api/audits/{audit_id}/report.md")
     def get_report(audit_id: str) -> PlainTextResponse:
@@ -355,7 +392,7 @@ def create_app(output_root: Optional[Path] = None) -> FastAPI:
     @app.delete("/api/audits/{audit_id}")
     def delete_audit(audit_id: str) -> dict[str, Any]:
         job = require_job(settings, audit_id)
-        if job.status in {"queued", "running"}:
+        if job.status in {"queued", "running", "cancel_requested"}:
             raise HTTPException(status_code=409, detail="Running audits cannot be deleted")
         shutil.rmtree(Path(job.output_dir), ignore_errors=True)
         if job.uploaded_package_dir:
@@ -651,6 +688,7 @@ def load_job(settings: WebappSettings, audit_id: str) -> Optional[AuditJob]:
     payload = json.loads(path.read_text(encoding="utf-8"))
     payload.setdefault("scan_profile", "standard")
     payload.setdefault("reference_check_provider", "none")
+    payload.setdefault("process_pid", None)
     return AuditJob(**payload)
 
 
@@ -659,6 +697,22 @@ def require_job(settings: WebappSettings, audit_id: str) -> AuditJob:
     if job is None:
         raise HTTPException(status_code=404, detail="Audit not found")
     return job
+
+
+def mark_orphaned_jobs(settings: WebappSettings) -> None:
+    for audit_dir in sorted(settings.audits_dir.iterdir()):
+        if not audit_dir.is_dir():
+            continue
+        job = load_job(settings, audit_dir.name)
+        if job is None or job.status not in {"queued", "running", "cancel_requested"}:
+            continue
+        job.status = "failed"
+        job.process_pid = None
+        job.error = (
+            "The local webapp restarted while this audit was still running. "
+            "Re-run the audit before relying on this output."
+        )
+        save_job(settings, job)
 
 
 def resolve_compare_to(settings: WebappSettings, audit_id: Optional[str]) -> Path | None:
@@ -673,8 +727,34 @@ def resolve_compare_to(settings: WebappSettings, audit_id: Optional[str]) -> Pat
     return output_dir
 
 
+def read_process_stream(stream: Any, chunks: list[str]) -> None:
+    if stream is None:
+        return
+    try:
+        for line in iter(stream.readline, ""):
+            if not line:
+                break
+            chunks.append(line)
+    finally:
+        stream.close()
+
+
+def terminate_process(pid: int) -> None:
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+    except PermissionError:
+        return
+
+
 def run_job(settings: WebappSettings, audit_id: str) -> None:
     job = require_job(settings, audit_id)
+    if job.status == "cancel_requested":
+        job.status = "canceled"
+        job.error = "Audit canceled before the pipeline started"
+        save_job(settings, job)
+        return
     job.status = "running"
     save_job(settings, job)
     try:
@@ -686,17 +766,72 @@ def run_job(settings: WebappSettings, audit_id: str) -> None:
             text=True,
             env={**os.environ, "PYTHONUNBUFFERED": "1"},
         )
-        stdout, stderr = process.communicate()
+        job.process_pid = process.pid
+        save_job(settings, job)
+
+        stdout_chunks: list[str] = []
+        stderr_chunks: list[str] = []
+        stdout_thread = threading.Thread(
+            target=read_process_stream,
+            args=(process.stdout, stdout_chunks),
+            daemon=True,
+        )
+        stderr_thread = threading.Thread(
+            target=read_process_stream,
+            args=(process.stderr, stderr_chunks),
+            daemon=True,
+        )
+        stdout_thread.start()
+        stderr_thread.start()
+
+        completed_from_summary = False
+        summary_seen_at: float | None = None
+        while process.poll() is None:
+            current = load_job(settings, audit_id)
+            if current and current.status == "cancel_requested":
+                terminate_process(process.pid)
+            job.stdout_tail = text_tail("".join(stdout_chunks))
+            job.stderr_tail = text_tail("".join(stderr_chunks))
+            refresh_pipeline_summary(job)
+            if job.pipeline_summary:
+                summary_seen_at = summary_seen_at or time.time()
+                if time.time() - summary_seen_at > 2.0:
+                    # The orchestrator writes pipeline_summary.json only after
+                    # all audit artifacts are complete. If the CLI process then
+                    # hangs during final stdout/teardown, unblock the local UI
+                    # and classify the run from the completed summary.
+                    terminate_process(process.pid)
+                    try:
+                        process.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        os.kill(process.pid, signal.SIGKILL)
+                        process.wait(timeout=5)
+                    completed_from_summary = True
+                    break
+            else:
+                summary_seen_at = None
+            save_job(settings, job)
+            time.sleep(0.5)
+
+        stdout_thread.join(timeout=2)
+        stderr_thread.join(timeout=2)
         job.returncode = process.returncode
-        job.stdout_tail = text_tail(stdout)
-        job.stderr_tail = text_tail(stderr)
+        job.process_pid = None
+        job.stdout_tail = text_tail("".join(stdout_chunks))
+        job.stderr_tail = text_tail("".join(stderr_chunks))
         refresh_pipeline_summary(job)
-        job.status = "completed" if process.returncode == 0 and job.pipeline_summary else "failed"
+        latest = load_job(settings, audit_id)
+        if latest and latest.status == "cancel_requested":
+            job.status = "canceled"
+            job.error = "Audit canceled by the local user"
+        else:
+            job.status = "completed" if job.pipeline_summary and (process.returncode == 0 or completed_from_summary) else "failed"
         if job.status == "failed":
             job.error = "Audit pipeline failed or did not write pipeline_summary.json"
     except Exception as exc:  # noqa: BLE001 - API must persist failures for local review.
         job.status = "failed"
         job.error = str(exc)
+        job.process_pid = None
     save_job(settings, job)
 
 
@@ -704,6 +839,31 @@ def refresh_pipeline_summary(job: AuditJob) -> None:
     summary_path = Path(job.output_dir) / "pipeline_summary.json"
     if summary_path.is_file():
         job.pipeline_summary = json.loads(summary_path.read_text(encoding="utf-8"))
+
+
+def completed_summary_artifacts(job: AuditJob) -> bool:
+    output_dir = Path(job.output_dir)
+    return bool(
+        job.pipeline_summary
+        and (output_dir / "AUDIT_JSON_SUMMARY.json").is_file()
+        and (output_dir / "audit-report.md").is_file()
+        and (output_dir / "START_HERE.md").is_file()
+    )
+
+
+def finalize_from_completed_summary(settings: WebappSettings, job: AuditJob) -> None:
+    if job.status not in {"queued", "running"}:
+        return
+    refresh_pipeline_summary(job)
+    if not completed_summary_artifacts(job):
+        return
+    if job.process_pid:
+        terminate_process(job.process_pid)
+    job.status = "completed"
+    job.returncode = 0 if job.returncode is None else job.returncode
+    job.error = None
+    job.process_pid = None
+    save_job(settings, job)
 
 
 def job_response(settings: WebappSettings, job: AuditJob) -> dict[str, Any]:
@@ -762,6 +922,77 @@ def read_csv_artifact(path: Path) -> list[dict[str, str]]:
         return []
     with path.open(newline="", encoding="utf-8") as handle:
         return list(csv.DictReader(handle))
+
+
+def action_csv(path: Path) -> list[dict[str, str]]:
+    rows = read_csv_artifact(path)
+    return [{field: str(row.get(field, "") or "") for field in ACTION_FIELDNAMES} for row in rows]
+
+
+def write_action_csv(path: Path, rows: list[dict[str, str]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=ACTION_FIELDNAMES)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow(csv_safe_row(row, ACTION_FIELDNAMES))
+
+
+RESOLVED_STATUSES = {"resolved", "done", "complete", "completed"}
+ACCEPTED_STATUSES = {"accepted", "accepted_with_reason", "accepted-with-reason"}
+
+
+def update_action_trackers(output_dir: Path, action_id: str, request: ActionUpdateRequest) -> dict[str, Any]:
+    tracker_files = {
+        "unresolved": output_dir / "unresolved_actions.csv",
+        "resolved": output_dir / "resolved_actions.csv",
+        "accepted_with_reason": output_dir / "accepted_with_reason.csv",
+    }
+    trackers = {name: action_csv(path) for name, path in tracker_files.items()}
+    found: dict[str, str] | None = None
+    found_bucket: str | None = None
+    for bucket, rows in trackers.items():
+        for row in rows:
+            if row.get("action_id") == action_id:
+                found = row
+                found_bucket = bucket
+                break
+        if found is not None:
+            break
+    if found is None or found_bucket is None:
+        raise HTTPException(status_code=404, detail=f"Action not found: {action_id}")
+
+    updated = dict(found)
+    for field in ("owner", "status", "human_note", "accepted_with_reason"):
+        value = getattr(request, field)
+        if value is not None:
+            updated[field] = value.strip()
+
+    for rows in trackers.values():
+        rows[:] = [row for row in rows if row.get("action_id") != action_id]
+
+    normalized_status = updated.get("status", "").strip().lower()
+    if normalized_status in ACCEPTED_STATUSES or updated.get("accepted_with_reason", "").strip():
+        target = "accepted_with_reason"
+        if not updated.get("status"):
+            updated["status"] = "accepted_with_reason"
+    elif normalized_status in RESOLVED_STATUSES:
+        target = "resolved"
+        if not updated.get("status"):
+            updated["status"] = "resolved"
+    else:
+        target = "unresolved"
+    trackers[target].append({field: updated.get(field, "") for field in ACTION_FIELDNAMES})
+
+    for name, path in tracker_files.items():
+        write_action_csv(path, trackers[name])
+
+    packet_dir = output_dir / "submission_qc_packet"
+    if packet_dir.is_dir():
+        for name, rows in trackers.items():
+            write_action_csv(packet_dir / tracker_files[name].name, rows)
+
+    return trackers
 
 
 def submission_qc_packet_summary(output_dir: Path) -> dict[str, Any]:

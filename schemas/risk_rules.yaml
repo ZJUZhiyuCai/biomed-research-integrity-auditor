@@ -44,6 +44,8 @@ detector_caps:
     max: R3
   local_patch_within_declared_raw_source:
     max: R1
+  declared_local_patch_requires_verification:
+    max: R1
   local_patch_direct_source_conflict:
     max: R4
 

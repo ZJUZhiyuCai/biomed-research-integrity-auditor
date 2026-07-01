@@ -360,6 +360,10 @@ button:disabled:hover {
   background: var(--surface);
   border-color: var(--border);
 }
+.icon-button.small {
+  width: 30px;
+  min-height: 30px;
+}
 .icon-button:hover {
   color: var(--brand);
   border-color: var(--brand);
@@ -472,12 +476,14 @@ button:disabled:hover {
   background: var(--muted);
 }
 .status-dot.queued { background: var(--status-queued); }
-.status-dot.running {
+.status-dot.running,
+.status-dot.cancel_requested {
   background: var(--status-running);
   animation: pulse 1.4s ease-in-out infinite;
 }
 .status-dot.completed { background: var(--status-completed); }
 .status-dot.failed { background: var(--status-failed); }
+.status-dot.canceled { background: var(--muted); }
 
 /* ---------- Workspace ---------- */
 .workspace {
@@ -549,7 +555,9 @@ button:disabled:hover {
 .status-pill.completed { color: var(--status-completed); background: var(--brand-soft); }
 .status-pill.failed { color: #fff; background: var(--status-failed); }
 .status-pill.running,
-.status-pill.queued { color: var(--status-running); background: rgba(234, 179, 8, 0.14); }
+.status-pill.queued,
+.status-pill.cancel_requested { color: var(--status-running); background: rgba(234, 179, 8, 0.14); }
+.status-pill.canceled { color: var(--muted); background: var(--surface-2); }
 
 .risk-pill {
   color: var(--text);
@@ -902,6 +910,17 @@ button:disabled:hover {
 
 .tracker-table-wrap {
   overflow-x: auto;
+}
+
+.action-edit-table {
+  min-width: 980px;
+}
+
+.compact-input {
+  min-width: 120px;
+  min-height: 30px;
+  padding: 5px 7px;
+  font-size: 12px;
 }
 
 .compact-table {
@@ -1317,6 +1336,17 @@ button:disabled:hover {
   border-color: var(--brand);
 }
 
+.log-details {
+  margin-top: 10px;
+}
+
+.log-details summary {
+  cursor: pointer;
+  color: var(--brand);
+  font-weight: 600;
+  font-size: 13px;
+}
+
 .error-box {
   margin-bottom: 16px;
   padding: 12px 14px;
@@ -1421,6 +1451,11 @@ button:disabled:hover {
   color: var(--brand);
   text-decoration: underline;
   text-underline-offset: 2px;
+}
+
+:focus-visible {
+  outline: 3px solid var(--brand);
+  outline-offset: 2px;
 }
 
 /* ---------- Lightbox ---------- */
@@ -1623,5 +1658,50 @@ button:disabled:hover {
     animation-duration: 0.001ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.001ms !important;
+  }
+}
+
+@media print {
+  :root {
+    color-scheme: light;
+  }
+  body {
+    background: #fff !important;
+    color: #111 !important;
+  }
+  .app-shell {
+    display: block;
+  }
+  .sidebar,
+  .toast-stack,
+  .lightbox,
+  .audit-actions,
+  .prep-actions,
+  .manifest-actions,
+  .icon-button,
+  button {
+    display: none !important;
+  }
+  .workspace {
+    padding: 0;
+  }
+  .workspace-card,
+  .finding-card,
+  .mini-panel,
+  .report-panel,
+  .coverage-card {
+    break-inside: avoid;
+    box-shadow: none !important;
+    border-color: #bbb !important;
+    background: #fff !important;
+  }
+  .markdown-body {
+    font-size: 11pt;
+  }
+  .markdown-body table {
+    page-break-inside: avoid;
+  }
+  a {
+    color: #111 !important;
   }
 }

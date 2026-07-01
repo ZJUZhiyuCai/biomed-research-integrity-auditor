@@ -34,6 +34,16 @@ PASSTHROUGH_CANDIDATE_TYPES = {
     "audit_coverage_gap",
     "detector_execution_failure",
 }
+REUSE_DISCLOSURE_PATTERNS = [
+    r"\bdisclos\w*\b.{0,80}\breus\w*\b",
+    r"\breus\w*\b.{0,80}\bdisclos\w*\b",
+    r"\bintentionally reused\b",
+    r"\bsame loading control\b",
+    r"\bsame gapdh loading control\b",
+    r"\bloading control was reused\b",
+    r"\bsame membrane\b",
+    r"\breprobed\b",
+]
 
 
 def read_package_text(package: Path) -> str:
@@ -66,16 +76,7 @@ def contains_any(text: str, patterns: list[str]) -> bool:
 
 def package_context(package: Path) -> dict[str, Any]:
     text = read_package_text(package)
-    reuse_disclosed = contains_any(text, [
-        r"\bdisclos\w*\b.{0,80}\breus\w*\b",
-        r"\breus\w*\b.{0,80}\bdisclos\w*\b",
-        r"\bintentionally reused\b",
-        r"\bsame loading control\b",
-        r"\bsame gapdh loading control\b",
-        r"\bloading control was reused\b",
-        r"\bsame membrane\b",
-        r"\breprobed\b",
-    ])
+    reuse_disclosed = contains_any(text, REUSE_DISCLOSURE_PATTERNS)
     loading_control_disclosed = "loading control" in text and contains_any(text, [r"\breus\w*\b", r"\bsame\b"])
     negated_same_membrane = contains_any(text, [
         r"does not state.{0,80}same membrane",
@@ -105,6 +106,7 @@ def package_context(package: Path) -> dict[str, Any]:
         risk_cap_tags.append("disclosed_unjustified_reuse")
 
     return {
+        "package_text": text,
         "reuse_disclosed": reuse_disclosed,
         "loading_control_disclosed": loading_control_disclosed,
         "same_experiment_claimed": same_experiment_claimed,
@@ -113,6 +115,72 @@ def package_context(package: Path) -> dict[str, Any]:
         "raw_images_available": raw_available,
         "risk_cap_tags": risk_cap_tags,
     }
+
+
+def path_aliases(path: str) -> set[str]:
+    stem = Path(path).stem.lower()
+    normalized = stem.replace("_", " ").replace("-", " ")
+    aliases = {path.lower(), stem, normalized}
+    match = re.search(r"(?:figure|fig)[ _-]*(\d+[a-z]?)", stem, flags=re.I)
+    if match:
+        panel = match.group(1).lower()
+        aliases.update({f"figure {panel}", f"fig {panel}", panel})
+    return {alias for alias in aliases if alias}
+
+
+def text_mentions_path(text: str, path: str) -> bool:
+    return any(alias in text for alias in path_aliases(path))
+
+
+def disclosure_window(text: str, left: str, right: str, radius: int = 500) -> str:
+    left_positions = [
+        match.start()
+        for alias in path_aliases(left)
+        for match in re.finditer(re.escape(alias), text)
+    ]
+    right_positions = [
+        match.start()
+        for alias in path_aliases(right)
+        for match in re.finditer(re.escape(alias), text)
+    ]
+    if left == right:
+        right_positions = left_positions
+    for left_pos in left_positions:
+        for right_pos in right_positions:
+            if abs(left_pos - right_pos) > radius:
+                continue
+            first = min(left_pos, right_pos)
+            last = max(left_pos, right_pos)
+            segment_start = text.rfind("\n--- ", 0, first)
+            next_segment_start = text.find("\n--- ", first + 1)
+            if next_segment_start != -1 and last >= next_segment_start:
+                continue
+            start_bound = segment_start if segment_start != -1 else 0
+            end_bound = next_segment_start if next_segment_start != -1 else len(text)
+            start = max(start_bound, first - radius)
+            end = min(end_bound, last + radius)
+            window = text[start:end]
+            if contains_any(window, REUSE_DISCLOSURE_PATTERNS):
+                return window
+    return ""
+
+
+def edge_disclosure_tags(edge: dict[str, Any], context: dict[str, Any]) -> list[str]:
+    text = str(context.get("package_text", ""))
+    left, right = edge_paths(edge)
+    if not left or not right:
+        return []
+    window = disclosure_window(text, left, right)
+    if not window:
+        return []
+    loading_control = "loading control" in window and contains_any(window, [r"\breus\w*\b", r"\bsame\b"])
+    same_membrane = contains_any(window, [r"\bsame membrane\b", r"\bshared membrane\b", r"\bmembrane was reprobed\b", r"\breprobed\b"])
+    if (
+        (loading_control or same_membrane)
+        and (context.get("source_data_available") or context.get("raw_images_available"))
+    ):
+        return ["disclosed_legitimate_reuse"]
+    return ["disclosed_unjustified_reuse"]
 
 
 def is_image_candidate(candidate: dict[str, Any]) -> bool:
@@ -230,7 +298,22 @@ def classify_similarity_edge(
         # local patch) contradicts a "different channel" or "reprobed membrane"
         # claim, so an unverifiable manifest line must not silently clear it. Keep it
         # as a manifest_conflict that still requires raw-record review.
-        if figure_figure_declared and not is_local_patch:
+        if figure_figure_declared:
+            if is_local_patch:
+                classified.update({
+                    "contextual_tag": "declared_local_patch_requires_verification",
+                    "reportable_as_risk": True,
+                    "positive_evidence": False,
+                    "risk_suggestion": "R1_max",
+                    "declared_relation_unverified": True,
+                    "provenance_edge": declared_edge,
+                    "required_materials_to_resolve": [
+                        "raw image files for both declared panels",
+                        "per-channel, same-field, lane, or reprobe acquisition metadata",
+                        "figure assembly history demonstrating the declared relationship",
+                    ],
+                })
+                return classified
             classified.update({
                 "contextual_tag": "manifest_conflict",
                 "reportable_as_risk": True,
@@ -273,10 +356,11 @@ def classify_similarity_edge(
         return classified
 
     if left_role == "figure_panel" and right_role == "figure_panel":
-        if "disclosed_legitimate_reuse" in context.get("risk_cap_tags", []):
+        disclosure_tags = edge_disclosure_tags(edge, context)
+        if "disclosed_legitimate_reuse" in disclosure_tags:
             tag = "disclosed_legitimate_reuse"
             suggestion = "R2_max"
-        elif "disclosed_unjustified_reuse" in context.get("risk_cap_tags", []):
+        elif "disclosed_unjustified_reuse" in disclosure_tags:
             tag = "disclosed_unjustified_reuse"
             suggestion = "R3_possible"
         else:
@@ -305,6 +389,7 @@ def risk_edges_for_cluster(classified_edges: list[dict[str, Any]]) -> list[dict[
         "local_patch_cross_context",
         "disclosed_legitimate_reuse",
         "disclosed_unjustified_reuse",
+        "declared_local_patch_requires_verification",
         "manifest_conflict",
         "same_image_copy_move",
     }
@@ -322,7 +407,11 @@ def candidate_from_edges(candidate: dict[str, Any], risk_edges: list[dict[str, A
     locations = sorted({path for edge in risk_edges for path in edge_paths(edge) if path})
     source_candidate_type = str(candidate.get("candidate_type", ""))
 
-    if "local_patch_cross_context" in tags:
+    if "declared_local_patch_requires_verification" in tags:
+        candidate_type = "local_patch_reuse"
+        risk_suggestion = "R1_max"
+        evidence_strength = "candidate"
+    elif "local_patch_cross_context" in tags:
         candidate_type = "local_patch_reuse"
         risk_suggestion = "R3_possible"
         evidence_strength = "candidate"
@@ -355,8 +444,13 @@ def candidate_from_edges(candidate: dict[str, Any], risk_edges: list[dict[str, A
         risk_suggestion = candidate.get("risk_suggestion", "R2_or_R3_pending_context")
         evidence_strength = candidate.get("evidence_strength", "candidate")
 
+    public_context = {
+        key: value
+        for key, value in context.items()
+        if key not in {"package_text", "risk_cap_tags"}
+    }
     evidence = dict(candidate.get("evidence", {}))
-    evidence["context"] = context
+    evidence["context"] = public_context
     evidence["contextual_edges"] = risk_edges
     evidence["positive_traceability_edges"] = positive_edges
     if provenance_path:
@@ -366,7 +460,7 @@ def candidate_from_edges(candidate: dict[str, Any], risk_edges: list[dict[str, A
         "candidate_type": candidate_type,
         "locations": locations or candidate.get("locations", []),
         "evidence": evidence,
-        "context": context,
+        "context": public_context,
         "evidence_strength": evidence_strength,
         "risk_suggestion": risk_suggestion,
         "risk_cap_tags": sorted(original_tags | tags),
@@ -382,6 +476,20 @@ def candidate_from_edges(candidate: dict[str, Any], risk_edges: list[dict[str, A
             "raw image metadata",
         ]
         item["recommended_action"] = "Document the figure-to-raw/source relationship before treating the image similarity as a reuse concern."
+    if "declared_local_patch_requires_verification" in tags:
+        item["benign_explanations"] = [
+            "the panels may genuinely share a field, lane, membrane, channel set, or reprobe history",
+            "the manifest declaration is useful context, but it is not independent verification without raw/source records",
+        ]
+        item["required_materials"] = [
+            "raw image files for both declared panels",
+            "per-channel, same-field, lane, or reprobe acquisition metadata",
+            "figure assembly history demonstrating the declared relationship",
+        ]
+        item["recommended_action"] = (
+            "Verify the declared same-field/same-membrane relationship against raw images, acquisition metadata, "
+            "and figure assembly history before treating this local similarity as resolved."
+        )
     if "manifest_conflict" in tags:
         item["benign_explanations"] = [
             "the panels may genuinely share a field or membrane, but the manifest claim cannot be verified from supplied materials",

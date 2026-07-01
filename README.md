@@ -17,7 +17,7 @@ Under the hood: a local **CLI**, a local-first **web app**, a Codex **skill**, a
 | You are… | Start here |
 | --- | --- |
 | An **author** running a pre-submission self-audit | [`docs/self-audit-guide.md`](docs/self-audit-guide.md) and [Quick start](#quick-start) below |
-| A **reviewer or integrity office** triaging concerns | [Quick start](#quick-start), then the external/response modes in [`docs/architecture.md`](docs/architecture.md) |
+| A **reviewer or integrity office** triaging concerns | [Quick start](#quick-start), then [`docs/response-to-concern-guide.md`](docs/response-to-concern-guide.md) and the external/response modes in [`docs/architecture.md`](docs/architecture.md) |
 | A **developer or evaluator** | [How it works](#how-it-works) and [For developers and evaluators](#for-developers-and-evaluators) |
 
 ---
@@ -62,6 +62,8 @@ biomed-audit /path/to/my_package --output-dir audit_outputs/my_package
 The default mode is `--mode internal_presubmission`. Also available: `external_public_material` and `response_to_concern`.
 
 **Authors:** the [self-audit guide](docs/self-audit-guide.md) walks through preparing materials, running the audit, and reading the report — including which conclusions you may *not* draw.
+
+**Responding to a journal/reviewer concern:** use the [response-to-concern guide](docs/response-to-concern-guide.md) and keep the language evidence-based and neutral.
 
 ### What each run produces
 
@@ -199,7 +201,7 @@ For large packages, local-patch screening uses runtime tile/comparison budgets. 
 
 ### Statistical screening
 
-Covers SD/SEM/n consistency, p-value range, integer-count feasibility, and sample-gated distributional prompts (Benford-style first-digit ≥ 30 values, p-value clustering ≥ 20 values, digit/rounding ≥ 8 values, integer-count n ≥ 6). These weak screens are automated triage only when sample gates are met — they are not standalone evidence.
+Covers SD/SEM/n consistency, p-value range, integer-count feasibility, and sample-gated weak distributional prompts (Benford-style first-digit ≥ 30 values, p-value clustering ≥ 20 values, digit/rounding ≥ 8 values, integer-count n ≥ 6). These weak screens use minimum sample-size gates and are automated triage only when those gates are met — they are not standalone evidence.
 
 ### Text, reference, and PDF
 
@@ -220,6 +222,7 @@ Text overlap screening is package-internal; optional external phrase search is t
 | `schemas/` | JSON/YAML contracts for detector output, risk rules, source-data expectations. |
 | `examples/` | Runnable example packages (`minimal_package/`, `full_presubmission_package/`). |
 | `docs/self-audit-guide.md` | Non-developer guide to materials and report reading. |
+| `docs/response-to-concern-guide.md` | Neutral workflow for journal/reviewer/public concern responses. |
 | `docs/architecture.md`, `docs/design-notes.md` | Pipeline architecture and design rationale. |
 | `evals/` | Synthetic packages, eval harness, and ground truth. |
 | `benchmarks/` | True-PDF, scanned-PDF OCR, real-image regression, and PPPR public-concern benchmarks. |
