@@ -2,7 +2,11 @@
 
 ## Unreleased
 
-- No changes yet.
+### Fixed
+- Decimal-comma numeric parsing in the statistics detector: unambiguous European decimals such
+  as `1,5` and `0,049` now parse as `1.5` and `0.049`; semicolon-delimited CSV exports are
+  detected; ambiguous single-comma values such as `1,234` are left unparsed and reported as an
+  R1 numeric-format coverage gap instead of being silently interpreted at the wrong magnitude.
 
 ## v0.6.2 - Local Usability and Coverage Hardening
 

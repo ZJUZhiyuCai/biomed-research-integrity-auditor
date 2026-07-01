@@ -456,6 +456,10 @@ class ContractPipelineTests(unittest.TestCase):
         self.assertIsNone(stats.terminal_digit("<5"))
         self.assertIsNone(stats.decimal_places(">10.00"))
         self.assertEqual(stats.parse_float("5"), 5.0)
+        self.assertEqual(stats.parse_float("1,5"), 1.5)
+        self.assertEqual(stats.parse_float("3,14"), 3.14)
+        self.assertEqual(stats.parse_float("0,049"), 0.049)
+        self.assertIsNone(stats.parse_float("1,234"))
 
         with tempfile.TemporaryDirectory() as tmp:
             source_dir = Path(tmp) / "source_data"
@@ -479,6 +483,70 @@ class ContractPipelineTests(unittest.TestCase):
             payload = json.loads(output.read_text(encoding="utf-8"))
             validate_instance(payload, ROOT / "schemas" / "detector_output.schema.json", "censored stats detector")
             self.assertEqual(payload["candidates"], [])
+
+    def test_stats_detector_parses_decimal_comma_columns_without_magnitude_error(self) -> None:
+        stats = load_stats_consistency_check()
+        rows = [
+            {"group": "control", "mean": "1,5", "sd": "0,2", "sem": "0,1", "n": "4", "p_value": "0,049"},
+            {"group": "treated", "mean": "3,14", "sd": "0,4", "sem": "0,2", "n": "4", "p_value": "0,011"},
+        ]
+        profiles = stats.infer_numeric_format_profiles(rows)
+        self.assertEqual(profiles["mean"], stats.FORMAT_DECIMAL_COMMA)
+        columns = stats.numeric_columns(rows, profiles)
+        self.assertEqual(columns["mean"][0][2], 1.5)
+        self.assertEqual(columns["mean"][1][2], 3.14)
+        self.assertEqual(columns["p_value"][0][2], 0.049)
+        messages = [item["finding_type"] for item in stats.check_rows(Path("decimal_comma.csv"), rows, 1e-3, numeric_profiles=profiles)]
+        self.assertNotIn("p value is outside [0, 1]", messages)
+
+    def test_stats_detector_reports_ambiguous_comma_numeric_format_gap(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            source_dir = Path(tmp) / "source_data"
+            source_dir.mkdir()
+            (source_dir / "ambiguous.csv").write_text(
+                "group,mean,sd,n\n"
+                "control,\"1,234\",0.2,6\n"
+                "treated,\"2,345\",0.3,6\n",
+                encoding="utf-8",
+            )
+            output = Path(tmp) / "stats.json"
+            run([
+                PYTHON,
+                "skill/biomed-research-integrity-auditor/scripts/stats_consistency_check.py",
+                str(source_dir),
+                "--output",
+                str(output),
+            ])
+            payload = json.loads(output.read_text(encoding="utf-8"))
+            validate_instance(payload, ROOT / "schemas" / "detector_output.schema.json", "ambiguous numeric format stats detector")
+            gaps = [item for item in payload["candidates"] if item["finding_type"] == "Numeric format is ambiguous or mixed; affected values were not parsed"]
+            self.assertTrue(gaps)
+            self.assertEqual(gaps[0]["risk_suggestion"], "R1_possible")
+            self.assertIn("audit_coverage_gap", gaps[0]["risk_cap_tags"])
+
+    def test_stats_detector_reads_semicolon_csv_with_decimal_comma(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            source_dir = Path(tmp) / "source_data"
+            source_dir.mkdir()
+            (source_dir / "european.csv").write_text(
+                "group;mean;sd;sem;n;p_value\n"
+                "control;1,5;0,2;0,1;4;0,049\n"
+                "treated;3,14;0,4;0,2;4;0,011\n",
+                encoding="utf-8",
+            )
+            output = Path(tmp) / "stats.json"
+            run([
+                PYTHON,
+                "skill/biomed-research-integrity-auditor/scripts/stats_consistency_check.py",
+                str(source_dir),
+                "--output",
+                str(output),
+            ])
+            payload = json.loads(output.read_text(encoding="utf-8"))
+            validate_instance(payload, ROOT / "schemas" / "detector_output.schema.json", "semicolon decimal-comma stats detector")
+            finding_types = [item["finding_type"] for item in payload["candidates"]]
+            self.assertNotIn("p value is outside [0, 1]", finding_types)
+            self.assertNotIn("Numeric format is ambiguous or mixed; affected values were not parsed", finding_types)
 
     def test_sd_sem_tolerance_is_reporting_precision_aware(self) -> None:
         stats = load_stats_consistency_check()

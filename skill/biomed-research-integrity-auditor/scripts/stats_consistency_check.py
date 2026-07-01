@@ -25,6 +25,14 @@ TIME_TOKEN_RE = re.compile(
 SUMMARY_COLUMNS = {"mean", "sd", "sem", "se", "n", "p", "p_value", "pvalue"}
 TERMINAL_DIGIT_SKIP_COLUMNS = {"n"}
 MISSING_NUMERIC_TEXT = {"na", "n/a", "nan", "null", "-"}
+FORMAT_DECIMAL_COMMA = "decimal_comma"
+FORMAT_DECIMAL_POINT = "decimal_point"
+FORMAT_MIXED = "mixed_decimal_separators"
+FORMAT_AMBIGUOUS = "ambiguous_comma_numeric"
+DECIMAL_POINT_RE = re.compile(r"^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?%?$")
+US_THOUSANDS_RE = re.compile(r"^[+-]?\d{1,3}(?:,\d{3})+(?:\.\d+)?%?$")
+EU_THOUSANDS_RE = re.compile(r"^[+-]?\d{1,3}(?:\.\d{3})+,\d+%?$")
+SINGLE_COMMA_RE = re.compile(r"^[+-]?(\d+),(\d+)%?$")
 COUNT_HINTS = (
     "count",
     "counts",
@@ -46,10 +54,10 @@ DEFAULT_MIN_BENFORD_VALUES = 30
 DEFAULT_MIN_PVALUE_CLUSTER_VALUES = 20
 
 
-def normalized_numeric_text(value: Any) -> str | None:
+def raw_numeric_text(value: Any) -> str | None:
     if value is None:
         return None
-    text = str(value).strip().replace(",", "")
+    text = str(value).strip()
     if not text or text.lower() in MISSING_NUMERIC_TEXT:
         return None
     if text.startswith(("<", ">")):
@@ -57,8 +65,105 @@ def normalized_numeric_text(value: Any) -> str | None:
     return text
 
 
-def parse_float(value: Any) -> float | None:
-    text = normalized_numeric_text(value)
+def ambiguous_single_comma_number(text: str) -> bool:
+    match = SINGLE_COMMA_RE.fullmatch(text)
+    if not match:
+        return False
+    integer, fraction = match.groups()
+    return len(integer) <= 3 and integer.strip("0") != "" and len(fraction.rstrip("%")) == 3
+
+
+def unambiguous_decimal_comma_number(text: str) -> bool:
+    match = SINGLE_COMMA_RE.fullmatch(text)
+    if not match:
+        return False
+    integer, fraction = match.groups()
+    if len(integer) > 3 or integer.strip("0") == "":
+        return True
+    return len(fraction.rstrip("%")) != 3
+
+
+def numeric_format_kind(value: Any) -> str | None:
+    text = raw_numeric_text(value)
+    if text is None:
+        return None
+    if EU_THOUSANDS_RE.fullmatch(text):
+        return FORMAT_DECIMAL_COMMA
+    if "," in text and "." not in text:
+        if ambiguous_single_comma_number(text):
+            return FORMAT_AMBIGUOUS
+        if unambiguous_decimal_comma_number(text):
+            return FORMAT_DECIMAL_COMMA
+    if "." in text and "," not in text and DECIMAL_POINT_RE.fullmatch(text):
+        return FORMAT_DECIMAL_POINT
+    if "," in text and "." in text and US_THOUSANDS_RE.fullmatch(text):
+        return FORMAT_DECIMAL_POINT
+    return None
+
+
+def infer_numeric_format_profiles(rows: list[dict[str, str]]) -> dict[str, str]:
+    kinds_by_column: dict[str, Counter[str]] = defaultdict(Counter)
+    for row in rows:
+        for key, raw in row.items():
+            kind = numeric_format_kind(raw)
+            if kind:
+                kinds_by_column[key][kind] += 1
+
+    profiles: dict[str, str] = {}
+    for key, counts in kinds_by_column.items():
+        has_comma_decimal = counts[FORMAT_DECIMAL_COMMA] > 0
+        has_decimal_point = counts[FORMAT_DECIMAL_POINT] > 0
+        has_ambiguous = counts[FORMAT_AMBIGUOUS] > 0
+        if has_comma_decimal and has_decimal_point:
+            profiles[key] = FORMAT_MIXED
+        elif has_comma_decimal:
+            profiles[key] = FORMAT_DECIMAL_COMMA
+        elif has_ambiguous and not has_decimal_point:
+            profiles[key] = FORMAT_AMBIGUOUS
+        else:
+            profiles[key] = FORMAT_DECIMAL_POINT
+    return profiles
+
+
+def normalized_numeric_text(value: Any, numeric_format: str | None = None) -> str | None:
+    text = raw_numeric_text(value)
+    if text is None:
+        return None
+    if numeric_format == FORMAT_MIXED:
+        if "," in text:
+            return None
+        return text
+    if numeric_format == FORMAT_AMBIGUOUS and ambiguous_single_comma_number(text):
+        return None
+    if numeric_format == FORMAT_DECIMAL_COMMA:
+        if EU_THOUSANDS_RE.fullmatch(text):
+            return text.replace(".", "").replace(",", ".")
+        if "," in text and "." not in text:
+            return text.replace(",", ".")
+        if "," in text:
+            return None
+        return text
+    if "," in text and "." in text:
+        if US_THOUSANDS_RE.fullmatch(text):
+            return text.replace(",", "")
+        if EU_THOUSANDS_RE.fullmatch(text):
+            return text.replace(".", "").replace(",", ".")
+        return None
+    if "," in text:
+        if ambiguous_single_comma_number(text):
+            return None
+        if unambiguous_decimal_comma_number(text):
+            if numeric_format == FORMAT_DECIMAL_POINT:
+                return None
+            return text.replace(",", ".")
+        if US_THOUSANDS_RE.fullmatch(text):
+            return text.replace(",", "")
+        return None
+    return text
+
+
+def parse_float(value: Any, numeric_format: str | None = None) -> float | None:
+    text = normalized_numeric_text(value, numeric_format)
     if text is None:
         return None
     try:
@@ -80,6 +185,13 @@ def cell_to_text(value: Any) -> str:
 def read_delimited_table(path: Path) -> list[dict[str, str]]:
     delimiter = "\t" if path.suffix.lower() == ".tsv" else ","
     with path.open(newline="", encoding="utf-8-sig") as fh:
+        if path.suffix.lower() == ".csv":
+            sample = fh.read(8192)
+            fh.seek(0)
+            try:
+                delimiter = csv.Sniffer().sniff(sample, delimiters=",;\t").delimiter
+            except csv.Error:
+                delimiter = ","
         reader = csv.DictReader(fh, delimiter=delimiter)
         rows = []
         for row in reader:
@@ -174,6 +286,49 @@ def issue(location: str, risk_level: str, message: str, values: dict[str, Any], 
 
 def weak_issue(location: str, message: str, values: dict[str, Any]) -> dict[str, Any]:
     return issue(location, "R2", message, values, evidence_type="weak_forensic_triage_signal")
+
+
+def numeric_format_gap_issues(path: Path, rows: list[dict[str, str]], profiles: dict[str, str]) -> list[dict[str, Any]]:
+    examples_by_column: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for idx, row in enumerate(rows, start=2):
+        for column, raw in row.items():
+            text = raw_numeric_text(raw)
+            if text is None or "," not in text:
+                continue
+            profile = profiles.get(column)
+            if normalized_numeric_text(text, profile) is not None:
+                continue
+            if profile == FORMAT_MIXED:
+                reason = "mixed decimal separators in one column"
+            elif profile == FORMAT_AMBIGUOUS or ambiguous_single_comma_number(text):
+                reason = "single comma followed by three digits can mean either a decimal comma or a thousands separator"
+            else:
+                reason = "unsupported numeric separator pattern"
+            if len(examples_by_column[column]) < 5:
+                examples_by_column[column].append({
+                    "row": idx,
+                    "raw_value": text,
+                    "reason": reason,
+                    "inferred_column_format": profile or "none",
+                })
+
+    findings = []
+    for column, examples in sorted(examples_by_column.items()):
+        findings.append(issue(
+            f"{path.name}:{column}",
+            "R1",
+            "Numeric format is ambiguous or mixed; affected values were not parsed",
+            {
+                "column": column,
+                "examples": examples,
+                "recommended_action": (
+                    "Re-export this column with an explicit decimal point or a consistent locale before "
+                    "treating numeric consistency screening as complete."
+                ),
+            },
+            evidence_type="audit_coverage_gap",
+        ))
+    return findings
 
 
 def almost_equal(a: float, b: float, tolerance: float) -> bool:
@@ -284,14 +439,18 @@ def check_rows(
     rows: list[dict[str, str]],
     sem_tolerance: float,
     min_integer_count_n: int = DEFAULT_MIN_INTEGER_COUNT_N,
+    numeric_profiles: dict[str, str] | None = None,
 ) -> list[dict[str, Any]]:
     findings = []
+    profiles = numeric_profiles or infer_numeric_format_profiles(rows)
     for idx, row in enumerate(rows, start=2):
-        mean = parse_float(row.get("mean"))
-        sd = parse_float(row.get("sd"))
-        sem = parse_float(row.get("sem") or row.get("se"))
-        n = parse_float(row.get("n"))
-        p_value = parse_float(row.get("p") or row.get("p_value") or row.get("pvalue"))
+        mean = parse_float(row.get("mean"), profiles.get("mean"))
+        sd = parse_float(row.get("sd"), profiles.get("sd"))
+        sem_col = "sem" if row.get("sem") else "se"
+        p_col = next((col for col in ("p", "p_value", "pvalue") if row.get(col)), "p")
+        sem = parse_float(row.get(sem_col), profiles.get(sem_col))
+        n = parse_float(row.get("n"), profiles.get("n"))
+        p_value = parse_float(row.get(p_col), profiles.get(p_col))
         label = row_label(path, idx, row)
 
         if n is not None and (n <= 0 or abs(n - round(n)) > 1e-9):
@@ -308,9 +467,11 @@ def check_rows(
             # Reported SD/SEM are rounded; propagate that precision so a legitimately
             # rounded table is not flagged as an SD/SEM contradiction. This only
             # widens the mismatch tolerance, so genuine large deviations still fire.
+            sd_text = normalized_numeric_text(row.get("sd"), profiles.get("sd"))
+            sem_text = normalized_numeric_text(row.get(sem_col), profiles.get(sem_col))
             precision_tolerance = (
-                reporting_half_ulp(row.get("sd"), sem_tolerance)
-                + math.sqrt(n) * reporting_half_ulp(row.get("sem") or row.get("se"), sem_tolerance)
+                reporting_half_ulp(sd_text, sem_tolerance)
+                + math.sqrt(n) * reporting_half_ulp(sem_text, sem_tolerance)
             )
             tolerance = max(base_tolerance, precision_tolerance)
             if abs(sd - expected_sd) > tolerance:
@@ -341,8 +502,15 @@ def check_rows(
                 mean,
                 sd,
                 n,
-                mean_half_ulp=reporting_half_ulp(row.get("mean"), sem_tolerance),
-                sd_half_ulp=reporting_half_ulp(row.get("sd"), sem_tolerance) if sd is not None else 0.0,
+                mean_half_ulp=reporting_half_ulp(
+                    normalized_numeric_text(row.get("mean"), profiles.get("mean")),
+                    sem_tolerance,
+                ),
+                sd_half_ulp=(
+                    reporting_half_ulp(normalized_numeric_text(row.get("sd"), profiles.get("sd")), sem_tolerance)
+                    if sd is not None
+                    else 0.0
+                ),
                 min_n=min_integer_count_n,
             )
             if impossible:
@@ -350,13 +518,18 @@ def check_rows(
     return findings
 
 
-def numeric_columns(rows: list[dict[str, str]]) -> dict[str, list[tuple[int, str, float]]]:
+def numeric_columns(
+    rows: list[dict[str, str]],
+    numeric_profiles: dict[str, str] | None = None,
+) -> dict[str, list[tuple[int, str, float]]]:
     columns: dict[str, list[tuple[int, str, float]]] = defaultdict(list)
+    profiles = numeric_profiles or infer_numeric_format_profiles(rows)
     for idx, row in enumerate(rows, start=2):
         for key, raw in row.items():
-            value = parse_float(raw)
+            normalized = normalized_numeric_text(raw, profiles.get(key))
+            value = parse_float(raw, profiles.get(key))
             if value is not None:
-                columns[key].append((idx, str(raw), value))
+                columns[key].append((idx, normalized or str(raw), value))
     return dict(columns)
 
 
@@ -593,18 +766,25 @@ def check_p_value_clustering(
     return findings
 
 
-def check_repeated_summaries(path: Path, rows: list[dict[str, str]]) -> list[dict[str, Any]]:
+def check_repeated_summaries(
+    path: Path,
+    rows: list[dict[str, str]],
+    numeric_profiles: dict[str, str] | None = None,
+) -> list[dict[str, Any]]:
     findings = []
     if not rows:
         return findings
+    profiles = numeric_profiles or infer_numeric_format_profiles(rows)
     pair_counts: Counter[tuple[str, str]] = Counter()
     pair_locations: dict[tuple[str, str], list[str]] = defaultdict(list)
     for idx, row in enumerate(rows, start=2):
         mean_raw = row.get("mean")
         sd_raw = row.get("sd")
-        if parse_float(mean_raw) is None or parse_float(sd_raw) is None:
+        mean_text = normalized_numeric_text(mean_raw, profiles.get("mean"))
+        sd_text = normalized_numeric_text(sd_raw, profiles.get("sd"))
+        if parse_float(mean_raw, profiles.get("mean")) is None or parse_float(sd_raw, profiles.get("sd")) is None:
             continue
-        key = (str(mean_raw).strip(), str(sd_raw).strip())
+        key = (str(mean_text).strip(), str(sd_text).strip())
         pair_counts[key] += 1
         pair_locations[key].append(row_label(path, idx, row))
     repeated = {
@@ -900,8 +1080,15 @@ def time_ordered_numeric_column_groups(rows: list[dict[str, str]], columns: dict
     return [names] if len(names) >= 4 else []
 
 
-def check_longitudinal_mechanics(path: Path, rows: list[dict[str, str]], columns: dict[str, list[tuple[int, str, float]]], tolerance: float) -> list[dict[str, Any]]:
+def check_longitudinal_mechanics(
+    path: Path,
+    rows: list[dict[str, str]],
+    columns: dict[str, list[tuple[int, str, float]]],
+    tolerance: float,
+    numeric_profiles: dict[str, str] | None = None,
+) -> list[dict[str, Any]]:
     findings = []
+    profiles = numeric_profiles or infer_numeric_format_profiles(rows)
     for time_cols in time_ordered_numeric_column_groups(rows, columns):
         if len(time_cols) < 4:
             continue
@@ -909,7 +1096,7 @@ def check_longitudinal_mechanics(path: Path, rows: list[dict[str, str]], columns
         linear_rows = []
         increment_patterns: dict[tuple[float, ...], list[str]] = defaultdict(list)
         for idx, row in enumerate(rows, start=2):
-            values = [parse_float(row.get(col)) for col in time_cols]
+            values = [parse_float(row.get(col), profiles.get(col)) for col in time_cols]
             if any(value is None for value in values):
                 continue
             series = [float(value) for value in values if value is not None]
@@ -929,7 +1116,11 @@ def check_longitudinal_mechanics(path: Path, rows: list[dict[str, str]], columns
                     "max_increment_deviation": max_deviation,
                 })
 
-        screened = len([row for row in rows if all(parse_float(row.get(col)) is not None for col in time_cols)])
+        screened = len([
+            row
+            for row in rows
+            if all(parse_float(row.get(col), profiles.get(col)) is not None for col in time_cols)
+        ])
         if screened >= 3 and len(linear_rows) / screened >= 0.6:
             findings.append(weak_issue(f"{path.name}:{','.join(time_cols)}", "Longitudinal trajectories are unusually linear/mechanical across rows", {
                 "time_columns": time_cols,
@@ -962,8 +1153,11 @@ def check_table_forensics(
     pvalue_threshold_window: float,
     pvalue_near_threshold_share: float,
     pvalue_repeated_value_share: float,
+    columns: dict[str, list[tuple[int, str, float]]] | None = None,
+    numeric_profiles: dict[str, str] | None = None,
 ) -> list[dict[str, Any]]:
-    columns = numeric_columns(rows)
+    profiles = numeric_profiles or infer_numeric_format_profiles(rows)
+    columns = columns or numeric_columns(rows, profiles)
     findings = []
     findings.extend(check_terminal_digits(path, columns, min_digit_count, digit_dominance))
     findings.extend(check_rounding_patterns(path, columns, min_digit_count, rounding_share))
@@ -977,11 +1171,11 @@ def check_table_forensics(
         pvalue_near_threshold_share,
         pvalue_repeated_value_share,
     ))
-    findings.extend(check_repeated_summaries(path, rows))
+    findings.extend(check_repeated_summaries(path, rows, profiles))
     findings.extend(check_column_relationships(path, columns, min_pairs, residual_tolerance))
     findings.extend(check_digit_preservation(path, columns, min_pairs, effective_min_count(0, min_digit_pairs), 0.85))
     findings.extend(check_time_stratified_shifts(path, columns, min_pairs, residual_tolerance))
-    findings.extend(check_longitudinal_mechanics(path, rows, columns, residual_tolerance))
+    findings.extend(check_longitudinal_mechanics(path, rows, columns, residual_tolerance, profiles))
     return findings
 
 
@@ -1052,9 +1246,11 @@ def main() -> int:
     for file_path in files:
         try:
             for table_path, rows in read_tables(file_path):
-                columns = numeric_columns(rows)
+                numeric_profiles = infer_numeric_format_profiles(rows)
+                columns = numeric_columns(rows, numeric_profiles)
                 tables.append((table_path, rows, columns))
-                candidates.extend(check_rows(table_path, rows, args.sem_tolerance, args.min_integer_count_n))
+                candidates.extend(numeric_format_gap_issues(table_path, rows, numeric_profiles))
+                candidates.extend(check_rows(table_path, rows, args.sem_tolerance, args.min_integer_count_n, numeric_profiles))
                 candidates.extend(check_table_forensics(
                     table_path,
                     rows,
@@ -1070,6 +1266,8 @@ def main() -> int:
                     args.pvalue_threshold_window,
                     args.pvalue_near_threshold_share,
                     args.pvalue_repeated_value_share,
+                    columns,
+                    numeric_profiles,
                 ))
         except Exception as exc:  # noqa: BLE001 - report unreadable data without aborting.
             errors.append({"path": str(file_path), "error": str(exc)})
@@ -1078,7 +1276,7 @@ def main() -> int:
         item["candidate_id"] = f"BIOMED-STAT-{idx:04d}"
     result = {
         "detector_name": "stats.consistency_check",
-        "detector_version": "0.3.0",
+        "detector_version": "0.3.1",
         "input": {
             "path": str(target),
             "sem_tolerance": args.sem_tolerance,
