@@ -883,10 +883,37 @@ def render_coverage(coverage: dict[str, Any] | None) -> list[str]:
                 f"> {conflict_note}",
                 "> 中文提示：同一 panel 同时声明实验图与 schematic/chart 时，系统默认继续深扫，而不是整张跳过。",
             ]
+    local_limits = coverage.get("local_patch_screening_limits") or []
+    if local_limits:
+        lines += [
+            "",
+            "**Local patch screening limits / 局部图像深扫限制**",
+            "",
+            table([
+                ["Path / 路径", "Limit / 限制", "Screened / 已筛", "Available / 可用", "Budget / 预算"],
+                *[
+                    [
+                        str(item.get("path", "")),
+                        str(item.get("limit_type", "")),
+                        str(item.get("screened_tiles", item.get("tile_comparisons_attempted", ""))),
+                        str(item.get("available_tiles", "")),
+                        str(item.get("max_tiles_per_image", item.get("max_total_tile_comparisons", ""))),
+                    ]
+                    for item in local_limits
+                ],
+            ]),
+        ]
+        limit_note = coverage.get("local_patch_screening_limit_note")
+        if limit_note:
+            lines += [
+                "",
+                f"> {limit_note}",
+                "> 中文提示：local patch / copy-move 深扫命中运行预算时，这是覆盖缺口；需要 focused deep scan 后才能把该范围视为完整筛查。",
+            ]
     if coverage.get("audit_coverage_gap"):
         lines += [
-            "- No detector could run on the supplied materials; this is a completeness gap, not a clean result.",
-            "- 所供材料无法支持任何检测模块运行；这是完整性缺口，不是“干净”结论。",
+            "- At least one audit scope or detector coverage gap remains; this is not a clean result.",
+            "- 仍存在至少一个审计范围或检测覆盖缺口；这不是“干净”结论。",
         ]
     scope_note = coverage.get("scope_note")
     if scope_note:

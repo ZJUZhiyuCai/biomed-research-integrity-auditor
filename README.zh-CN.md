@@ -232,7 +232,7 @@ material intake → structured extraction → provenance graph → detectors
 - **职责分离。** 检测器只提出候选，calibrator 才能给风险等级。旧式手写 finding 会被拒绝；每条 finding 都必须来自通过 schema 验证的 detector candidate。
 - **provenance-aware 校准。** 图像与已声明 raw/source 匹配时，会被记录为正向 traceability 证据。但一行作者自报 manifest 不能洗掉真实整体重复：如果两个 figure panel 被声明为 same field/same membrane，却又被检测为 whole-image near-duplicate，系统会报告 `manifest_conflict`，要求 raw records 核验。
 - **不静默“全清”。** 每份报告和 `AUDIT_JSON_SUMMARY` 都包含 `audit_coverage`，列出哪些模块执行了、哪些没有执行、筛了多少图像、哪些图像不可读。空 finding list 不能被读成“论文已被证明没问题”。
-- **契约失败即关闭。** detector、calibrated finding 和 summary 都要 schema 验证；`jsonschema` 不可用时 pipeline 会停止，而不是降级成宽松检查。没有可运行检测器的包会得到 `audit_coverage_gap`（R1）；单个检测器崩溃会得到 `detector_execution_failure`（R1），同时保留其它模块输出。
+- **契约失败即关闭。** detector、calibrated finding 和 summary 都要 schema 验证；`jsonschema` 不可用时 pipeline 会停止，而不是降级成宽松检查。没有可运行检测器，或某个检测范围因预算限制未完整覆盖时，会得到 `audit_coverage_gap`（R1）；单个检测器崩溃会得到 `detector_execution_failure`（R1），同时保留其它模块输出。
 - **风险上限匹配证据。** 弱统计/弱取证信号最高 R2；完整性缺口是 R1；公开材料 triage 最高 R3；`R4` 需要带标签的直接矛盾。
 
 ---
@@ -352,6 +352,8 @@ python3 evals/run_eval.py generate-prompts
 ## 当前限制
 
 - 图像、local patch 和 same-image copy-move 检测只在单个 package 内运行，不跨论文或外部图像库搜索。
+- local patch 和 same-image copy-move 深度筛查对大图包有 tile/comparison 运行预算。若预算触发，
+  报告会记录 R1 覆盖缺口并建议 focused deep scan；这不是“图像已干净”的结论。
 - 文本重叠筛查是 package-internal；可选外部短语检索只是 triage，不是穷尽式查重数据库覆盖，也不是 verdict。
 - true-PDF intake 支持 machine-readable text 和可 OCR 的 scanned PDF；figure/caption extraction 仍有限。
 - 图像 intake 会归一化 high-bit-depth 灰度 TIFF，并把 multi-frame TIFF-like 文件按 frame-level item 筛查到配置上限；对供应商专有 Z-stack/channel microscopy 格式的广泛验证仍是未来工作。

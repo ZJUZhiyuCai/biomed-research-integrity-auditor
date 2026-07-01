@@ -277,8 +277,9 @@ These are the design choices that keep the audit restrained, auditable, and hard
   verified-correct manuscript.
 - **Fail-closed contracts.** Detector, calibrated-finding, and summary outputs are schema-validated.
   If `jsonschema` is unavailable the pipeline stops rather than silently degrading. A package with
-  no runnable detector yields an explicit `audit_coverage_gap` (R1), and a detector that crashes
-  yields a `detector_execution_failure` (R1) while preserving the other modules' output.
+  no runnable detector or a budget-limited detector scope yields an explicit `audit_coverage_gap`
+  (R1), and a detector that crashes yields a `detector_execution_failure` (R1) while preserving the
+  other modules' output.
 - **Risk caps that match the evidence.** Weak statistical/forensic patterns cap at R2;
   completeness gaps at R1; public-material-only triage at R3; `R4` requires a tagged direct
   contradiction.
@@ -419,6 +420,9 @@ python3 evals/run_eval.py generate-prompts
 
 - Image, local-patch, and same-image copy-move detection are single-package only; they do not
   search across papers or external image corpora.
+- Local-patch and same-image copy-move screening uses runtime tile/comparison budgets for large
+  image packages. If a budget is reached, the report records an R1 coverage gap and recommends
+  a focused deep scan; it is not treated as a clean image result.
 - Text-overlap screening is package-internal; the optional external phrase search is triage, not
   exhaustive plagiarism-database coverage or a verdict.
 - True-PDF intake handles machine-readable text and OCR-capable scanned PDFs; figure/caption

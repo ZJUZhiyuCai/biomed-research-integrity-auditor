@@ -698,6 +698,7 @@ class ContractPipelineTests(unittest.TestCase):
             ])
             payload = json.loads(output.read_text(encoding="utf-8"))
             validate_instance(payload, ROOT / "schemas" / "detector_output.schema.json", "local patch detector")
+            self.assertEqual(payload["input"]["ncc_backend"], "numpy")
             self.assertEqual(len(payload["candidates"]), 1)
             candidate = payload["candidates"][0]
             self.assertEqual(candidate["candidate_type"], "local_patch_reuse")
@@ -778,6 +779,76 @@ class ContractPipelineTests(unittest.TestCase):
             validate_instance(payload, ROOT / "schemas" / "detector_output.schema.json", "low-contrast no-copy detector")
             self.assertEqual(payload["same_image_candidate_count"], 0)
             self.assertEqual(payload["candidates"], [])
+
+    def test_local_patch_detector_emits_budget_coverage_gap(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "pkg"
+            write_same_image_copy_move_package(package)
+            output = Path(tmp) / "local_patch.json"
+            run([
+                PYTHON,
+                "detectors/image/local_patch_reuse.py",
+                str(package),
+                "--max-total-tile-comparisons",
+                "1",
+                "--output",
+                str(output),
+            ])
+            payload = json.loads(output.read_text(encoding="utf-8"))
+            validate_instance(payload, ROOT / "schemas" / "detector_output.schema.json", "budget-limited local patch detector")
+            self.assertTrue(payload["comparison_budget_exhausted"])
+            self.assertEqual(payload["tile_comparisons_attempted"], 1)
+            gaps = [item for item in payload["candidates"] if item["candidate_type"] == "audit_coverage_gap"]
+            self.assertEqual(len(gaps), 1)
+            self.assertIn("audit_coverage_gap", gaps[0]["risk_cap_tags"])
+            self.assertEqual(gaps[0]["risk_suggestion"], "R1_possible")
+            records = gaps[0]["evidence"]["records"]
+            self.assertTrue(any(record["limit_type"] == "max_total_tile_comparisons" for record in records))
+
+    def test_contextual_joiner_preserves_local_patch_coverage_gap(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "pkg"
+            package.mkdir()
+            detector_output = Path(tmp) / "local_patch.json"
+            detector_output.write_text(json.dumps({
+                "detector_name": "image.local_patch_reuse",
+                "detector_version": "0.5.0",
+                "input": {"ncc_backend": "numpy"},
+                "candidates": [
+                    {
+                        "candidate_id": "IMG-COVERAGE-GAP-0001",
+                        "detector": "image.local_patch_reuse",
+                        "candidate_type": "audit_coverage_gap",
+                        "locations": ["local_patch_reuse"],
+                        "evidence": {"records": [{"limit_type": "max_total_tile_comparisons"}]},
+                        "evidence_strength": "weak_signal",
+                        "risk_suggestion": "R1_possible",
+                        "risk_cap_tags": ["audit_coverage_gap", "completeness_gap"],
+                        "benign_explanations": ["runtime budget limited local image screening"],
+                        "required_materials": ["targeted deep scan"],
+                        "recommended_action": "Run a focused deep scan before treating local-patch coverage as complete.",
+                        "requires_contextual_calibration": True,
+                    }
+                ],
+                "errors": [],
+            }), encoding="utf-8")
+            output = Path(tmp) / "contextual.json"
+            run([
+                PYTHON,
+                "calibrators/contextual_joiner.py",
+                "--input",
+                str(detector_output),
+                "--package",
+                str(package),
+                "--output",
+                str(output),
+            ])
+            payload = json.loads(output.read_text(encoding="utf-8"))
+            validate_instance(payload, ROOT / "schemas" / "detector_output.schema.json", "contextual local patch coverage gap")
+            self.assertEqual(payload["detector_version"], "0.3.2")
+            self.assertEqual(len(payload["candidates"]), 1)
+            self.assertEqual(payload["candidates"][0]["candidate_type"], "audit_coverage_gap")
+            self.assertEqual(payload["candidates"][0]["risk_cap_tags"], ["audit_coverage_gap", "completeness_gap"])
 
     def test_local_patch_detector_excludes_declared_traceability_pair(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

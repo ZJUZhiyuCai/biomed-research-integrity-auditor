@@ -11,6 +11,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -20,6 +22,8 @@ from provenance.panel_modality import resolve_panel_modality_routing
 
 
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp"}
+DEFAULT_MAX_TILES_PER_IMAGE = 2000
+DEFAULT_MAX_TOTAL_TILE_COMPARISONS = 20_000_000
 FIGURE_SOURCE_TRACEABILITY_RELATIONS = {
     "declared_derived_from",
     "declared_same_source",
@@ -155,34 +159,63 @@ def expected_traceability_pairs(provenance: dict[str, Any]) -> set[tuple[str, st
 
 
 def luma_stats(img: Any) -> tuple[float, float]:
-    pixels = list(img.convert("L").tobytes())
-    if not pixels:
+    pixels = luma_array(img)
+    if pixels.size == 0:
         return 0.0, 0.0
-    mean = sum(pixels) / len(pixels)
-    variance = sum((value - mean) ** 2 for value in pixels) / len(pixels)
-    return mean, math.sqrt(variance)
+    return float(np.mean(pixels)), float(np.std(pixels))
+
+
+def luma_array(img: Any) -> np.ndarray:
+    return np.asarray(img.convert("L"), dtype=np.float32)
+
+
+def transformed_array(array: np.ndarray, transform_name: str) -> np.ndarray:
+    if transform_name == "identity":
+        return array
+    if transform_name == "rot90":
+        return np.rot90(array, 1)
+    if transform_name == "rot180":
+        return np.rot90(array, 2)
+    if transform_name == "rot270":
+        return np.rot90(array, 3)
+    if transform_name == "flip_h":
+        return np.fliplr(array)
+    if transform_name == "flip_v":
+        return np.flipud(array)
+    if transform_name == "transpose":
+        return array.T
+    if transform_name == "transverse":
+        return np.fliplr(np.flipud(array)).T
+    raise ValueError(f"unsupported transform: {transform_name}")
+
+
+def ncc_profile(array: np.ndarray) -> dict[str, Any]:
+    values = np.asarray(array, dtype=np.float32).reshape(-1)
+    if values.size == 0:
+        return {"values": values, "centered": values, "energy": 0.0}
+    centered = values - np.mean(values, dtype=np.float64)
+    energy = float(np.dot(centered, centered))
+    return {"values": values, "centered": centered, "energy": energy}
+
+
+def normalized_cross_correlation_from_profile(left_profile: dict[str, Any], right_array: np.ndarray) -> float:
+    right_profile = ncc_profile(right_array)
+    left_values = left_profile["values"]
+    right_values = right_profile["values"]
+    if left_values.size != right_values.size or left_values.size == 0:
+        return 0.0
+    left_energy = float(left_profile["energy"])
+    right_energy = float(right_profile["energy"])
+    denominator = math.sqrt(left_energy * right_energy)
+    if denominator == 0:
+        return 1.0 if np.array_equal(left_values, right_values) else 0.0
+    numerator = float(np.dot(left_profile["centered"], right_profile["centered"]))
+    return max(-1.0, min(1.0, numerator / denominator))
 
 
 def normalized_cross_correlation(left: Any, right: Any) -> float:
-    left_pixels = list(left.convert("L").tobytes())
-    right_pixels = list(right.convert("L").tobytes())
-    if len(left_pixels) != len(right_pixels) or not left_pixels:
-        return 0.0
-    mean_left = sum(left_pixels) / len(left_pixels)
-    mean_right = sum(right_pixels) / len(right_pixels)
-    numerator = 0.0
-    left_energy = 0.0
-    right_energy = 0.0
-    for left_value, right_value in zip(left_pixels, right_pixels):
-        dl = left_value - mean_left
-        dr = right_value - mean_right
-        numerator += dl * dr
-        left_energy += dl * dl
-        right_energy += dr * dr
-    denominator = math.sqrt(left_energy * right_energy)
-    if denominator == 0:
-        return 1.0 if left_pixels == right_pixels else 0.0
-    return max(-1.0, min(1.0, numerator / denominator))
+    left_array = luma_array(left)
+    return normalized_cross_correlation_from_profile(ncc_profile(left_array), luma_array(right))
 
 
 def tile_hashes(tile: Any, hash_size: int) -> dict[str, int]:
@@ -190,6 +223,17 @@ def tile_hashes(tile: Any, hash_size: int) -> dict[str, int]:
         "average_hash": average_hash(tile, hash_size),
         "difference_hash": difference_hash(tile, hash_size),
     }
+
+
+def transformed_hashes(tile: dict[str, Any], transform_name: str, hash_size: int) -> dict[str, int]:
+    cache = tile.setdefault("transformed_hashes", {})
+    if transform_name not in cache:
+        cache[transform_name] = tile_hashes(transformed(tile["image"], transform_name), hash_size)
+    return cache[transform_name]
+
+
+def transformed_tile_array(tile: dict[str, Any], transform_name: str) -> np.ndarray:
+    return transformed_array(tile["array"], transform_name)
 
 
 def contrast_enhanced_luma(img: Any) -> Any:
@@ -220,18 +264,52 @@ def generate_tiles(
         for x in x_values:
             bounds = (x, y, x + tile_size, y + tile_size)
             tile = img.crop(bounds).convert("L")
-            _, stddev = luma_stats(tile)
+            tile_array = luma_array(tile)
+            _, stddev = float(np.mean(tile_array)), float(np.std(tile_array))
             if stddev < min_stddev:
                 continue
             tiles.append({
                 "bounds": bounds,
                 "image": tile,
+                "array": tile_array,
                 "hashes": tile_hashes(tile, hash_size),
+                "ncc_profile": ncc_profile(tile_array),
                 "stddev": round(stddev, 3),
                 "view": view_name,
                 "tile_size": tile_size,
             })
     return tiles
+
+
+def limit_tiles(
+    tiles: list[dict[str, Any]],
+    max_tiles: int | None,
+) -> tuple[list[dict[str, Any]], bool]:
+    if max_tiles is None or max_tiles <= 0 or len(tiles) <= max_tiles:
+        return tiles, False
+    if max_tiles == 1:
+        return [tiles[len(tiles) // 2]], True
+    step = (len(tiles) - 1) / (max_tiles - 1)
+    indices = [min(len(tiles) - 1, round(idx * step)) for idx in range(max_tiles)]
+    selected = [tiles[idx] for idx in dict.fromkeys(indices)]
+    return selected, True
+
+
+class ComparisonBudget:
+    def __init__(self, max_comparisons: int | None) -> None:
+        self.max_comparisons = max_comparisons if max_comparisons and max_comparisons > 0 else None
+        self.used = 0
+        self.exhausted = False
+
+    def consume(self) -> bool:
+        if self.max_comparisons is None:
+            self.used += 1
+            return True
+        if self.used >= self.max_comparisons:
+            self.exhausted = True
+            return False
+        self.used += 1
+        return True
 
 
 def best_tile_match(
@@ -242,8 +320,7 @@ def best_tile_match(
 ) -> dict[str, Any] | None:
     best: dict[str, Any] | None = None
     for transform_name in TRANSFORMS:
-        right_img = transformed(right_tile["image"], transform_name)
-        right_hashes = tile_hashes(right_img, hash_size)
+        right_hashes = transformed_hashes(right_tile, transform_name, hash_size)
         distances = {
             method: hamming(left_tile["hashes"][method], right_hashes[method])
             for method in left_tile["hashes"]
@@ -251,7 +328,10 @@ def best_tile_match(
         distance = min(distances.values())
         if distance > hash_threshold:
             continue
-        score = normalized_cross_correlation(left_tile["image"], right_img)
+        score = normalized_cross_correlation_from_profile(
+            left_tile["ncc_profile"],
+            transformed_tile_array(right_tile, transform_name),
+        )
         if best is None or (score, -distance) > (best["score"], -best["hash_distance"]):
             best = {
                 "best_transform": transform_name,
@@ -353,11 +433,14 @@ def scan_pair(
     hash_size: int,
     ncc_threshold: float,
     max_region_fraction: float,
+    budget: ComparisonBudget | None = None,
 ) -> list[dict[str, Any]]:
     hits: list[dict[str, Any]] = []
     seen_regions: set[tuple[tuple[int, int, int, int], tuple[int, int, int, int], str]] = set()
     for left_tile in left["tiles"]:
         for right_tile in right["tiles"]:
+            if budget is not None and not budget.consume():
+                return hits
             best = best_tile_match(left_tile, right_tile, hash_threshold, hash_size)
             if not best or best["score"] < ncc_threshold:
                 continue
@@ -390,11 +473,14 @@ def scan_within_image(
     min_gap: int,
     min_tile_hits: int,
     require_displacement_cluster: bool = False,
+    budget: ComparisonBudget | None = None,
 ) -> list[dict[str, Any]]:
     hits: list[dict[str, Any]] = []
     seen_regions: set[tuple[tuple[int, int, int, int], tuple[int, int, int, int], str]] = set()
     for left_index, left_tile in enumerate(tiles):
         for right_tile in tiles[left_index + 1:]:
+            if budget is not None and not budget.consume():
+                return hits
             if not distinct_within_image_regions(left_tile["bounds"], right_tile["bounds"], min_gap):
                 continue
             best = best_tile_match(left_tile, right_tile, hash_threshold, hash_size)
@@ -426,6 +512,32 @@ def scan_within_image(
     elif merged_region_fraction(hits, image["image"].size, image["image"].size) > max_region_fraction:
         return []
     return hits
+
+
+def coverage_gap_candidate(records: list[dict[str, Any]], idx: int) -> dict[str, Any]:
+    return {
+        "candidate_id": f"IMG-COVERAGE-GAP-{idx:04d}",
+        "detector": "image.local_patch_reuse",
+        "candidate_type": "audit_coverage_gap",
+        "locations": sorted({str(record.get("path") or "local_patch_reuse") for record in records}),
+        "evidence": {
+            "message": "Local patch / same-image copy-move screening was partially limited by runtime budget.",
+            "records": records,
+        },
+        "evidence_strength": "weak_signal",
+        "risk_suggestion": "R1_possible",
+        "risk_cap_tags": ["audit_coverage_gap", "completeness_gap"],
+        "benign_explanations": [
+            "large high-resolution packages may require a deep scan on selected figures",
+            "runtime limits prevent the local detector from examining every tile pair in this run",
+        ],
+        "required_materials": [
+            "targeted deep scan for high-priority panels",
+            "raw images and figure assembly files for any unscreened or partially screened panels",
+        ],
+        "recommended_action": "Run a focused deep scan on the listed files or increase local screening budgets before treating local-patch coverage as complete.",
+        "requires_contextual_calibration": True,
+    }
 
 
 def displacement_key(hit: dict[str, Any], bin_size: int = 32) -> tuple[int, int, str]:
@@ -561,6 +673,8 @@ def scan(
     low_contrast_stddev_threshold: float,
     low_contrast_min_stddev: float,
     low_contrast_ncc_threshold: float,
+    max_tiles_per_image: int | None = DEFAULT_MAX_TILES_PER_IMAGE,
+    max_total_tile_comparisons: int | None = DEFAULT_MAX_TOTAL_TILE_COMPARISONS,
 ) -> dict[str, Any]:
     try:
         from PIL import Image
@@ -574,6 +688,8 @@ def scan(
     image_paths = collect_images(root)
     images = []
     errors = []
+    limit_records: list[dict[str, Any]] = []
+    comparison_budget = ComparisonBudget(max_total_tile_comparisons)
     panels_excluded_from_deep_scan = list(routing.excluded_panels)
     modality_conflicts = list(routing.modality_conflicts)
     for path in image_paths:
@@ -584,6 +700,17 @@ def scan(
             with Image.open(path) as img:
                 for frame_label, base in iter_normalized_frames(img):
                     tiles = generate_tiles(base, tile_size, stride, hash_size, min_stddev)
+                    original_tile_count = len(tiles)
+                    tiles, tiles_limited = limit_tiles(tiles, max_tiles_per_image)
+                    if tiles_limited:
+                        limit_records.append({
+                            "path": f"{rel_path}{frame_label}",
+                            "limit_type": "max_tiles_per_image",
+                            "view": "luma",
+                            "available_tiles": original_tile_count,
+                            "screened_tiles": len(tiles),
+                            "max_tiles_per_image": max_tiles_per_image,
+                        })
                     _, image_stddev = luma_stats(base)
                     low_contrast_tiles = []
                     if image_stddev < low_contrast_stddev_threshold:
@@ -595,6 +722,20 @@ def scan(
                             low_contrast_min_stddev,
                             "low_contrast_autocontrast",
                         )
+                        original_low_contrast_tile_count = len(low_contrast_tiles)
+                        low_contrast_tiles, low_contrast_limited = limit_tiles(
+                            low_contrast_tiles,
+                            max_tiles_per_image,
+                        )
+                        if low_contrast_limited:
+                            limit_records.append({
+                                "path": f"{rel_path}{frame_label}",
+                                "limit_type": "max_tiles_per_image",
+                                "view": "low_contrast_autocontrast",
+                                "available_tiles": original_low_contrast_tile_count,
+                                "screened_tiles": len(low_contrast_tiles),
+                                "max_tiles_per_image": max_tiles_per_image,
+                            })
                     images.append({
                         "path": f"{rel_path}{frame_label}",
                         "source_file": rel_path,
@@ -610,6 +751,8 @@ def scan(
     candidates = []
     same_image_candidate_count = 0
     for image in images:
+        if comparison_budget.exhausted:
+            break
         hits = []
         if image["tiles"]:
             hits = scan_within_image(
@@ -621,8 +764,9 @@ def scan(
                 max_region_fraction,
                 within_image_min_gap,
                 within_image_min_tile_hits,
+                budget=comparison_budget,
             )
-        if not hits and image["low_contrast_tiles"]:
+        if not hits and image["low_contrast_tiles"] and not comparison_budget.exhausted:
             hits = scan_within_image(
                 image,
                 image["low_contrast_tiles"],
@@ -633,6 +777,7 @@ def scan(
                 within_image_min_gap,
                 within_image_min_tile_hits,
                 True,
+                comparison_budget,
             )
         if not hits:
             continue
@@ -651,13 +796,25 @@ def scan(
 
     excluded_pair_count = 0
     for i, left in enumerate(images):
+        if comparison_budget.exhausted:
+            break
         for right in images[i + 1:]:
+            if comparison_budget.exhausted:
+                break
             if undirected_pair(left["path"], right["path"]) in excluded_pairs:
                 excluded_pair_count += 1
                 continue
             if not left["tiles"] or not right["tiles"]:
                 continue
-            hits = scan_pair(left, right, hash_threshold, hash_size, ncc_threshold, max_region_fraction)
+            hits = scan_pair(
+                left,
+                right,
+                hash_threshold,
+                hash_size,
+                ncc_threshold,
+                max_region_fraction,
+                comparison_budget,
+            )
             if not hits:
                 continue
             candidates.append(candidate_from_hits(
@@ -671,9 +828,19 @@ def scan(
                 stride,
             ))
 
+    if comparison_budget.exhausted:
+        limit_records.append({
+            "path": "local_patch_reuse",
+            "limit_type": "max_total_tile_comparisons",
+            "tile_comparisons_attempted": comparison_budget.used,
+            "max_total_tile_comparisons": max_total_tile_comparisons,
+        })
+    if limit_records:
+        candidates.append(coverage_gap_candidate(limit_records, len(candidates) + 1))
+
     return {
         "detector_name": "image.local_patch_reuse",
-        "detector_version": "0.4.1",
+        "detector_version": "0.5.0",
         "input": {
             "root": str(root),
             "provenance_graph": str(provenance_path) if provenance_path else None,
@@ -691,6 +858,9 @@ def scan(
             "low_contrast_stddev_threshold": low_contrast_stddev_threshold,
             "low_contrast_min_stddev": low_contrast_min_stddev,
             "low_contrast_ncc_threshold": low_contrast_ncc_threshold,
+            "max_tiles_per_image": max_tiles_per_image,
+            "max_total_tile_comparisons": max_total_tile_comparisons,
+            "ncc_backend": "numpy",
             "transforms": list(TRANSFORMS),
             "multi_frame_images": "screened_as_frame_level_items",
         },
@@ -700,6 +870,9 @@ def scan(
         "candidate_pair_count": len(candidates),
         "same_image_candidate_count": same_image_candidate_count,
         "excluded_expected_traceability_pairs": excluded_pair_count,
+        "tile_limit_records": limit_records,
+        "tile_comparisons_attempted": comparison_budget.used,
+        "comparison_budget_exhausted": comparison_budget.exhausted,
         "candidates": candidates,
         "errors": errors,
     }
@@ -722,6 +895,8 @@ def main() -> int:
     parser.add_argument("--low-contrast-stddev-threshold", type=float, default=8.0)
     parser.add_argument("--low-contrast-min-stddev", type=float, default=8.0)
     parser.add_argument("--low-contrast-ncc-threshold", type=float, default=0.995)
+    parser.add_argument("--max-tiles-per-image", type=int, default=DEFAULT_MAX_TILES_PER_IMAGE)
+    parser.add_argument("--max-total-tile-comparisons", type=int, default=DEFAULT_MAX_TOTAL_TILE_COMPARISONS)
     parser.add_argument("--evidence-dir", type=Path)
     parser.add_argument("--output", type=Path, default=Path("local_patch_candidates.json"))
     args = parser.parse_args()
@@ -748,6 +923,8 @@ def main() -> int:
         args.low_contrast_stddev_threshold,
         args.low_contrast_min_stddev,
         args.low_contrast_ncc_threshold,
+        args.max_tiles_per_image,
+        args.max_total_tile_comparisons,
     )
     output.write_text(json.dumps(result, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     print(json.dumps({

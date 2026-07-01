@@ -30,6 +30,10 @@ FIGURE_FIGURE_TRACEABILITY_RELATIONS = {
     "same_field_different_channel",
     "same_membrane_reprobe",
 }
+PASSTHROUGH_CANDIDATE_TYPES = {
+    "audit_coverage_gap",
+    "detector_execution_failure",
+}
 
 
 def read_package_text(package: Path) -> str:
@@ -112,6 +116,8 @@ def package_context(package: Path) -> dict[str, Any]:
 
 
 def is_image_candidate(candidate: dict[str, Any]) -> bool:
+    if str(candidate.get("candidate_type", "")) in PASSTHROUGH_CANDIDATE_TYPES:
+        return False
     joined = " ".join(str(candidate.get(key, "")) for key in ("detector", "candidate_type"))
     return "image" in joined
 
@@ -430,7 +436,7 @@ def enrich_candidates(payload: dict[str, Any], package: Path, provenance_path: P
 
     result = {
         "detector_name": "contextual_joiner",
-        "detector_version": "0.3.1",
+        "detector_version": "0.3.2",
         "input": {
             "source_detector": payload.get("detector_name", ""),
             "package": str(package),

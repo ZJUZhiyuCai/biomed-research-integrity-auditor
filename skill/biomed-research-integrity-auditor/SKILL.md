@@ -81,6 +81,7 @@ Use when the user is responding to reviewer, journal, or PubPeer-style concerns.
    - A manifest line alone does not clear an image-reuse concern. If two figure panels are declared as same-field/same-membrane but are detected as a whole-image near-duplicate, treat it as an unverifiable `manifest_conflict` (R3) requiring raw images and acquisition metadata, not as cleared traceability.
    - Local patch similarity is a region-level candidate only. Declared traceability, same-field different-channel relationships, and same-membrane/reprobe relationships must be checked through provenance before treating patch similarity as a risk.
    - Same-image copy-move screening compares non-overlapping regions within each image, including a conservative low-contrast probe when the image has very low luminance variation. Treat it as a coordinate-level candidate requiring raw-image and processing-history review, not proof of manipulation.
+   - Local patch / same-image copy-move screening uses tile/comparison runtime budgets. If a budget is reached, treat the emitted `audit_coverage_gap` as an R1 scope/action item requiring a focused deep scan, not as clearance.
    - Evidence crops from local patch screening are written under `audit_outputs/<case>/evidence/local_patch/`.
    - `scripts/image_similarity_screen.py` is a deprecated compatibility wrapper only; it delegates to the global near-duplicate detector and should not be the recommended workflow.
    - High-bit-depth grayscale inputs such as 16-bit TIFFs are contrast-normalized for screening before hashing or tile comparison.
@@ -219,7 +220,7 @@ Scripts are screening aids. Read or patch them before relying on them in unfamil
 - `scripts/stats_consistency_check.py`: check CSV/XLSX numerical summaries for SEM/SD/n consistency and weak anomalies.
 - `scripts/report_assembler.py`: assemble a bilingual human-readable Markdown audit report from manifest and findings JSON.
 - `../../detectors/image/global_near_duplicate.py`: multi-hash plus D4 transform global image candidate detector.
-- `../../detectors/image/local_patch_reuse.py`: overlapping-tile local patch and same-image copy-move candidate detector with low-contrast same-image probing and evidence crop export.
+- `../../detectors/image/local_patch_reuse.py`: overlapping-tile local patch and same-image copy-move candidate detector with NumPy-backed NCC, low-contrast same-image probing, budget coverage-gap reporting, and evidence crop export.
 - `../../detectors/text/text_overlap_screen.py`: package-internal paragraph overlap candidate detector; no web-scale plagiarism search.
 - `../../detectors/text/external_literature_search.py`: external phrase-search triage against Europe PMC, Crossref, or a deterministic fixture; wired into the default orchestrator through `--external-literature-provider`.
 - `../../benchmarks/true_pdf/run_true_pdf_benchmark.py`: true binary-PDF benchmark that verifies compressed machine text can be extracted for package-internal overlap screening.

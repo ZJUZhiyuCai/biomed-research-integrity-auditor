@@ -8,6 +8,7 @@ license = "MIT"
 license-files = ["LICENSE"]
 dependencies = [
   "Pillow>=10.0",
+  "numpy>=2.0",
   "PyYAML>=6.0",
   "jsonschema>=4.0",
   "openpyxl>=3.1",

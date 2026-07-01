@@ -617,6 +617,7 @@ def build_coverage(
                 )
                 excluded = local_payload.get("panels_excluded_from_deep_scan", []) or []
                 conflicts = local_payload.get("modality_conflicts", []) or []
+                local_limits = local_payload.get("tile_limit_records", []) or []
                 if conflicts:
                     coverage["modality_conflicts"] = conflicts
                     coverage["modality_conflict_note"] = (
@@ -633,6 +634,17 @@ def build_coverage(
                     coverage["modules_not_executed"].append(
                         "local patch / same-image copy-move screening on "
                         f"{len(excluded)} schematic/chart panel(s) (modality-aware exclusion; not a clean result)"
+                    )
+                if local_limits:
+                    coverage["local_patch_screening_limits"] = local_limits
+                    coverage["local_patch_screening_limit_note"] = (
+                        "Local patch / same-image copy-move screening reached a tile or comparison budget. "
+                        "This records partial local image coverage and should be resolved with a focused deep scan "
+                        "before treating local-patch coverage as complete."
+                    )
+                    coverage["modules_not_executed"].append(
+                        "some local patch / same-image copy-move tile comparisons "
+                        "(runtime budget reached; not a clean result)"
                     )
     else:
         coverage["modules_not_executed"].append("image screening (no image files supplied)")
