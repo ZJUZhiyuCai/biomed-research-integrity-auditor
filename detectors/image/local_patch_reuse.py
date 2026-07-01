@@ -755,6 +755,40 @@ def scan(
 
     candidates = []
     same_image_candidate_count = 0
+    excluded_pair_count = 0
+    for i, left in enumerate(images):
+        if comparison_budget.exhausted:
+            break
+        for right in images[i + 1:]:
+            if comparison_budget.exhausted:
+                break
+            if undirected_pair(left["path"], right["path"]) in excluded_pairs:
+                excluded_pair_count += 1
+                continue
+            if not left["tiles"] or not right["tiles"]:
+                continue
+            hits = scan_pair(
+                left,
+                right,
+                hash_threshold,
+                hash_size,
+                ncc_threshold,
+                max_region_fraction,
+                comparison_budget,
+            )
+            if not hits:
+                continue
+            candidates.append(candidate_from_hits(
+                root,
+                evidence_dir,
+                left,
+                right,
+                hits,
+                len(candidates) + 1,
+                tile_size,
+                stride,
+            ))
+
     for image in images:
         if comparison_budget.exhausted:
             break
@@ -798,40 +832,6 @@ def scan(
             stride,
             same_image=True,
         ))
-
-    excluded_pair_count = 0
-    for i, left in enumerate(images):
-        if comparison_budget.exhausted:
-            break
-        for right in images[i + 1:]:
-            if comparison_budget.exhausted:
-                break
-            if undirected_pair(left["path"], right["path"]) in excluded_pairs:
-                excluded_pair_count += 1
-                continue
-            if not left["tiles"] or not right["tiles"]:
-                continue
-            hits = scan_pair(
-                left,
-                right,
-                hash_threshold,
-                hash_size,
-                ncc_threshold,
-                max_region_fraction,
-                comparison_budget,
-            )
-            if not hits:
-                continue
-            candidates.append(candidate_from_hits(
-                root,
-                evidence_dir,
-                left,
-                right,
-                hits,
-                len(candidates) + 1,
-                tile_size,
-                stride,
-            ))
 
     if comparison_budget.exhausted:
         limit_records.append({

@@ -258,36 +258,15 @@ def extract_line_links(line: str, files: dict[str, list[str]], evidence_source: 
     return links
 
 
-def infer_ordered_links(text: str, package: Path, files: dict[str, list[str]], evidence_source: str) -> list[dict[str, Any]]:
+def ordered_mapping_warning(text: str, evidence_source: str) -> str | None:
     lower = text.lower()
     if "figure panels map to" not in lower and "figures map to" not in lower:
-        return []
-    raw_refs = []
-    for match in IMAGE_OR_DATA_RE.finditer(text):
-        resolved = resolve_token(match.group(0), files)
-        if resolved and role(resolved) in {"raw_image", "source_data"} and resolved not in raw_refs:
-            raw_refs.append(resolved)
-    figure_paths = sorted({
-        rel
-        for matches in files.values()
-        for rel in matches
-        if rel.startswith("figures/")
-        and Path(rel).suffix.lower() in {".png", ".jpg", ".jpeg", ".tif", ".tiff"}
-    })
-    if len(figure_paths) != len(raw_refs) or not figure_paths:
-        return []
-    links = []
-    for figure, source in zip(figure_paths, raw_refs):
-        links.append({
-            "source_path": figure,
-            "target_path": source,
-            "relation_type": "declared_derived_from",
-            "evidence_source": evidence_source,
-            "confidence": 0.75,
-            "risk_effect": "expected_traceability",
-            "extraction_method": "ordered_figure_panels_map_to_list",
-        })
-    return links
+        return None
+    return (
+        f"{evidence_source} contains an ordered prose mapping phrase. Ordered figure-to-source "
+        "lists are ignored for traceability calibration; use structured CSV/YAML rows with "
+        "figure_panel, source_record, and relation_type columns."
+    )
 
 
 def parse_package(package: Path) -> dict[str, Any]:
@@ -311,7 +290,9 @@ def parse_package(package: Path) -> dict[str, Any]:
         text = manifest.read_text(encoding="utf-8", errors="ignore")
         for line in text.splitlines():
             links.extend(extract_line_links(line, files, rel))
-        links.extend(infer_ordered_links(text, package, files, rel))
+        warning = ordered_mapping_warning(text, rel)
+        if warning:
+            warnings.append(warning)
 
     seen = set()
     unique_links = []

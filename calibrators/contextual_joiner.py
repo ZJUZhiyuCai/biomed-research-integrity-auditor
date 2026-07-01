@@ -46,18 +46,24 @@ REUSE_DISCLOSURE_PATTERNS = [
 ]
 
 
-def read_package_text(package: Path) -> str:
+def read_package_text(package: Path) -> tuple[str, list[dict[str, Any]]]:
     chunks = []
+    errors: list[dict[str, Any]] = []
     for path in sorted(package.rglob("*")):
         if not path.is_file() or path.suffix.lower() not in TEXT_EXTS:
             continue
         try:
             text = path.read_text(encoding="utf-8", errors="ignore")
-        except Exception:  # noqa: BLE001 - context extraction should be best effort.
+        except Exception as exc:  # noqa: BLE001 - keep audit running, but surface the gap.
+            errors.append({
+                "path": path.relative_to(package).as_posix(),
+                "error": str(exc),
+                "stage": "package_context_text_read",
+            })
             continue
         if text.strip():
             chunks.append(f"\n--- {path.relative_to(package)} ---\n{text}")
-    return "\n".join(chunks).lower()
+    return "\n".join(chunks).lower(), errors
 
 
 def has_source_data(package: Path) -> bool:
@@ -75,7 +81,7 @@ def contains_any(text: str, patterns: list[str]) -> bool:
 
 
 def package_context(package: Path) -> dict[str, Any]:
-    text = read_package_text(package)
+    text, read_errors = read_package_text(package)
     reuse_disclosed = contains_any(text, REUSE_DISCLOSURE_PATTERNS)
     loading_control_disclosed = "loading control" in text and contains_any(text, [r"\breus\w*\b", r"\bsame\b"])
     negated_same_membrane = contains_any(text, [
@@ -114,6 +120,7 @@ def package_context(package: Path) -> dict[str, Any]:
         "source_data_available": source_available,
         "raw_images_available": raw_available,
         "risk_cap_tags": risk_cap_tags,
+        "context_read_errors": read_errors,
     }
 
 
@@ -542,6 +549,14 @@ def enrich_candidates(payload: dict[str, Any], package: Path, provenance_path: P
                 continue
         enriched.append(item)
 
+    context_read_errors = [
+        {
+            "path": str(item.get("path", "")),
+            "error": str(item.get("error", "")),
+            "stage": str(item.get("stage", "package_context_text_read")),
+        }
+        for item in context.get("context_read_errors", []) or []
+    ]
     result = {
         "detector_name": "contextual_joiner",
         "detector_version": "0.3.2",
@@ -552,7 +567,7 @@ def enrich_candidates(payload: dict[str, Any], package: Path, provenance_path: P
         },
         "candidates": enriched,
         "positive_evidence": positive_evidence,
-        "errors": [],
+        "errors": context_read_errors,
     }
     validate_instance(result, DETECTOR_SCHEMA, "contextually enriched candidates")
     return result

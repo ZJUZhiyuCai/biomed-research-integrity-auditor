@@ -8,6 +8,21 @@ export type AuditStatus = "queued" | "running" | "cancel_requested" | "completed
 export type RiskLevel = "R0" | "R1" | "R2" | "R3" | "R4";
 export type Theme = "light" | "dark";
 
+export interface ExamplePackage {
+  id: string;
+  label: string;
+  description: string;
+  path: string;
+}
+
+export interface HealthResponse {
+  ok: boolean;
+  version: string;
+  runs_root: string;
+  local_first: boolean;
+  example_packages?: ExamplePackage[];
+}
+
 export interface ManifestRow {
   figure_panel: string;
   source_record: string;

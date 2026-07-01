@@ -37,6 +37,19 @@ def wait_for_audit(client: TestClient, audit_id: str, timeout: float = 90.0) -> 
 
 
 class WebappBackendTests(unittest.TestCase):
+    def test_health_exposes_example_packages_for_onboarding(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            app = create_app(output_root=Path(tmp) / "runs")
+            with TestClient(app) as client:
+                response = client.get("/api/health")
+                response.raise_for_status()
+                examples = response.json()["example_packages"]
+                ids = {item["id"] for item in examples}
+                self.assertIn("minimal_package", ids)
+                self.assertIn("full_presubmission_package", ids)
+                for item in examples:
+                    self.assertTrue(Path(item["path"]).is_dir())
+
     def test_webapp_action_patch_updates_tracker_csvs(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)

@@ -31,9 +31,9 @@ export function CoveragePanel({
         )}
       </div>
       <div className="coverage-metrics">
-        <Metric label="Images" value={coverage.image_panels_screened ?? 0} />
-        <Metric label="Unreadable" value={coverage.image_files_unreadable ?? 0} />
-        <Metric label="Tables" value={coverage.source_tables_screened ?? 0} accent />
+        <Metric label={t.coverageImages} value={coverage.image_panels_screened ?? 0} />
+        <Metric label={t.coverageUnreadable} value={coverage.image_files_unreadable ?? 0} />
+        <Metric label={t.coverageTables} value={coverage.source_tables_screened ?? 0} accent />
       </div>
       <div className="coverage-columns">
         <ListBlock title={t.executed} rows={executed} />

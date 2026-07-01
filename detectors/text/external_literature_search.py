@@ -46,16 +46,22 @@ def anchor_phrase(text: str, words: int) -> str | None:
     return None
 
 
-def collect_query_paragraphs(root: Path, ngram: int, min_tokens: int, max_queries: int) -> list[Paragraph]:
+def collect_query_paragraphs(root: Path, ngram: int, min_tokens: int, max_queries: int) -> tuple[list[Paragraph], list[dict[str, Any]]]:
     paragraphs: list[Paragraph] = []
+    parse_errors: list[dict[str, Any]] = []
     for path, category in collect_text_files(root):
         try:
             paragraphs.extend(parse_paragraphs(root, path, category, ngram, min_tokens))
-        except Exception:
-            continue
+        except Exception as exc:  # noqa: BLE001 - surface extraction gaps as audit coverage, not silence.
+            parse_errors.append({
+                "path": path.relative_to(root).as_posix(),
+                "category": category,
+                "error": str(exc),
+                "stage": "paragraph_extraction",
+            })
     priority = {"results": 0, "abstract": 1, "conclusion": 2, "discussion": 3, "unknown": 4, "methods": 5}
     paragraphs.sort(key=lambda item: (priority.get(item.section, 6), item.path, item.paragraph_id))
-    return paragraphs[:max_queries]
+    return paragraphs[:max_queries], parse_errors
 
 
 def load_fixture(path: Path) -> dict[str, Any]:
@@ -302,6 +308,41 @@ def candidate_from_search_errors(provider: str, errors: list[dict[str, Any]], id
     }
 
 
+def candidate_from_parse_errors(provider: str, errors: list[dict[str, Any]], idx: int) -> dict[str, Any]:
+    locations = sorted({str(item.get("path", "")) for item in errors if item.get("path")})
+    return {
+        "candidate_id": f"EXTTEXT-GAP-{idx:04d}",
+        "detector": "text.external_literature_search",
+        "candidate_type": "external_literature_search_gap",
+        "locations": locations or ["package_text_extraction"],
+        "evidence": {
+            "provider": provider,
+            "provider_endpoint": PROVIDER_ENDPOINTS.get(provider, provider),
+            "message": "Some supplied text files could not be parsed into query paragraphs; external text coverage is incomplete.",
+            "failed_document_count": len(errors),
+            "errors": errors[:10],
+            "provenance": {
+                "query_source": "supplied_package_text",
+                "retrieval_basis": "paragraph extraction before exact phrase search",
+                "coverage_effect": "external literature search coverage gap",
+            },
+        },
+        "evidence_strength": "weak_signal",
+        "risk_suggestion": "R1_max",
+        "risk_cap_tags": ["external_literature_search_gap", "audit_coverage_gap", "completeness_gap"],
+        "benign_explanations": [
+            "the file may be a scanned, encrypted, malformed, or otherwise unsupported text container",
+            "manual external search may still be possible using a supplied text export",
+        ],
+        "required_materials": [
+            "extractable PDF/TXT/MD text exports for the listed files",
+            "manual external-search notes if automated parsing cannot be completed",
+        ],
+        "recommended_action": "Provide extractable text or document a manual external literature search before treating this module as complete.",
+        "requires_contextual_calibration": True,
+    }
+
+
 def scan(
     root: Path,
     provider: str,
@@ -316,9 +357,9 @@ def scan(
     retries: int = 1,
 ) -> dict[str, Any]:
     fixture = load_fixture(fixture_path) if fixture_path else None
-    paragraphs = collect_query_paragraphs(root, ngram, min_tokens, max_queries)
+    paragraphs, parse_errors = collect_query_paragraphs(root, ngram, min_tokens, max_queries)
     candidates: list[dict[str, Any]] = []
-    errors: list[dict[str, Any]] = []
+    errors: list[dict[str, Any]] = list(parse_errors)
     queries = []
     search_provenance = []
     for paragraph in paragraphs:
@@ -373,8 +414,12 @@ def scan(
             candidates.append(candidate_from_results(paragraph, query, provider, results, len(candidates) + 1))
     # Any failed query is a coverage limitation. Emit it even when other queries
     # returned matches, so partial external coverage is never reported as complete.
+    if parse_errors:
+        candidates.append(candidate_from_parse_errors(provider, parse_errors, len(candidates) + 1))
     if errors:
-        candidates.append(candidate_from_search_errors(provider, errors, len(candidates) + 1))
+        search_errors = [item for item in errors if item.get("stage") != "paragraph_extraction"]
+        if search_errors:
+            candidates.append(candidate_from_search_errors(provider, search_errors, len(candidates) + 1))
 
     return {
         "detector_name": "text.external_literature_search",

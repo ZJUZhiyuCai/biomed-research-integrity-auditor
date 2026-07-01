@@ -1,0 +1,4 @@
+figure_panel,source_record,relation_type,modality,notes
+figures/Figure_1A_control.png,raw_images/acquisition_A001.png,declared_derived_from,microscopy,synthetic traceability record
+figures/Figure_1A_treatment.png,raw_images/acquisition_A002.png,declared_derived_from,microscopy,synthetic traceability record
+figures/Figure_2A_blot.png,raw_images/full_membrane_A003.png,declared_derived_from,western_blot,synthetic traceability record

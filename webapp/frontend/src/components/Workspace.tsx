@@ -3,7 +3,7 @@
 // neutral counts only — never a score or verdict.
 
 import { CircleStop, RefreshCw, Trash2 } from "lucide-react";
-import type { ActionTrackerRow, AuditJob, ManifestRow, PackageInventory, SummaryPayload } from "../types";
+import type { ActionTrackerRow, AuditJob, ExamplePackage, ManifestRow, PackageInventory, SummaryPayload } from "../types";
 import type { Labels } from "../i18n";
 import { CoveragePanel } from "./CoveragePanel";
 import { FindingsPanel } from "./FindingsPanel";
@@ -24,11 +24,13 @@ interface WorkspaceProps {
   loading: boolean;
   error: string | null;
   packagePath: string;
+  examples: ExamplePackage[];
   packageInventory: PackageInventory | null;
   packagePrepLoading: boolean;
   onInspectPackage: () => void;
   onScaffoldPackage: () => void;
   onSaveManifest: (rows: ManifestRow[]) => Promise<void>;
+  onRunExample: (example: ExamplePackage) => Promise<void>;
   onRefresh: () => void;
   onDelete: () => void;
   onCancel: () => void;
@@ -49,7 +51,7 @@ export function Workspace(props: WorkspaceProps) {
 
   if (!audit) {
     return (
-      <main className="workspace">
+      <main className="workspace" id="main-content" tabIndex={-1}>
         <PackagePrepPanel
           t={t}
           packagePath={props.packagePath}
@@ -61,6 +63,24 @@ export function Workspace(props: WorkspaceProps) {
         />
         {error && <div className="error-box">{error}</div>}
         <EmptyState text={t.noSelection} />
+        {props.examples.length > 0 && (
+          <section className="panel example-panel" aria-label={t.tryExample}>
+            <h3>{t.tryExample}</h3>
+            <div className="example-actions">
+              {props.examples.map((example) => (
+                <button
+                  key={example.id}
+                  type="button"
+                  className="secondary-button"
+                  onClick={() => props.onRunExample(example)}
+                  title={example.description}
+                >
+                  {example.id === "minimal_package" ? t.tryMinimalExample : t.tryFullExample}
+                </button>
+              ))}
+            </div>
+          </section>
+        )}
       </main>
     );
   }
@@ -76,7 +96,7 @@ export function Workspace(props: WorkspaceProps) {
   const loadingDetail = props.loading && !detail && audit.status === "completed";
 
   return (
-    <main className="workspace">
+    <main className="workspace" id="main-content" tabIndex={-1}>
       <PackagePrepPanel
         t={t}
         packagePath={props.packagePath}

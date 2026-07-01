@@ -175,6 +175,7 @@ def create_app(output_root: Optional[Path] = None) -> FastAPI:
             "version": app.version,
             "runs_root": str(settings.runs_root),
             "local_first": True,
+            "example_packages": example_packages(),
         }
 
     @app.get("/api/audits")
@@ -466,6 +467,32 @@ def package_inventory(package: Path) -> dict[str, Any]:
             "the pipeline cross-checks them against supplied files."
         ),
     }
+
+
+def example_packages() -> list[dict[str, str]]:
+    examples = [
+        (
+            "minimal_package",
+            "Minimal self-audit package",
+            "Small package for a quick first local run.",
+        ),
+        (
+            "full_presubmission_package",
+            "Full pre-submission package",
+            "Larger example with figure-to-raw traceability records.",
+        ),
+    ]
+    rows: list[dict[str, str]] = []
+    for package_id, label, description in examples:
+        path = ROOT / "examples" / package_id
+        if path.is_dir():
+            rows.append({
+                "id": package_id,
+                "label": label,
+                "description": description,
+                "path": str(path),
+            })
+    return rows
 
 
 def bounded_package_files(package: Path) -> tuple[list[Path], list[str], bool]:

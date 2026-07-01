@@ -12,18 +12,34 @@ DEFAULT_MAX_FRAMES = 64
 def normalized_rgb_frame(img: Any) -> Any:
     """Return an 8-bit RGB image while preserving contrast for the current frame."""
     if img.mode in HIGH_BIT_DEPTH_MODES:
-        gray = img.convert("F")
-        low, high = gray.getextrema()
-        if high is None or low is None or high <= low:
-            from PIL import Image
+        from PIL import Image
 
+        try:
+            import numpy as np
+        except Exception:  # noqa: BLE001 - keep a conservative fallback if runtime deps are incomplete.
+            gray = img.convert("F")
+            low, high = gray.getextrema()
+            if high is None or low is None or high <= low:
+                return Image.new("RGB", img.size, (0, 0, 0))
+            from PIL import ImageMath
+
+            scale = 255.0 / (high - low)
+            eval_image_math = ImageMath.unsafe_eval if hasattr(ImageMath, "unsafe_eval") else ImageMath.eval
+            scaled = eval_image_math('convert((a - low) * scale, "L")', a=gray, low=low, scale=scale)
+            return scaled.convert("L").convert("RGB")
+
+        array = np.asarray(img.convert("F"), dtype=np.float32)
+        finite = array[np.isfinite(array)]
+        if finite.size == 0:
             return Image.new("RGB", img.size, (0, 0, 0))
-        scale = 255.0 / (high - low)
-        from PIL import ImageMath
-
-        eval_image_math = ImageMath.unsafe_eval if hasattr(ImageMath, "unsafe_eval") else ImageMath.eval
-        scaled = eval_image_math('convert((a - low) * scale, "L")', a=gray, low=low, scale=scale)
-        return scaled.convert("L").convert("RGB")
+        low, high = np.percentile(finite, [1, 99])
+        if high <= low:
+            low = float(finite.min())
+            high = float(finite.max())
+        if high <= low:
+            return Image.new("RGB", img.size, (0, 0, 0))
+        scaled = np.clip((array - low) * (255.0 / (high - low)), 0, 255).astype(np.uint8)
+        return Image.fromarray(scaled, mode="L").convert("RGB")
     return img.convert("RGB")
 
 

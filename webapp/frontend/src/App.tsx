@@ -11,6 +11,7 @@ import {
   createAudit,
   deleteAudit,
   getAudit,
+  getHealth,
   getReport,
   getSummary,
   inspectPackage,
@@ -21,7 +22,7 @@ import {
   uploadZip
 } from "./api";
 import { getLabels } from "./i18n";
-import type { AuditJob, Language, ManifestRow, PackageInventory, SummaryPayload, Theme } from "./types";
+import type { AuditJob, ExamplePackage, Language, ManifestRow, PackageInventory, SummaryPayload, Theme } from "./types";
 
 const THEME_KEY = "biomed-self-audit-theme";
 const MAX_ZIP_BYTES = 250 * 1024 * 1024;
@@ -49,6 +50,7 @@ function AppInner() {
   const [detailLoading, setDetailLoading] = useState(false);
   const [report, setReport] = useState("");
   const [packagePath, setPackagePath] = useState("");
+  const [examplePackages, setExamplePackages] = useState<ExamplePackage[]>([]);
   const [mode, setMode] = useState("internal_presubmission");
   const [scanProfile, setScanProfile] = useState("standard");
   const [domains, setDomains] = useState("wetlab,animal,cell");
@@ -117,7 +119,17 @@ function AppInner() {
 
   useEffect(() => {
     loadAudits();
+    loadHealth();
   }, []);
+
+  async function loadHealth() {
+    try {
+      const payload = await getHealth();
+      setExamplePackages(payload.example_packages || []);
+    } catch {
+      setExamplePackages([]);
+    }
+  }
 
   useEffect(() => {
     if (selectedAuditId) loadSelected(selectedAuditId);
@@ -133,8 +145,8 @@ function AppInner() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedAuditId, isLive]);
 
-  async function runAudit() {
-    if (!packagePath.trim()) {
+  async function startAuditForPath(path: string) {
+    if (!path.trim()) {
       toast("error", t.invalidPath);
       return;
     }
@@ -145,7 +157,7 @@ function AppInner() {
     setError(null);
     try {
       const job = await createAudit({
-        package_path: packagePath,
+        package_path: path,
         mode,
         scan_profile: scanProfile,
         domains,
@@ -160,6 +172,16 @@ function AppInner() {
       setError(String(err));
       toast("error", String(err));
     }
+  }
+
+  async function runAudit() {
+    await startAuditForPath(packagePath);
+  }
+
+  async function handleRunExample(example: ExamplePackage) {
+    setPackagePath(example.path);
+    setPackageInventory(null);
+    await startAuditForPath(example.path);
   }
 
   async function handleUpload(file: File) {
@@ -288,6 +310,7 @@ function AppInner() {
 
   return (
     <div className="app-shell">
+      <a className="skip-link" href="#main-content">{t.skipToContent}</a>
       <Sidebar
         t={t}
         audits={audits}
@@ -324,11 +347,13 @@ function AppInner() {
         loading={detailLoading}
         error={error}
         packagePath={packagePath}
+        examples={examplePackages}
         packageInventory={packageInventory}
         packagePrepLoading={packagePrepLoading}
         onInspectPackage={handleInspectPackage}
         onScaffoldPackage={handleScaffoldPackage}
         onSaveManifest={handleSaveManifest}
+        onRunExample={handleRunExample}
         onRefresh={() => selectedAuditId && loadSelected(selectedAuditId)}
         onDelete={handleDelete}
         onCancel={handleCancel}
@@ -340,6 +365,7 @@ function AppInner() {
           auditId={lightbox.auditId}
           images={lightbox.images}
           index={lightbox.index}
+          t={t}
           onClose={() => setLightbox(null)}
           onIndex={(i) =>
             setLightbox((prev) => (prev ? { ...prev, index: i } : null))

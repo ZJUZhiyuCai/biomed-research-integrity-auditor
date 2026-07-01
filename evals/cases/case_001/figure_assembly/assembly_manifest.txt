@@ -1,1 +1,0 @@
-Figure panels map to raw_images/acquisition_A001.png, acquisition_A002.png, and full_membrane_A003.png.

@@ -219,7 +219,8 @@ Text overlap screening is package-internal; optional external phrase search is t
 | `detectors/` | Candidate detectors (image, statistics, text) — emit evidence, not verdicts. |
 | `calibrators/` | Risk-cap and evidence-strength calibration, contract validation. |
 | `provenance/` | Resource-graph builders separating expected traceability from reuse risk. |
-| `schemas/` | JSON/YAML contracts for detector output, risk rules, source-data expectations. |
+| `schemas/` | Active JSON/YAML contracts for detector output, risk rules, and report artifacts. |
+| `references/source_data_templates/` | Human source-data preparation templates; not automatically loaded as detector contracts. |
 | `examples/` | Runnable example packages (`minimal_package/`, `full_presubmission_package/`). |
 | `docs/self-audit-guide.md` | Non-developer guide to materials and report reading. |
 | `docs/response-to-concern-guide.md` | Neutral workflow for journal/reviewer/public concern responses. |

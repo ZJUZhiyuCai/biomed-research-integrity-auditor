@@ -167,6 +167,22 @@ li {
 }
 
 /* ---------- App shell ---------- */
+.skip-link {
+  position: fixed;
+  top: 10px;
+  left: 10px;
+  z-index: 200;
+  padding: 8px 12px;
+  color: #fff;
+  background: var(--brand-strong);
+  border-radius: var(--radius-sm);
+  transform: translateY(-140%);
+  transition: transform 0.15s ease;
+}
+.skip-link:focus {
+  transform: translateY(0);
+}
+
 .app-shell {
   display: grid;
   grid-template-columns: 372px minmax(0, 1fr);
@@ -1372,6 +1388,15 @@ button:disabled:hover {
 }
 .empty-state-icon {
   color: var(--border-strong);
+}
+
+.example-panel {
+  margin-top: 16px;
+}
+.example-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
 }
 
 /* ---------- Markdown report ---------- */

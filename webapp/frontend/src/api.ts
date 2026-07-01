@@ -3,7 +3,7 @@
 // FastAPI app mounts the built dist/). No contract changes here — we only
 // consume existing endpoints, including the previously-unused zip upload.
 
-import type { ActionTrackerRow, AuditJob, ManifestRow, PackageInventory, SummaryPayload } from "./types";
+import type { ActionTrackerRow, AuditJob, HealthResponse, ManifestRow, PackageInventory, SummaryPayload } from "./types";
 
 async function api<T>(path: string, options?: RequestInit): Promise<T> {
   const response = await fetch(path, {
@@ -28,6 +28,8 @@ export interface CreateAuditInput {
 }
 
 export const listAudits = () => api<{ audits: AuditJob[] }>("/api/audits");
+
+export const getHealth = () => api<HealthResponse>("/api/health");
 
 export const createAudit = (input: CreateAuditInput) =>
   api<AuditJob>("/api/audits", { method: "POST", body: JSON.stringify(input) });

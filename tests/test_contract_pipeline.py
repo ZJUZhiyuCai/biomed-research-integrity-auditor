@@ -373,6 +373,17 @@ class ContractPipelineTests(unittest.TestCase):
         extrema = normalized.convert("L").getextrema()
         self.assertEqual(extrema, (0, 255))
 
+    def test_image_normalization_uses_percentile_stretch_for_hot_pixels(self) -> None:
+        import numpy as np
+
+        img = Image.new("I;16", (10, 10))
+        img.putdata([1000] * 49 + [2000] * 50 + [65535])
+        normalized = normalized_rgb(img).convert("L")
+        values = sorted(np.asarray(normalized, dtype=np.uint8).ravel().tolist())
+        self.assertEqual(values[0], 0)
+        self.assertEqual(values[-1], 255)
+        self.assertGreater(values[50], 100)
+
     def test_image_detectors_screen_multiframe_tiff_frames(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             package = Path(tmp) / "pkg"
@@ -1530,15 +1541,21 @@ class RiskCapTests(unittest.TestCase):
 
         detector_caps = rules["detector_caps"]
         contextual_caps = rules["contextual_caps"]
+        for dead_tag in (
+            "local_patch_within_declared_raw_source",
+            "local_patch_direct_source_conflict",
+            "external_public_material_only",
+        ):
+            self.assertNotIn(dead_tag, detector_caps)
+            self.assertNotIn(dead_tag, contextual_caps)
+            self.assertNotIn(dead_tag, rules["r4_requirements"])
         emitted_contextual_tags = {
             "expected_traceability",
             "unresolved_fig_raw_similarity",
             "cross_context_reuse_candidate",
             "local_patch_cross_context",
             "same_image_copy_move",
-            "local_patch_within_declared_raw_source",
             "declared_local_patch_requires_verification",
-            "local_patch_direct_source_conflict",
             "text_overlap_candidate",
             "methods_boilerplate_overlap",
             "disclosed_prior_text_overlap",
@@ -1567,7 +1584,6 @@ class RiskCapTests(unittest.TestCase):
         self.assertEqual(detector_caps["methods_boilerplate_overlap"]["max"], "R2")
         self.assertEqual(detector_caps["disclosed_prior_text_overlap"]["max"], "R2")
         self.assertEqual(detector_caps["weak_statistical_signal"]["max"], "R2")
-        self.assertIn("local_patch_direct_source_conflict", rules["r4_requirements"])
         self.assertIn("source_to_figure_conflict", rules["r4_requirements"])
 
     def test_risk_rules_cap_distributional_stat_screens_as_weak_signals(self) -> None:
@@ -1603,7 +1619,8 @@ class RiskCapTests(unittest.TestCase):
             result = calibrate_payload([detector_output], "internal_presubmission", ROOT / "schemas" / "risk_rules.yaml")
             self.assertEqual(result["findings"][0]["calibrated_risk_level"], "R3")
 
-            payload["candidates"][0]["risk_cap_tags"].append("local_patch_direct_source_conflict")
+            payload["candidates"][0]["risk_cap_tags"].append("source_to_figure_conflict")
+            payload["candidates"][0]["evidence_strength"] = "direct_contradiction"
             detector_output.write_text(json.dumps(payload), encoding="utf-8")
             direct_result = calibrate_payload([detector_output], "internal_presubmission", ROOT / "schemas" / "risk_rules.yaml")
             self.assertEqual(direct_result["findings"][0]["calibrated_risk_level"], "R4")
@@ -1636,6 +1653,26 @@ class ProvenanceManifestTests(unittest.TestCase):
             self.assertEqual(len(payload["links"]), 1)
             self.assertEqual(payload["links"][0]["target_path"], "raw_images/raw_A.png")
             self.assertEqual(payload["links"][0]["extraction_method"], "structured_csv_manifest")
+
+    def test_text_manifest_ordered_mapping_phrase_is_warning_not_traceability(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "pkg"
+            (package / "figures").mkdir(parents=True)
+            (package / "raw_images").mkdir()
+            (package / "figure_assembly").mkdir()
+            (package / "figures/Figure_A.png").write_bytes(b"figure-a")
+            (package / "figures/Figure_B.png").write_bytes(b"figure-b")
+            (package / "raw_images/raw_A.png").write_bytes(b"raw-a")
+            (package / "raw_images/raw_B.png").write_bytes(b"raw-b")
+            (package / "figure_assembly/assembly_manifest.txt").write_text(
+                "Figure panels map to raw_images/raw_A.png and raw_images/raw_B.png in order.\n",
+                encoding="utf-8",
+            )
+            output = Path(tmp) / "links.json"
+            run([PYTHON, "provenance/parse_assembly_manifest.py", str(package), "--output", str(output)])
+            payload = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual(payload["links"], [])
+            self.assertTrue(any("ordered prose mapping" in item for item in payload["warnings"]))
 
     def test_structured_yaml_manifest_ignores_notes_instructions(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -2254,6 +2291,24 @@ class EndToEndTests(unittest.TestCase):
             self.assertEqual(successful["failure_count"], 0)
             self.assertGreaterEqual(successful["result_count"], 1)
             self.assertIn("queried_at", result["errors"][0])
+
+    def test_external_search_reports_gap_on_text_parse_failure(self) -> None:
+        from detectors.text import external_literature_search as els
+
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "parse_gap_case"
+            package.mkdir(parents=True)
+            (package / "manuscript.pdf").write_bytes(b"%PDF- corrupted placeholder")
+
+            result = els.scan(package, "fixture", None, 5, 5, 1.0, 8, 5, 8, retries=0)
+
+            validate_instance(result, ROOT / "schemas" / "detector_output.schema.json", "external search parse gap")
+            self.assertEqual(len(result["errors"]), 1)
+            self.assertEqual(result["errors"][0]["stage"], "paragraph_extraction")
+            gap = result["candidates"][0]
+            self.assertEqual(gap["candidate_type"], "external_literature_search_gap")
+            self.assertIn("manuscript.pdf", gap["locations"])
+            self.assertIn("extractable text", gap["recommended_action"].lower())
 
     def test_external_search_retries_and_caches_network_results(self) -> None:
         from detectors.text import external_literature_search as els

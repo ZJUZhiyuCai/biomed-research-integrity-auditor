@@ -42,12 +42,8 @@ detector_caps:
     unless_r4_requirement: true
   local_patch_cross_context:
     max: R3
-  local_patch_within_declared_raw_source:
-    max: R1
   declared_local_patch_requires_verification:
     max: R1
-  local_patch_direct_source_conflict:
-    max: R4
 
   unresolved_fig_raw_similarity:
     max: R1
@@ -92,8 +88,6 @@ contextual_caps:
     max: R2
   disclosed_unjustified_reuse:
     max: R3
-  external_public_material_only:
-    max: R3
 
 r4_requirements:
   - direct_contradiction
@@ -101,7 +95,6 @@ r4_requirements:
   - source_to_figure_conflict
   - source_data_cannot_reproduce_claim
   - raw_image_mismatch
-  - local_patch_direct_source_conflict
 
 mandatory_fields_for_r3_plus:
   - benign_explanations

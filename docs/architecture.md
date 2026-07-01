@@ -46,7 +46,7 @@ For a first-time, non-developer walkthrough see `docs/self-audit-guide.md`, and 
 
 Similarity is not risk by itself. `provenance/build_resource_graph.py` creates resource nodes and declared provenance edges from `package_manifest.json`, `figure_source_map.json`, and `figure_assembly/assembly_manifest.csv`, `.yaml`, or `.txt`.
 
-Structured assembly manifests are preferred over parsed free text. The parser reads only explicit fields such as `figure_panel`, `source_record`, `relation_type`, and `modality`; notes and prose are treated as audit material, not instructions.
+Structured assembly manifests are preferred over parsed free text. The parser reads only explicit fields such as `figure_panel`, `source_record`, `relation_type`, and `modality`; notes and prose are treated as audit material, not instructions. Ordered prose phrases such as "figures map to..." are reported as manifest warnings and are not used to create expected-traceability edges.
 
 The image contextual joiner classifies each similarity edge before calibration:
 
@@ -177,6 +177,8 @@ Positive provenance is not proof of authenticity; it only records traceability w
 - `missing_materials.csv`, `verified_traceability.csv`, `unresolved_actions.csv`, `resolved_actions.csv`, and `accepted_with_reason.csv`: CSV exports for co-author review.
 - `submission_qc_packet/`: a bundled packet containing the report, machine-readable summary, coverage, calibrated findings, hash manifest, claim coverage, methodology checklist, action trackers, and `author_signoff.yaml`.
 
+Source-data assay YAMLs live under `references/source_data_templates/` as human preparation templates, not under `schemas/` as active detector contracts. The current automated source-data modules screen CSV/TSV/XLSX tables for statistical consistency and unit-of-analysis issues; assay-specific template checks remain manual unless a future detector explicitly loads those templates.
+
 These outputs are versioning and review artifacts. They must not be displayed as a pass/fail approval, integrity score, or clean-manuscript certificate.
 
 Re-audit comparison is available through `scripts/compare_audit_runs.py` or `scripts/audit_package.py --compare-to <previous_output_dir>`. The diff summarizes changes in risk counts, missing materials, verified provenance, unresolved actions, and claim-evidence gaps.
@@ -190,7 +192,7 @@ Re-audit comparison is available through `scripts/compare_audit_runs.py` or `scr
 - external public-material triage maxes out at R3;
 - disclosed legitimate loading-control reuse with same-membrane/source context caps at R2;
 - R4 requires a direct contradiction tag such as `source_to_figure_conflict` or `raw_record_conflict`;
-- local patch and same-image copy-move similarity alone are capped at R3; `local_patch_direct_source_conflict` is required before a local patch path can reach R4;
+- local patch and same-image copy-move similarity alone are capped at R3; any R4 escalation still requires a direct contradiction tag such as `source_to_figure_conflict` plus direct-conflict evidence strength;
 - package-internal text overlap is capped at R3; methods boilerplate and disclosed thesis/preprint overlap are capped at R2;
 - R3/R4 findings must include benign explanations, required materials, and a recommended action.
 
