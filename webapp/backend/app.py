@@ -967,6 +967,7 @@ def write_action_csv(path: Path, rows: list[dict[str, str]]) -> None:
 
 RESOLVED_STATUSES = {"resolved", "done", "complete", "completed"}
 ACCEPTED_STATUSES = {"accepted", "accepted_with_reason", "accepted-with-reason"}
+NON_ACTIONABLE_STATUSES = {"false_positive", "false-positive", "non_actionable", "not_applicable"}
 
 
 def update_action_trackers(output_dir: Path, action_id: str, request: ActionUpdateRequest) -> dict[str, Any]:
@@ -999,7 +1000,11 @@ def update_action_trackers(output_dir: Path, action_id: str, request: ActionUpda
         rows[:] = [row for row in rows if row.get("action_id") != action_id]
 
     normalized_status = updated.get("status", "").strip().lower()
-    if normalized_status in ACCEPTED_STATUSES or updated.get("accepted_with_reason", "").strip():
+    if (
+        normalized_status in ACCEPTED_STATUSES
+        or normalized_status in NON_ACTIONABLE_STATUSES
+        or updated.get("accepted_with_reason", "").strip()
+    ):
         target = "accepted_with_reason"
         if not updated.get("status"):
             updated["status"] = "accepted_with_reason"

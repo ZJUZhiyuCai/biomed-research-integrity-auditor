@@ -156,7 +156,7 @@ function ActionEditorRow({
   t: Labels;
 }) {
   const [owner, setOwner] = useState(row.owner || "");
-  const [status, setStatus] = useState(row.status || "open");
+  const [status, setStatus] = useState(row.status || "unresolved");
   const [humanNote, setHumanNote] = useState(row.human_note || "");
   const [acceptedReason, setAcceptedReason] = useState(row.accepted_with_reason || "");
   const [saving, setSaving] = useState(false);
@@ -187,10 +187,10 @@ function ActionEditorRow({
       </td>
       <td>
         <select className="compact-input" value={status} onChange={(e) => setStatus(e.target.value)} aria-label={t.status}>
-          <option value="open">{t.open}</option>
-          <option value="in_progress">{t.inProgress}</option>
+          <option value="unresolved">{t.unresolved}</option>
           <option value="resolved">{t.resolved}</option>
           <option value="accepted_with_reason">{t.acceptedWithReason}</option>
+          <option value="false_positive">{t.falsePositive}</option>
         </select>
       </td>
       <td>
