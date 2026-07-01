@@ -64,6 +64,15 @@ EXTERNAL_LITERATURE_FIXTURE_NAMES = (
     "external_literature_fixture.json",
     "external_literature/fixture.json",
 )
+RAW_CANDIDATE_ARTIFACTS = (
+    "stats_consistency_candidates.json",
+    "pseudoreplication_candidates.json",
+    "global_image_candidates.json",
+    "local_patch_candidates.json",
+    "text_overlap_candidates.json",
+    "external_literature_candidates.json",
+    "audit_coverage_candidates.json",
+)
 
 
 @dataclass(frozen=True)
@@ -535,13 +544,34 @@ def build_coverage(
         path = output_dir / name
         return read_json(path) if path.exists() else None
 
+    unreadable_image_files: dict[str, dict[str, str]] = {}
+
+    def record_unreadable_image_errors(payload: dict[str, Any] | None) -> None:
+        if not payload:
+            return
+        for error in payload.get("errors", []) or []:
+            if not isinstance(error, dict):
+                continue
+            path_value = str(error.get("path") or "").strip()
+            if not path_value:
+                continue
+            key = path_value.replace("\\", "/")
+            unreadable_image_files.setdefault(key, {
+                "path": key,
+                "message": str(error.get("error") or error.get("message") or "could not be read"),
+                "detector": str(payload.get("detector_name") or "image_screening"),
+            })
+
     coverage: dict[str, Any] = {
         "modules_executed": [],
         "modules_not_executed": [],
         "image_panels_screened": 0,
         "image_files_unreadable": 0,
+        "unreadable_image_files": [],
         "source_tables_screened": 0,
         "detector_failures": [],
+        "raw_detector_candidate_count": 0,
+        "positive_provenance_count": 0,
         "audit_coverage_gap": False,
         "external_literature_provider": external_provider,
         "scan_profile": scan_profile,
@@ -575,11 +605,11 @@ def build_coverage(
         global_payload = load_safe("global_image_candidates.json")
         if global_payload:
             coverage["image_panels_screened"] = int(global_payload.get("images_screened", 0) or 0)
-            coverage["image_files_unreadable"] += len(global_payload.get("errors", []) or [])
+            record_unreadable_image_errors(global_payload)
         if scan_profile != "quick":
             local_payload = load_safe("local_patch_candidates.json")
             if local_payload:
-                coverage["image_files_unreadable"] += len(local_payload.get("errors", []) or [])
+                record_unreadable_image_errors(local_payload)
                 coverage["modality_routing_enabled"] = bool(
                     (local_payload.get("input") or {}).get("modality_routing_enabled")
                 )
@@ -636,8 +666,16 @@ def build_coverage(
         "journal-specific writing, language, and reference correctness determination: manual review required"
     )
 
+    raw_candidate_count = 0
+    for name in RAW_CANDIDATE_ARTIFACTS:
+        payload = load_safe(name)
+        if payload:
+            raw_candidate_count += len(payload.get("candidates", []) or [])
+    coverage["raw_detector_candidate_count"] = raw_candidate_count
+
     for path in detector_outputs:
         payload = read_json(path)
+        coverage["positive_provenance_count"] += len(payload.get("positive_evidence", []) or [])
         for error in payload.get("errors", []) or []:
             stage = payload.get("detector_name") or path.stem
             error_path = error.get("path") if isinstance(error, dict) else None
@@ -650,6 +688,11 @@ def build_coverage(
                 coverage["detector_failures"].append(str(stage))
             elif candidate_type == "audit_coverage_gap":
                 coverage["audit_coverage_gap"] = True
+
+    if unreadable_image_files:
+        coverage["unreadable_image_files"] = sorted(unreadable_image_files.values(), key=lambda item: item["path"])
+        coverage["image_files_unreadable"] = len(unreadable_image_files)
+        coverage["unreadable_image_action_required"] = True
 
     return coverage
 

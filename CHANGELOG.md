@@ -3,6 +3,16 @@
 ## Unreleased
 
 ### Added
+- User-facing safety hardening for human reports: Quick Read now surfaces open actions, unreadable
+  image counts, modules not run, and detector activity (`raw candidates -> positive provenance ->
+  findings`), while Submission Readiness explicitly states when open actions mean the package is
+  not yet ready for a complete self-audit.
+- Unreadable image files now generate an R1 `provide_materials` action and appear in the report's
+  Materials Needed section, so corrupt or unsupported image exports cannot be mistaken for clean
+  image screening.
+- Plain-language module notes in Audit Coverage explain what each executed screening module did.
+- Webapp overview counters now include unresolved actions, and the R-level pill has an inline
+  scope explanation.
 - Modality-aware panel routing for local patch / same-image copy-move screening: schematic and
   chart panels declared in `assembly_manifest.csv` are excluded from deep image screening, with
   explicit coverage records that exclusion is scope control rather than clearance. Legacy modality
@@ -42,6 +52,13 @@
   GitHub Release/frontend-smoke workflow templates, and Homebrew/macOS packaging templates.
 
 ### Changed
+- Structured assembly manifests now reject unsupported `relation_type` values with warnings instead
+  of treating arbitrary strings as high-confidence expected traceability.
+- The report no longer shows a misleading Quick Read row named `Coverage gap: no`; scope limits are
+  represented as modules not run and detector activity instead.
+- The report label for `figure_assembly` now refers to project files (`PPT/PS/AI`) rather than
+  implying that an assembly manifest satisfies that category.
+- Action Queue report tables now label owners as suggested owners.
 - Human-facing CSV exports in the submission QC packet and webapp-created assembly manifests now
   neutralize spreadsheet formula-like cells, and webapp audit endpoints reject malformed audit IDs
   before filesystem lookup.

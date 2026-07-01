@@ -131,18 +131,29 @@ def structured_link_from_row(
     files: dict[str, list[str]],
     evidence_source: str,
     extraction_method: str,
-) -> dict[str, Any] | None:
+    row_number: int | None = None,
+) -> tuple[dict[str, Any] | None, str | None]:
     figure = resolve_token(str(row.get("figure_panel", "") or ""), files)
     source = resolve_token(str(row.get("source_record", "") or ""), files)
     if not figure or not source:
-        return None
+        return None, None
     relation_type = str(row.get("relation_type", "") or "declared_derived_from").strip() or "declared_derived_from"
+    relation_key = relation_type.lower()
+    if relation_key not in EXPECTED_RELATION_TYPES:
+        row_label = f" row {row_number}" if row_number is not None else ""
+        allowed = ", ".join(sorted(EXPECTED_RELATION_TYPES))
+        return (
+            None,
+            (
+                f"{evidence_source}{row_label} uses unsupported relation_type; "
+                f"expected one of: {allowed}. The row was ignored for traceability calibration."
+            ),
+        )
     target_role = role(source)
     if role(figure) != "figure_panel":
-        return None
-    if target_role not in SOURCE_ROLES and not (target_role == "figure_panel" and relation_type in EXPECTED_RELATION_TYPES):
-        return None
-    relation_key = relation_type.lower()
+        return None, None
+    if target_role not in SOURCE_ROLES and not (target_role == "figure_panel" and relation_key in EXPECTED_RELATION_TYPES):
+        return None, None
     if target_role in SOURCE_ROLES:
         risk_effect = "expected_traceability"
         confidence = 0.98
@@ -155,14 +166,14 @@ def structured_link_from_row(
     link = {
         "source_path": figure,
         "target_path": source,
-        "relation_type": relation_type,
+        "relation_type": relation_key,
         "evidence_source": evidence_source,
         "confidence": confidence,
         "risk_effect": risk_effect,
         "extraction_method": extraction_method,
     }
     link["modality"] = normalize_modality(str(row.get("modality", "") or ""))
-    return link
+    return link, None
 
 
 def parse_structured_csv(path: Path, package: Path, files: dict[str, list[str]]) -> tuple[list[dict[str, Any]], list[str]]:
@@ -176,11 +187,13 @@ def parse_structured_csv(path: Path, package: Path, files: dict[str, list[str]])
     if not required.issubset(fieldnames):
         warnings.append(f"{rel} missing required structured manifest columns: figure_panel, source_record")
         return [], warnings
-    links = [
-        link
-        for row in reader
-        if (link := structured_link_from_row(row, files, rel, "structured_csv_manifest"))
-    ]
+    links = []
+    for index, row in enumerate(reader, start=2):
+        link, warning = structured_link_from_row(row, files, rel, "structured_csv_manifest", index)
+        if warning:
+            warnings.append(warning)
+        if link:
+            links.append(link)
     if not links:
         warnings.append(f"{rel} did not contain parseable structured figure-source rows.")
     return links, warnings
@@ -205,11 +218,13 @@ def parse_structured_yaml(path: Path, package: Path, files: dict[str, list[str]]
     if not records:
         warnings.append(f"{rel} did not contain a list of structured figure-source rows.")
         return [], warnings
-    links = [
-        link
-        for row in records
-        if (link := structured_link_from_row(row, files, rel, "structured_yaml_manifest"))
-    ]
+    links = []
+    for index, row in enumerate(records, start=1):
+        link, warning = structured_link_from_row(row, files, rel, "structured_yaml_manifest", index)
+        if warning:
+            warnings.append(warning)
+        if link:
+            links.append(link)
     if not links:
         warnings.append(f"{rel} did not contain parseable structured figure-source rows.")
     return links, warnings

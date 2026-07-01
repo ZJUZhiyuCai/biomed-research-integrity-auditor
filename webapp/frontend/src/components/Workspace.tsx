@@ -61,9 +61,11 @@ export function Workspace(props: WorkspaceProps) {
   }
 
   const summary = detail?.pipeline_summary;
+  const openActionCount = detail?.action_trackers?.unresolved?.length;
   const showCounters =
     summary &&
-    (summary.candidate_count !== undefined ||
+    (openActionCount !== undefined ||
+      summary.candidate_count !== undefined ||
       summary.finding_count !== undefined ||
       summary.positive_provenance_count !== undefined);
   const loadingDetail = props.loading && !detail && audit.status === "completed";
@@ -88,7 +90,13 @@ export function Workspace(props: WorkspaceProps) {
         <div className="header-actions">
           <StatusPill status={audit.status} label={statusLabel(t, audit.status)} />
           {audit.pipeline_summary?.overall_risk && (
-            <span className="risk-pill">{audit.pipeline_summary.overall_risk}</span>
+            <span
+              className="risk-pill"
+              title={t.riskBoundary}
+              aria-label={`${audit.pipeline_summary.overall_risk}: ${t.riskBoundary}`}
+            >
+              {audit.pipeline_summary.overall_risk}
+            </span>
           )}
           <button
             type="button"
@@ -133,6 +141,9 @@ export function Workspace(props: WorkspaceProps) {
         <>
           {showCounters && (
             <div className="overview-row">
+              {openActionCount !== undefined && (
+                <OverviewStat label={t.openActions} value={openActionCount} />
+              )}
               {summary!.candidate_count !== undefined && (
                 <OverviewStat label={t.candidates} value={summary!.candidate_count} />
               )}

@@ -74,6 +74,36 @@ MODULE_LABELS = {
     "package_internal_text_overlap": ("Package-internal text-overlap screen", "包内文本重叠筛查"),
     "methodology_readiness_checklist": ("Methodology readiness checklist", "方法学准备度清单"),
 }
+MODULE_EXPLANATIONS = {
+    "image_global_near_duplicate": (
+        "Compares whole exported panels and raw images for near-identical images.",
+        "比较导出图版和原始图之间是否存在整图近重复。",
+    ),
+    "image_local_patch_and_same_image_copy_move": (
+        "Looks for repeated local regions across panels or within the same image.",
+        "检查不同面板之间或同一图内是否有重复局部区域。",
+    ),
+    "statistics_consistency": (
+        "Checks reported numerical summaries against supplied source-data tables.",
+        "把报告的数值摘要与已提供 source-data 表做一致性检查。",
+    ),
+    "pseudoreplication": (
+        "Looks for unit-of-analysis patterns such as technical replicates counted as independent samples.",
+        "检查是否存在技术重复被当作独立样本等分析单位问题。",
+    ),
+    "package_internal_text_overlap": (
+        "Checks text supplied inside this package for repeated or recycled passages.",
+        "检查本材料包内部文本是否存在重复或复用段落。",
+    ),
+    "methodology_readiness_checklist": (
+        "Records whether supporting files exist for later manual methods review.",
+        "记录是否具备后续人工方法学复核所需支撑文件。",
+    ),
+    "writing_submission_readiness": (
+        "Flags writing and generic submission-material prompts outside the integrity findings.",
+        "提示写作和通用投稿材料准备事项，不并入 integrity findings。",
+    ),
+}
 SCAN_PROFILE_LABELS = {
     "quick": ("Quick scan", "快速扫描"),
     "standard": ("Standard audit", "标准自查"),
@@ -87,7 +117,7 @@ ACTION_CATEGORY_LABELS = {
 }
 MATERIAL_LABELS = {
     "ethics_irb": ("Ethics / IRB records", "伦理/IRB 文件"),
-    "figure_assembly": ("Figure assembly files or manifest", "组图工程文件或 manifest"),
+    "figure_assembly": ("Figure assembly project files (PPT/PS/AI)", "组图工程文件（PPT/PS/AI）"),
     "figures": ("Exported figure panels", "导出的图版/面板"),
     "protocols": ("Protocols / methods records", "实验方案/方法记录"),
     "raw_images": ("Raw or uncropped images", "原始或未裁剪图像"),
@@ -233,9 +263,16 @@ def normalized_mode(mode: str) -> str:
     return mode
 
 
-def overall_risk(findings: list[dict[str, Any]], manifest: dict[str, Any]) -> str:
+def overall_risk(
+    findings: list[dict[str, Any]],
+    manifest: dict[str, Any],
+    coverage: dict[str, Any] | None = None,
+) -> str:
     risks = [item.get("risk_level", "R0") for item in findings]
     if manifest.get("missing_materials"):
+        risks.append("R1")
+    coverage = coverage or {}
+    if coverage.get("audit_coverage_gap") or coverage.get("unreadable_image_action_required"):
         risks.append("R1")
     return max(risks or ["R0"], key=lambda risk: RISK_ORDER.get(risk, -1))
 
@@ -244,8 +281,11 @@ def reviewed_materials(manifest: dict[str, Any]) -> list[str]:
     return [item.get("path", "") for item in manifest.get("files", []) if item.get("path")]
 
 
-def missing_materials(manifest: dict[str, Any]) -> list[str]:
-    return [humanize(item.get("category", "")) for item in manifest.get("missing_materials", []) if item.get("category")]
+def missing_materials(manifest: dict[str, Any], coverage: dict[str, Any] | None = None) -> list[str]:
+    rows = [humanize(item.get("category", "")) for item in manifest.get("missing_materials", []) if item.get("category")]
+    if (coverage or {}).get("unreadable_image_action_required"):
+        rows.append("unreadable image files")
+    return rows
 
 
 def missing_material_label(category: str) -> str:
@@ -254,6 +294,14 @@ def missing_material_label(category: str) -> str:
 
 def module_label(module: str) -> str:
     return label_pair(module, MODULE_LABELS)
+
+
+def module_plain_explanation(module: str) -> str:
+    key = module.split(" (", 1)[0]
+    explanation = MODULE_EXPLANATIONS.get(key)
+    if not explanation:
+        return ""
+    return label_pair(key, {key: explanation})
 
 
 def finding_label(finding_type: str) -> str:
@@ -543,6 +591,7 @@ def build_action_queue(
     findings: list[dict[str, Any]],
     claim_coverage: dict[str, Any] | None = None,
     methodology_checklist: dict[str, Any] | None = None,
+    coverage: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     queue = empty_action_queue()
 
@@ -596,6 +645,27 @@ def build_action_queue(
             f"Provide or document why this material is unavailable: {item.get('reason', category)}",
             "manifest",
             missing_material_label(category),
+        )
+
+    coverage = coverage or {}
+    unreadable_count = int(coverage.get("image_files_unreadable", 0) or 0)
+    if unreadable_count:
+        unreadable_files = coverage.get("unreadable_image_files", []) or []
+        paths = [str(item.get("path", "")) for item in unreadable_files if isinstance(item, dict) and item.get("path")]
+        location = ", ".join(paths[:3]) if paths else "figures/"
+        if len(paths) > 3:
+            location += f", +{len(paths) - 3} more"
+        append(
+            "provide_materials",
+            "R1",
+            "unreadable_image_file",
+            location,
+            (
+                f"Replace or re-export {unreadable_count} unreadable image file(s), or document why they "
+                "cannot be screened in the supplied package."
+            ),
+            "audit_coverage",
+            "Unreadable image files",
         )
 
     claim_coverage = claim_coverage or {}
@@ -659,14 +729,14 @@ def build_summary(
         caps.append("Missing materials are completeness gaps, not evidence of misconduct.")
     for item in findings:
         caps.extend(item.get("risk_caps_applied", []) or [])
-    action_queue = build_action_queue(manifest, findings, claim_coverage, methodology_checklist)
+    action_queue = build_action_queue(manifest, findings, claim_coverage, methodology_checklist, coverage)
     return {
         "audit_mode": normalized,
         "case_id": case_id,
         "scan_profile": scan_profile,
         "materials_reviewed": reviewed_materials(manifest),
-        "materials_missing": missing_materials(manifest),
-        "overall_risk": overall_risk(findings, manifest),
+        "materials_missing": missing_materials(manifest, coverage),
+        "overall_risk": overall_risk(findings, manifest, coverage),
         "misconduct_verdict_present": False,
         "risk_caps_applied": sorted(set(caps)),
         "positive_provenance": summary_positive_provenance(positive_evidence or []),
@@ -687,6 +757,15 @@ def render_coverage(coverage: dict[str, Any] | None) -> list[str]:
     lines += ["**Modules executed / 已执行模块**", ""]
     executed = coverage.get("modules_executed", []) or ["(none)"]
     lines += [f"- {module_label(str(item))} (`{item}`)" for item in executed]
+    explanations = [module_plain_explanation(str(item)) for item in executed]
+    explanations = [item for item in explanations if item]
+    if explanations:
+        lines += [
+            "",
+            "**Plain-language module notes / 模块白话说明**",
+            "",
+            *[f"- {item}" for item in explanations],
+        ]
     lines += ["", "**Modules not executed / 未执行模块**", ""]
     not_executed = coverage.get("modules_not_executed", []) or ["(none)"]
     lines += [f"- {item}" for item in not_executed]
@@ -695,9 +774,28 @@ def render_coverage(coverage: dict[str, Any] | None) -> list[str]:
         ["Image panels screened / 已筛图像面板", str(coverage.get("image_panels_screened", 0))],
         ["Unreadable image files / 不可读取图像", str(coverage.get("image_files_unreadable", 0))],
         ["Source-data tables screened / 已筛 source-data 表", str(coverage.get("source_tables_screened", 0))],
+        ["Raw detector candidates / 原始检测候选", str(coverage.get("raw_detector_candidate_count", 0))],
+        ["Positive provenance records / 正向可追溯记录", str(coverage.get("positive_provenance_count", 0))],
     ])]
+    unreadable_files = coverage.get("unreadable_image_files") or []
     if coverage.get("image_files_unreadable"):
-        lines += [f"- Image files that could not be read and were excluded from screening: {coverage['image_files_unreadable']}"]
+        lines += [
+            "",
+            "**Unreadable image files require follow-up / 不可读取图像需要跟进**",
+            "",
+        ]
+        if unreadable_files:
+            for item in unreadable_files[:10]:
+                if isinstance(item, dict):
+                    lines.append(f"- `{item.get('path', '')}`: {item.get('message', 'could not be read')}")
+            if len(unreadable_files) > 10:
+                lines.append(f"- Additional unreadable files omitted here: {len(unreadable_files) - 10}.")
+        else:
+            lines.append(f"- Image files that could not be read and were excluded from screening: {coverage['image_files_unreadable']}")
+        lines += [
+            "- Provide readable PNG/JPG/TIFF exports or document why these files cannot be screened.",
+            "- 请补充可读取的 PNG/JPG/TIFF 导出，或说明这些文件为何无法筛查。",
+        ]
     if coverage.get("detector_failures"):
         lines += [
             "",
@@ -978,6 +1076,15 @@ def render_quick_read(
     reviewed_count = len(summary.get("materials_reviewed", []) or [])
     coverage_gap = bool((coverage or {}).get("audit_coverage_gap"))
     action_counts = (summary.get("action_queue") or {}).get("counts", {})
+    open_action_count = sum(int(value or 0) for value in action_counts.values())
+    coverage = coverage or {}
+    not_run_count = len(coverage.get("modules_not_executed", []) or [])
+    unreadable_count = int(coverage.get("image_files_unreadable", 0) or 0)
+    detector_activity = (
+        f"{coverage.get('raw_detector_candidate_count', 0)} raw candidate(s) -> "
+        f"{coverage.get('positive_provenance_count', 0)} positive provenance record(s) -> "
+        f"{finding_count} finding(s)"
+    )
     lines = [
         "## Quick Read / 快速结论",
         "",
@@ -986,12 +1093,15 @@ def render_quick_read(
             ["Mode / 模式", label_pair(mode, MODE_LABELS)],
             ["Scan profile / 扫描档位", label_pair(scan_profile, SCAN_PROFILE_LABELS)],
             ["Overall risk / 总体风险", risk_label(summary.get("overall_risk", "R1"))],
+            ["Open actions / 待处理行动项", str(open_action_count)],
             ["Candidate findings / 候选发现", str(finding_count)],
             ["Must-resolve actions / 必须处理项", str(action_counts.get("must_resolve", 0))],
             ["Missing-material actions / 补材料项", str(action_counts.get("provide_materials", 0))],
             ["Materials reviewed / 已审材料", f"{reviewed_count} {file_count_word(reviewed_count)}"],
             ["Missing material categories / 缺失材料类别", str(missing_count)],
-            ["Coverage gap / 覆盖缺口", "yes / 是" if coverage_gap else "no / 否"],
+            ["Unreadable images / 不可读取图像", str(unreadable_count)],
+            ["Modules not run / 未执行模块", str(not_run_count)],
+            ["Detector activity / 检测器活动", detector_activity],
         ]),
         "Read this first / 先读这一段：",
         "",
@@ -1008,12 +1118,16 @@ def render_quick_read(
                 f"- {item.get('finding_id', '')}: {finding_label(str(item.get('finding_type', '')))} "
                 f"at `{item.get('location', '')}`."
             )
-    elif missing_count or coverage_gap:
+    elif missing_count or coverage_gap or unreadable_count or not_run_count:
         lines += [
             "- No candidate findings were detected within the supplied materials and executed modules.",
-            "- Overall risk remains R1 because missing materials or scope limits prevent a complete check.",
-            "- 在已提供材料和已执行模块范围内未检出候选发现；但由于缺少材料或覆盖范围有限，总体仍为 R1。",
+            "- The open actions, unreadable files, missing materials, or modules not run still limit this self-audit.",
+            "- 在已提供材料和已执行模块范围内未检出候选发现；但待处理项、不可读取文件、缺失材料或未执行模块仍限制本次自查。",
         ]
+        if coverage_gap:
+            lines.append("- Detector coverage gap: at least one technical coverage gap was generated; see Audit Coverage.")
+        if unreadable_count:
+            lines.append(f"- Unreadable images require follow-up before treating image screening as complete: {unreadable_count}.")
     else:
         lines += [
             "- No candidate findings were detected within the supplied materials and executed modules.",
@@ -1035,17 +1149,24 @@ def render_submission_readiness(summary: dict[str, Any]) -> list[str]:
     provide_materials = int(counts.get("provide_materials", 0) or 0)
     clarify = int(counts.get("clarify_or_disclose", 0) or 0)
     low_priority = int(counts.get("low_priority_checks", 0) or 0)
+    open_actions = must_resolve + provide_materials + clarify + low_priority
     direct_conflicts = sum(1 for item in summary.get("findings", []) or [] if item.get("risk_level") == "R4")
 
     if must_resolve:
-        readiness_en = "Do not submit yet; resolve the must-resolve actions or document an accepted reason first."
-        readiness_zh = "当前不建议直接投稿；请先处理必须处理项，或记录可接受理由。"
-    elif provide_materials:
-        readiness_en = "No must-resolve action is listed, but missing-material actions limit the audit scope."
-        readiness_zh = "当前没有必须处理项，但补材料项仍限制本次自查范围。"
+        readiness_en = f"Not yet submission-ready — {open_actions} action(s) remain open, including must-resolve items."
+        readiness_zh = f"尚未投稿就绪——仍有 {open_actions} 项待处理，其中包含必须处理项。"
+    elif open_actions:
+        readiness_en = (
+            f"Not yet submission-ready for a complete self-audit — {open_actions} action(s) remain open. "
+            "Resolve them or document accepted reasons before treating the package as ready."
+        )
+        readiness_zh = (
+            f"尚未达到完整自查意义上的投稿就绪——仍有 {open_actions} 项待处理。"
+            "请处理这些项目，或记录可接受理由后再视为材料准备完成。"
+        )
     else:
-        readiness_en = "No high-priority unresolved concern was detected in the provided materials."
-        readiness_zh = "在所供材料范围内，未检出高优先级未处理关注。"
+        readiness_en = "No open action is listed within the supplied scope; this is still not a correctness proof."
+        readiness_zh = "在所供材料范围内，未列出待处理行动项；这仍不等于证明研究或数据正确。"
 
     return [
         "## Submission Readiness / 投稿准备状态",
@@ -1057,6 +1178,7 @@ def render_submission_readiness(summary: dict[str, Any]) -> list[str]:
         table([
             ["Readiness item / 准备度项目", "Count / 数量"],
             ["Direct high-risk inconsistencies / 直接高风险不一致", str(direct_conflicts)],
+            ["Open actions / 待处理行动项", str(open_actions)],
             ["Must resolve before submission / 投稿前必须处理", str(must_resolve)],
             ["Provide missing materials / 需要补充材料", str(provide_materials)],
             ["Clarify or disclose / 需要解释或披露", str(clarify)],
@@ -1086,7 +1208,7 @@ def render_action_queue(summary: dict[str, Any]) -> list[str]:
         if not rows:
             lines += ["- None currently listed / 当前无", ""]
             continue
-        table_rows = [["ID", "Risk / 风险", "Item / 项目", "Required action / 所需动作", "Owner / 负责人", "Status / 状态"]]
+        table_rows = [["ID", "Risk / 风险", "Item / 项目", "Required action / 所需动作", "Suggested owner / 建议负责人", "Status / 状态"]]
         for row in rows[:8]:
             item = row.get("item") or row.get("action_type", "")
             location = row.get("location", "")
@@ -1302,6 +1424,17 @@ def render_report(
             risk_label(item.get("risk_level", "R1")),
             item.get("reason", "") or "Needed for source/raw-level verification. / 用于 source/raw 级别复核。",
         ])
+    unreadable_count = int((coverage or {}).get("image_files_unreadable", 0) or 0)
+    if unreadable_count:
+        missing_rows.append([
+            "Readable image exports / 可读取图像导出",
+            risk_label("R1"),
+            (
+                f"{unreadable_count} supplied image file(s) could not be read by the audit; "
+                "provide readable PNG/JPG/TIFF exports or document why screening is not possible. / "
+                f"{unreadable_count} 个已提供图像文件无法读取；请补充可读取导出，或说明为何无法筛查。"
+            ),
+        ])
     if len(missing_rows) > 1:
         lines += [table(missing_rows)]
     else:
@@ -1356,6 +1489,9 @@ def render_report(
         "本报告用于整理研究诚信风险和材料完整性缺口，不判断学术不端、主观意图或作者责任。",
         "",
         "## Audit JSON Summary / 机器可读摘要",
+        "",
+        "> The following JSON block is for tools, regression tests, and re-audit comparison. Human readers can skip it.",
+        "> 以下 JSON 块供工具、回归测试和复审对比使用；人工阅读时可以跳过。",
         "",
         JSON_BLOCK_MARKER,
         json.dumps(summary, indent=2, ensure_ascii=False),

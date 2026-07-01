@@ -1481,6 +1481,28 @@ class ProvenanceManifestTests(unittest.TestCase):
             self.assertEqual(payload["links"][0]["risk_effect"], "candidate_traceability")
             self.assertLess(payload["links"][0]["confidence"], 0.9)
 
+    def test_structured_manifest_rejects_unknown_relation_type_with_warning(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "pkg"
+            (package / "figures").mkdir(parents=True)
+            (package / "raw_images").mkdir()
+            (package / "figure_assembly").mkdir()
+            (package / "figures/Figure_formula.png").write_bytes(b"figure")
+            (package / "raw_images/raw_formula.png").write_bytes(b"raw")
+            (package / "figure_assembly/assembly_manifest.csv").write_text(
+                "figure_panel,source_record,relation_type,modality,notes\n"
+                "figures/Figure_formula.png,raw_images/raw_formula.png,=CMD|/c calc!A1,microscopy,"
+                "unsupported relation type should not become expected traceability\n",
+                encoding="utf-8",
+            )
+            output = Path(tmp) / "links.json"
+            run([PYTHON, "provenance/parse_assembly_manifest.py", str(package), "--output", str(output)])
+            payload = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual(payload["links"], [])
+            self.assertTrue(any("unsupported relation_type" in warning for warning in payload["warnings"]))
+            self.assertNotIn("expected_traceability", json.dumps(payload))
+            self.assertNotIn("=CMD", json.dumps(payload))
+
 
 class EndToEndTests(unittest.TestCase):
     def test_detector_nonzero_exit_is_isolated_as_r1_finding(self) -> None:
@@ -2107,7 +2129,10 @@ class EndToEndTests(unittest.TestCase):
             self.assertIn("# Biomedical Research Integrity Audit / 生物医药研究诚信审计报告", report)
             self.assertIn("## Quick Read / 快速结论", report)
             self.assertIn("## Materials Needed / 需要补充的材料", report)
-            self.assertIn("Overall risk remains R1", report)
+            self.assertIn("Not yet submission-ready", report)
+            self.assertIn("Open actions / 待处理行动项", report)
+            self.assertIn("Modules not run / 未执行模块", report)
+            self.assertNotIn("Coverage gap / 覆盖缺口", report)
             self.assertIn("总体风险", report)
             self.assertIn("本次没有候选发现卡片", report)
             self.assertIn("Raw or uncropped images / 原始或未裁剪图像", report)
@@ -2222,9 +2247,27 @@ class EndToEndTests(unittest.TestCase):
             summary = json.loads((out / "AUDIT_JSON_SUMMARY.json").read_text(encoding="utf-8"))
             coverage = summary["audit_coverage"]
             # An unreadable image must be surfaced, not silently dropped from coverage.
-            self.assertGreaterEqual(coverage["image_files_unreadable"], 1)
+            self.assertEqual(coverage["image_files_unreadable"], 1)
+            self.assertEqual(len(coverage["unreadable_image_files"]), 1)
+            self.assertTrue(coverage["unreadable_image_action_required"])
             self.assertEqual(coverage["image_panels_screened"], 1)
-            self.assertIn("could not be read", (out / "audit-report.md").read_text(encoding="utf-8"))
+            report = (out / "audit-report.md").read_text(encoding="utf-8")
+            self.assertIn("could not be read", report)
+            self.assertIn("Unreadable images / 不可读取图像", report)
+            self.assertIn("Readable image exports / 可读取图像导出", report)
+            self.assertIn("Not yet submission-ready", report)
+            self.assertNotIn("Coverage gap / 覆盖缺口", report)
+            action_queue = summary["action_queue"]
+            unreadable_actions = [
+                row
+                for rows in action_queue["categories"].values()
+                for row in rows
+                if row.get("action_type") == "unreadable_image_file"
+            ]
+            self.assertEqual(len(unreadable_actions), 1)
+            with (out / "unresolved_actions.csv").open(encoding="utf-8") as handle:
+                unresolved_rows = list(csv.DictReader(handle))
+            self.assertTrue(any(row["action_type"] == "unreadable_image_file" for row in unresolved_rows))
 
     def test_coverage_reports_detector_payload_errors(self) -> None:
         audit_package = load_audit_package()
@@ -2291,6 +2334,8 @@ class EndToEndTests(unittest.TestCase):
             report = (out / "audit-report.md").read_text(encoding="utf-8")
             self.assertIn("Verified Traceability Evidence", report)
             self.assertIn("positive provenance evidence", report)
+            self.assertIn("Detector activity / 检测器活动", report)
+            self.assertIn("raw candidate(s) ->", report)
 
     def test_case012_prompt_injection_no_image_false_positive(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
