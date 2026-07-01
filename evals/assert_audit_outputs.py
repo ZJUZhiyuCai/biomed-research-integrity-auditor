@@ -74,7 +74,77 @@ def all_finding_text(summary: dict[str, Any], calibrated: dict[str, Any]) -> str
     return " ".join(values).lower()
 
 
-def assert_case(case_id: str, outputs_root: Path, ground_truth_root: Path) -> list[str]:
+def detector_output_paths(out: Path) -> list[Path]:
+    pipeline_path = out / "pipeline_summary.json"
+    paths: list[Path] = []
+    if pipeline_path.exists():
+        pipeline = json.loads(pipeline_path.read_text(encoding="utf-8"))
+        for raw_path in pipeline.get("detector_outputs", []) or []:
+            path = Path(str(raw_path))
+            paths.append(path if path.is_absolute() else out / path)
+    else:
+        paths.extend(sorted(out.glob("*_candidates.json")))
+
+    seen: set[Path] = set()
+    unique_paths: list[Path] = []
+    for path in paths:
+        resolved = path.expanduser()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        unique_paths.append(resolved)
+    return unique_paths
+
+
+def detector_failure_messages(
+    case_id: str,
+    out: Path,
+    summary: dict[str, Any],
+    calibrated: dict[str, Any],
+) -> list[str]:
+    messages: list[str] = []
+    coverage_failures = (summary.get("audit_coverage") or {}).get("detector_failures") or []
+    execution_failure_markers = [
+        item for item in coverage_failures
+        if "detector_execution_failure" in str(item) or "audit.detector_failure" in str(item)
+    ]
+    if execution_failure_markers:
+        messages.append(
+            f"{case_id}: audit coverage reports detector execution failures: {execution_failure_markers}"
+        )
+
+    finding_sources = [
+        ("AUDIT_JSON_SUMMARY.findings", summary.get("findings", []) or []),
+        ("calibrated_findings.findings", calibrated.get("findings", []) or []),
+    ]
+    for source_name, findings in finding_sources:
+        for item in findings:
+            if item.get("finding_type") == "detector_execution_failure":
+                messages.append(f"{case_id}: {source_name} contains detector_execution_failure")
+
+    for path in detector_output_paths(out):
+        if not path.exists():
+            messages.append(f"{case_id}: detector output listed in pipeline_summary is missing: {path}")
+            continue
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            messages.append(f"{case_id}: detector output is invalid JSON: {path} ({exc})")
+            continue
+        if payload.get("detector_name") == "audit.detector_failure":
+            messages.append(f"{case_id}: detector failure artifact present: {path}")
+        for candidate in payload.get("candidates", []) or []:
+            if candidate.get("candidate_type") == "detector_execution_failure":
+                messages.append(f"{case_id}: detector_execution_failure candidate present: {path}")
+    return messages
+
+
+def assert_case(
+    case_id: str,
+    outputs_root: Path,
+    ground_truth_root: Path,
+    allow_detector_failures: bool = False,
+) -> list[str]:
     failures: list[str] = []
     expected = load_expected(ground_truth_root / f"{case_id}.expected.yaml")
     out = outputs_root / case_id
@@ -88,6 +158,9 @@ def assert_case(case_id: str, outputs_root: Path, ground_truth_root: Path) -> li
 
     summary = json.loads(summary_path.read_text(encoding="utf-8"))
     calibrated = json.loads(calibrated_path.read_text(encoding="utf-8"))
+    if not allow_detector_failures:
+        failures.extend(detector_failure_messages(case_id, out, summary, calibrated))
+
     observed = summary.get("overall_risk", "R0")
     behavior = expected.get("expected_behavior", {})
     min_risk = behavior.get("min_overall_risk")
@@ -142,6 +215,14 @@ def main() -> int:
     parser.add_argument("--ground-truth-root", type=Path, default=ROOT / "ground_truth")
     parser.add_argument("--cases-root", type=Path, default=ROOT / "cases")
     parser.add_argument("--case", action="append", dest="cases")
+    parser.add_argument(
+        "--allow-detector-failures",
+        action="store_true",
+        help=(
+            "Do not fail when audit outputs contain detector_execution_failure artifacts. "
+            "CI should normally leave this unset."
+        ),
+    )
     args = parser.parse_args()
 
     failures: list[str] = []
@@ -150,6 +231,7 @@ def main() -> int:
             case_id,
             args.outputs_root.expanduser().resolve(),
             args.ground_truth_root.expanduser().resolve(),
+            allow_detector_failures=args.allow_detector_failures,
         ))
     if failures:
         print("Audit output assertions failed:")

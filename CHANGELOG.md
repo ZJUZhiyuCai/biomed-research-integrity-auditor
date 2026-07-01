@@ -10,6 +10,11 @@
 - Human reports and `AUDIT_JSON_SUMMARY.audit_coverage` now include an explicit image-screening
   boundary: automated checks performed, manipulation classes not covered by current image
   detectors, and the reminder that no image finding is not complete image-forensics clearance.
+- CI/eval assertions now fail by default when an audit output contains an
+  `audit.detector_failure` artifact or `detector_execution_failure` candidate, so missing runtime
+  dependencies cannot silently turn required detector execution into a passing regression run.
+- Unit tests now import runtime detector dependencies and image/text/stat detector modules directly,
+  catching stale virtual environments that omit packages such as NumPy before end-to-end audit runs.
 
 ### Fixed
 - Decimal-comma numeric parsing in the statistics detector: unambiguous European decimals such

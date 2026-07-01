@@ -1755,6 +1755,88 @@ class EndToEndTests(unittest.TestCase):
             calibrated = calibrate_payload([result.output], "internal_presubmission", ROOT / "schemas" / "risk_rules.yaml")
             self.assertEqual(calibrated["findings"][0]["calibrated_risk_level"], "R1")
 
+    def test_audit_output_assertions_fail_on_detector_execution_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            outputs_root = base / "outputs"
+            ground_truth_root = base / "ground_truth"
+            cases_root = base / "cases"
+            case_id = "case_999"
+            out = outputs_root / case_id
+            out.mkdir(parents=True)
+            ground_truth_root.mkdir()
+            (cases_root / case_id).mkdir(parents=True)
+            (ground_truth_root / f"{case_id}.expected.yaml").write_text(json.dumps({
+                "expected_behavior": {
+                    "min_overall_risk": "R1",
+                    "max_overall_risk": "R1",
+                }
+            }), encoding="utf-8")
+            detector_failure = out / "local_patch_failure_candidates.json"
+            detector_failure.write_text(json.dumps({
+                "detector_name": "audit.detector_failure",
+                "detector_version": "0.1.0",
+                "input": {"stage": "local_patch"},
+                "candidates": [{
+                    "candidate_id": "AUDIT-DETECTOR-LOCAL-PATCH",
+                    "candidate_type": "detector_execution_failure",
+                    "evidence": {"reason": "synthetic missing dependency"},
+                }],
+                "errors": [{"stage": "local_patch", "reason": "synthetic missing dependency"}],
+            }), encoding="utf-8")
+            (out / "pipeline_summary.json").write_text(json.dumps({
+                "detector_outputs": [str(detector_failure)],
+            }), encoding="utf-8")
+            summary = {
+                "overall_risk": "R1",
+                "misconduct_verdict_present": False,
+                "findings": [{
+                    "finding_id": "F1",
+                    "finding_type": "detector_execution_failure",
+                    "risk_level": "R1",
+                    "evidence_type": "completeness_gap",
+                    "location": "local_patch",
+                }],
+                "audit_coverage": {
+                    "detector_failures": ["local_patch: detector_execution_failure"],
+                },
+            }
+            (out / "AUDIT_JSON_SUMMARY.json").write_text(json.dumps(summary), encoding="utf-8")
+            (out / "calibrated_findings.json").write_text(json.dumps({
+                "findings": [{
+                    "finding_type": "detector_execution_failure",
+                    "calibrated_risk_level": "R1",
+                    "evidence": {"reason": "synthetic missing dependency"},
+                }],
+            }), encoding="utf-8")
+            (out / "audit-report.md").write_text("Neutral report body.\n", encoding="utf-8")
+
+            cmd = [
+                PYTHON,
+                "evals/assert_audit_outputs.py",
+                "--outputs-root",
+                str(outputs_root),
+                "--ground-truth-root",
+                str(ground_truth_root),
+                "--cases-root",
+                str(cases_root),
+                "--case",
+                case_id,
+            ]
+            result = subprocess.run(cmd, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("detector failure artifact present", result.stdout)
+            self.assertIn("detector_execution_failure candidate present", result.stdout)
+
+            allowed = subprocess.run(
+                [*cmd, "--allow-detector-failures"],
+                cwd=ROOT,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            self.assertEqual(allowed.returncode, 0, allowed.stdout + allowed.stderr)
+
     def test_xlsx_source_data_runs_source_detectors_without_coverage_gap(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             package = Path(tmp) / "xlsx_source_case"
