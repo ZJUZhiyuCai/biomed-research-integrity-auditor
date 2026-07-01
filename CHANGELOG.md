@@ -23,6 +23,9 @@
   R1 numeric-format coverage gap instead of being silently interpreted at the wrong magnitude.
 - Contextual image joining now preserves local-patch coverage-gap candidates instead of treating
   them as similarity candidates with no edges and dropping them.
+- Late pipeline failures no longer discard detector work: calibration failures now write a valid
+  R1 partial `calibrated_findings.json`, and report-assembly failures write a bilingual fallback
+  report with a valid `AUDIT_JSON_SUMMARY` rather than leaving users with no human-readable result.
 
 ## v0.6.2 - Local Usability and Coverage Hardening
 

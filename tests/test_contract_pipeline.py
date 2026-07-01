@@ -416,6 +416,84 @@ class ContractPipelineTests(unittest.TestCase):
             self.assertIn("stack.tif#frame0001", locations)
             self.assertIn("matching_frame.png", locations)
 
+    def test_calibrator_failure_writes_r1_partial_artifact(self) -> None:
+        audit = load_audit_package()
+        with tempfile.TemporaryDirectory() as tmp:
+            output_dir = Path(tmp)
+            detector_output = output_dir / "detector.json"
+            detector_output.write_text(json.dumps({
+                "detector_name": "unit.detector",
+                "detector_version": "0.0",
+                "input": {"package": "synthetic"},
+                "candidates": [
+                    {
+                        "candidate_id": "UNIT-0001",
+                        "detector": "unit.detector",
+                        "candidate_type": "audit_coverage_gap",
+                        "locations": ["figures/Figure_1A.png"],
+                        "evidence": {"message": "synthetic detector candidate"},
+                        "evidence_strength": "weak_signal",
+                        "risk_suggestion": "R1",
+                        "risk_cap_tags": ["audit_coverage_gap"],
+                        "benign_explanations": ["synthetic test input"],
+                        "required_materials": ["pipeline logs"],
+                        "recommended_action": "Review preserved detector output.",
+                        "requires_contextual_calibration": False,
+                    }
+                ],
+                "errors": [],
+            }), encoding="utf-8")
+
+            with mock.patch.object(audit, "run", side_effect=subprocess.CalledProcessError(2, ["risk_cap_engine"])):
+                calibrated = audit.run_calibrator([detector_output], "internal_presubmission", output_dir)
+
+            payload = json.loads(calibrated.read_text(encoding="utf-8"))
+            validate_instance(payload, ROOT / "schemas" / "calibrated_findings.schema.json", "fallback calibrated findings")
+            self.assertEqual(payload["candidate_count"], 1)
+            self.assertEqual(len(payload["findings"]), 1)
+            finding = payload["findings"][0]
+            self.assertEqual(finding["calibrated_risk_level"], "R1")
+            self.assertEqual(finding["finding_type"], "calibration_execution_failure")
+            self.assertIn("detector outputs are preserved", finding["evidence"]["message"])
+
+    def test_report_failure_writes_fallback_human_report_with_summary(self) -> None:
+        audit = load_audit_package()
+        with tempfile.TemporaryDirectory() as tmp:
+            output_dir = Path(tmp)
+            manifest = output_dir / "manifest.json"
+            manifest.write_text(json.dumps({
+                "files": [
+                    {"path": "manuscript.pdf", "category": "manuscript"},
+                    {"path": "figures/Figure_1A.png", "category": "figure"},
+                ],
+            }), encoding="utf-8")
+            calibrated = output_dir / "calibrated_findings.json"
+            calibrated.write_text(json.dumps({
+                "mode": "internal_presubmission",
+                "candidate_count": 0,
+                "findings": [],
+            }), encoding="utf-8")
+
+            with mock.patch.object(audit, "run", side_effect=subprocess.CalledProcessError(2, ["report_assembler"])):
+                report = audit.run_report(
+                    manifest,
+                    calibrated,
+                    [],
+                    "internal_presubmission",
+                    case_id="fallback_case",
+                    output_dir=output_dir,
+                    scan_profile="quick",
+                )
+
+            text = report.read_text(encoding="utf-8")
+            self.assertIn("fallback report", text)
+            self.assertEqual(text.count("```json AUDIT_JSON_SUMMARY"), 1)
+            summary = audit.extract_audit_summary(report)
+            self.assertEqual(summary["overall_risk"], "R1")
+            self.assertEqual(summary["scan_profile"], "quick")
+            self.assertEqual(summary["findings"][0]["finding_type"], "report_generation_failure")
+            self.assertIn("complete human report assembly", summary["materials_missing"])
+
     def test_case008_adaptive_weak_stats_default(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             output = Path(tmp) / "case008_stats.json"
