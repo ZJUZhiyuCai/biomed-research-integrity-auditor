@@ -21,6 +21,7 @@ import {
   scaffoldPackage,
   updateAction,
   updateImageReview,
+  uploadAttachment,
   uploadZip
 } from "./api";
 import { getLabels } from "./i18n";
@@ -342,6 +343,21 @@ function AppInner() {
     }
   }
 
+  async function handleAttachmentUpload(targetType: "action" | "image_review", targetId: string, file: File): Promise<string> {
+    if (!selectedAuditId) return "";
+    try {
+      const result = await uploadAttachment(selectedAuditId, targetType, targetId, file);
+      const summary = await getSummary(selectedAuditId);
+      setDetail(summary);
+      toast("success", t.attachmentSaved);
+      return result.attachment.attachment_reference;
+    } catch (err) {
+      setError(String(err));
+      toast("error", String(err));
+      return "";
+    }
+  }
+
   function openEvidence(images: string[], index: number) {
     if (!selectedAuditId || images.length === 0) return;
     setLightbox({ auditId: selectedAuditId, images, index });
@@ -399,6 +415,7 @@ function AppInner() {
         onCancel={handleCancel}
         onActionUpdate={handleActionUpdate}
         onImageReviewUpdate={handleImageReviewUpdate}
+        onAttachmentUpload={handleAttachmentUpload}
         onEvidence={openEvidence}
       />
       {lightbox && (

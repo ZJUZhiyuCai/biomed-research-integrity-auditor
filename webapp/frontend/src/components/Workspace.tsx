@@ -52,6 +52,7 @@ interface WorkspaceProps {
     reviewItemId: string,
     patch: Pick<ImageReviewHandoffRow, "reviewer" | "review_status" | "external_tool_or_method" | "review_result_note" | "attachment_reference">
   ) => Promise<void>;
+  onAttachmentUpload: (targetType: "action" | "image_review", targetId: string, file: File) => Promise<string>;
   onEvidence: (images: string[], index: number) => void;
 }
 
@@ -224,6 +225,7 @@ export function Workspace(props: WorkspaceProps) {
             writingReadiness={detail.writing_readiness}
             onActionUpdate={props.onActionUpdate}
             onImageReviewUpdate={props.onImageReviewUpdate}
+            onAttachmentUpload={props.onAttachmentUpload}
             t={t}
           />
           <MethodologyPanel checklist={detail.audit_summary?.methodology_checklist} t={t} />

@@ -5,6 +5,7 @@
 
 import type {
   ActionTrackerRow,
+  AttachmentUploadResult,
   AuditJob,
   ClaimManifestRow,
   HealthResponse,
@@ -83,6 +84,24 @@ export const updateImageReview = (
       })
     }
   );
+
+export async function uploadAttachment(
+  auditId: string,
+  targetType: "action" | "image_review",
+  targetId: string,
+  file: File
+): Promise<{ attachment: AttachmentUploadResult }> {
+  const form = new FormData();
+  form.append("file", file);
+  form.append("target_type", targetType);
+  form.append("target_id", targetId);
+  const response = await fetch(`/api/audits/${auditId}/attachments`, { method: "POST", body: form });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || response.statusText);
+  }
+  return response.json() as Promise<{ attachment: AttachmentUploadResult }>;
+}
 
 export const inspectPackage = (packagePath: string) =>
   api<{ inventory: PackageInventory }>("/api/packages/inspect", {

@@ -973,17 +973,55 @@ button:disabled:hover {
   gap: 8px;
 }
 
-.image-review-edit-grid label {
+.image-review-edit-grid label,
+.image-review-edit-grid .field-label {
   display: grid;
   gap: 4px;
   min-width: 0;
 }
 
-.image-review-edit-grid label span {
+.image-review-edit-grid label span,
+.image-review-edit-grid .field-label > span {
   color: var(--muted);
   font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.04em;
+}
+
+.attachment-cell {
+  display: grid;
+  gap: 5px;
+  min-width: 170px;
+}
+
+.file-inline-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  width: fit-content;
+  min-height: 26px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--muted);
+  background: var(--panel);
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.file-inline-button:hover {
+  color: var(--text);
+  border-color: var(--brand);
+}
+
+.file-inline-button input {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  opacity: 0;
+  pointer-events: none;
 }
 
 .subtle-block {

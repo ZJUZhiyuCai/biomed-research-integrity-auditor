@@ -97,7 +97,7 @@ The default mode is `--mode internal_presubmission`. Also available: `external_p
 
 **Team workflow**:
 
-- `unresolved_actions.csv`, `resolved_actions.csv`, `accepted_with_reason.csv` — action trackers with owner/status fields and copy-ready neutral inquiry/material-request templates for each finding-derived action.
+- `unresolved_actions.csv`, `resolved_actions.csv`, `accepted_with_reason.csv` — action trackers with owner/status/attachment fields and copy-ready neutral inquiry/material-request templates for each finding-derived action. Webapp uploads are stored locally under `submission_qc_packet/attachments/`.
 - `correction_plan.md` / `.csv` — pre-submission correction-plan tracker.
 - `submission_qc_packet/` — a leave-behind packet containing the report, coverage, trackers, verified traceability, file hashes, audience-specific editable drafts, an image-review packet when image files are present, and an author sign-off template.
 - `submission_qc_packet/audience_exports/` — editable `PI_BRIEF.md`, `COAUTHOR_ACTIONS.md`, and `JOURNAL_RESPONSE_DRAFT.md` generated from the neutral action queue.

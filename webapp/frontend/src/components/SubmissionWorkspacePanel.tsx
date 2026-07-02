@@ -3,7 +3,7 @@
 // these readiness artifacts are never rendered as findings and never modify R0-R4.
 
 import { useState, type ReactNode } from "react";
-import { ClipboardList, Copy, Download, FileArchive, GitCompare, PencilLine, Save } from "lucide-react";
+import { ClipboardList, Copy, Download, FileArchive, GitCompare, Paperclip, PencilLine, Save } from "lucide-react";
 import { artifactUrl, qcPacketUrl } from "../api";
 import type {
   ActionTrackerRow,
@@ -28,6 +28,7 @@ export function SubmissionWorkspacePanel({
   writingReadiness,
   onActionUpdate,
   onImageReviewUpdate,
+  onAttachmentUpload,
   t
 }: {
   auditId: string;
@@ -45,6 +46,7 @@ export function SubmissionWorkspacePanel({
     reviewItemId: string,
     patch: Pick<ImageReviewHandoffRow, "reviewer" | "review_status" | "external_tool_or_method" | "review_result_note" | "attachment_reference">
   ) => Promise<void>;
+  onAttachmentUpload: (targetType: "action" | "image_review", targetId: string, file: File) => Promise<string>;
   t: Labels;
 }) {
   return (
@@ -56,13 +58,20 @@ export function SubmissionWorkspacePanel({
       <p className="scope-line">{t.readinessBoundary}</p>
       <div className="submission-grid">
         <ClaimCoverageCard claimCoverage={claimCoverage} t={t} />
-        <ActionTrackerCard auditId={auditId} rows={actionRows} onActionUpdate={onActionUpdate} t={t} />
+        <ActionTrackerCard
+          auditId={auditId}
+          rows={actionRows}
+          onActionUpdate={onActionUpdate}
+          onAttachmentUpload={onAttachmentUpload}
+          t={t}
+        />
         <CorrectionPlanCard auditId={auditId} rows={correctionRows} t={t} />
         <ReAuditDiffCard reAuditDiff={reAuditDiff} t={t} />
         <ImageReviewHandoffCard
           auditId={auditId}
           imageReview={qcPacket?.image_review_packet}
           onImageReviewUpdate={onImageReviewUpdate}
+          onAttachmentUpload={onAttachmentUpload}
           t={t}
         />
         <QCPacketCard auditId={auditId} qcPacket={qcPacket} t={t} />
@@ -103,6 +112,7 @@ function ActionTrackerCard({
   auditId,
   rows,
   onActionUpdate,
+  onAttachmentUpload,
   t
 }: {
   auditId: string;
@@ -111,6 +121,7 @@ function ActionTrackerCard({
     actionId: string,
     patch: Pick<ActionTrackerRow, "owner" | "status" | "human_note" | "accepted_with_reason" | "attachment_reference">
   ) => Promise<void>;
+  onAttachmentUpload: (targetType: "action" | "image_review", targetId: string, file: File) => Promise<string>;
   t: Labels;
 }) {
   return (
@@ -146,6 +157,7 @@ function ActionTrackerCard({
                   key={row.action_id || row.required_action}
                   row={row}
                   onActionUpdate={onActionUpdate}
+                  onAttachmentUpload={onAttachmentUpload}
                   t={t}
                 />
               ))}
@@ -160,6 +172,7 @@ function ActionTrackerCard({
 function ActionEditorRow({
   row,
   onActionUpdate,
+  onAttachmentUpload,
   t
 }: {
   row: ActionTrackerRow;
@@ -167,6 +180,7 @@ function ActionEditorRow({
     actionId: string,
     patch: Pick<ActionTrackerRow, "owner" | "status" | "human_note" | "accepted_with_reason" | "attachment_reference">
   ) => Promise<void>;
+  onAttachmentUpload: (targetType: "action" | "image_review", targetId: string, file: File) => Promise<string>;
   t: Labels;
 }) {
   const [owner, setOwner] = useState(row.owner || "");
@@ -175,6 +189,7 @@ function ActionEditorRow({
   const [acceptedReason, setAcceptedReason] = useState(row.accepted_with_reason || "");
   const [attachmentReference, setAttachmentReference] = useState(row.attachment_reference || "");
   const [saving, setSaving] = useState(false);
+  const [uploading, setUploading] = useState(false);
   const actionId = row.action_id || "";
   const neutralInquiry = row.neutral_inquiry_template || "";
   const materialRequest = row.material_request_template || "";
@@ -198,6 +213,17 @@ function ActionEditorRow({
       });
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function upload(file: File | undefined) {
+    if (!actionId || !file) return;
+    setUploading(true);
+    try {
+      const reference = await onAttachmentUpload("action", actionId, file);
+      if (reference) setAttachmentReference(reference);
+    } finally {
+      setUploading(false);
     }
   }
 
@@ -225,7 +251,18 @@ function ActionEditorRow({
           <input className="compact-input" value={acceptedReason} onChange={(e) => setAcceptedReason(e.target.value)} aria-label={t.acceptedReason} />
         </td>
         <td>
-          <input className="compact-input" value={attachmentReference} onChange={(e) => setAttachmentReference(e.target.value)} aria-label={t.attachmentReference} placeholder={t.attachmentPlaceholder} />
+          <div className="attachment-cell">
+            <input className="compact-input" value={attachmentReference} onChange={(e) => setAttachmentReference(e.target.value)} aria-label={t.attachmentReference} placeholder={t.attachmentPlaceholder} />
+            <label className="file-inline-button">
+              <Paperclip size={13} aria-hidden="true" />
+              {uploading ? t.uploadingAttachment : t.uploadAttachment}
+              <input
+                type="file"
+                onChange={(e) => void upload(e.target.files?.[0])}
+                disabled={!actionId || uploading}
+              />
+            </label>
+          </div>
         </td>
         <td>
           <button type="button" className="icon-button small" onClick={save} disabled={!actionId || saving} aria-label={t.save}>
@@ -437,6 +474,7 @@ function ImageReviewHandoffCard({
   auditId,
   imageReview,
   onImageReviewUpdate,
+  onAttachmentUpload,
   t
 }: {
   auditId: string;
@@ -445,6 +483,7 @@ function ImageReviewHandoffCard({
     reviewItemId: string,
     patch: Pick<ImageReviewHandoffRow, "reviewer" | "review_status" | "external_tool_or_method" | "review_result_note" | "attachment_reference">
   ) => Promise<void>;
+  onAttachmentUpload: (targetType: "action" | "image_review", targetId: string, file: File) => Promise<string>;
   t: Labels;
 }) {
   const rows = imageReview?.handoff_rows || [];
@@ -498,6 +537,7 @@ function ImageReviewHandoffCard({
                       key={row.handoff_item_id || row.source_finding_id || row.review_question}
                       row={row}
                       onImageReviewUpdate={onImageReviewUpdate}
+                      onAttachmentUpload={onAttachmentUpload}
                       t={t}
                     />
                   ))}
@@ -522,6 +562,7 @@ function ImageReviewHandoffCard({
 function ImageReviewEditorRows({
   row,
   onImageReviewUpdate,
+  onAttachmentUpload,
   t
 }: {
   row: ImageReviewHandoffRow;
@@ -529,6 +570,7 @@ function ImageReviewEditorRows({
     reviewItemId: string,
     patch: Pick<ImageReviewHandoffRow, "reviewer" | "review_status" | "external_tool_or_method" | "review_result_note" | "attachment_reference">
   ) => Promise<void>;
+  onAttachmentUpload: (targetType: "action" | "image_review", targetId: string, file: File) => Promise<string>;
   t: Labels;
 }) {
   const [reviewer, setReviewer] = useState(row.reviewer || "");
@@ -537,6 +579,7 @@ function ImageReviewEditorRows({
   const [note, setNote] = useState(row.review_result_note || "");
   const [attachment, setAttachment] = useState(row.attachment_reference || row.external_result_reference || "");
   const [saving, setSaving] = useState(false);
+  const [uploading, setUploading] = useState(false);
   const reviewItemId = row.review_item_id || "";
 
   async function save() {
@@ -552,6 +595,17 @@ function ImageReviewEditorRows({
       });
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function upload(file: File | undefined) {
+    if (!reviewItemId || !file) return;
+    setUploading(true);
+    try {
+      const reference = await onAttachmentUpload("image_review", reviewItemId, file);
+      if (reference) setAttachment(reference);
+    } finally {
+      setUploading(false);
     }
   }
 
@@ -610,10 +664,21 @@ function ImageReviewEditorRows({
               <span>{t.reviewResult}</span>
               <input className="compact-input" value={note} onChange={(e) => setNote(e.target.value)} aria-label={t.reviewResult} />
             </label>
-            <label>
+            <div className="field-label">
               <span>{t.attachmentReference}</span>
-              <input className="compact-input" value={attachment} onChange={(e) => setAttachment(e.target.value)} aria-label={t.attachmentReference} placeholder={t.attachmentPlaceholder} />
-            </label>
+              <div className="attachment-cell">
+                <input className="compact-input" value={attachment} onChange={(e) => setAttachment(e.target.value)} aria-label={t.attachmentReference} placeholder={t.attachmentPlaceholder} />
+                <label className="file-inline-button">
+                  <Paperclip size={13} aria-hidden="true" />
+                  {uploading ? t.uploadingAttachment : t.uploadAttachment}
+                  <input
+                    type="file"
+                    onChange={(e) => void upload(e.target.files?.[0])}
+                    disabled={!reviewItemId || uploading}
+                  />
+                </label>
+              </div>
+            </div>
             <button type="button" className="icon-button small" onClick={save} disabled={!reviewItemId || saving} aria-label={t.save}>
               <Save size={14} aria-hidden="true" />
             </button>

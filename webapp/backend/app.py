@@ -59,6 +59,7 @@ EXTERNAL_PROVIDERS = {"auto", "none", "fixture", "europepmc", "crossref"}
 REFERENCE_CHECK_PROVIDERS = {"none", "crossref"}
 MAX_ZIP_BYTES = 250 * 1024 * 1024
 MAX_ZIP_MEMBERS = 5000
+MAX_ATTACHMENT_BYTES = 50 * 1024 * 1024
 INVENTORY_MAX_FILES = 5000
 INVENTORY_MAX_DEPTH = 12
 RECOMMENDED_PACKAGE_DIRS = [
@@ -98,6 +99,7 @@ CLAIM_FIELD_ALLOWED_ROLES = {
 }
 AUDIT_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,120}$")
 FILENAME_TOKEN_RE = re.compile(r"[A-Za-z]+|\d+")
+SAFE_ATTACHMENT_COMPONENT_RE = re.compile(r"[^A-Za-z0-9._-]+")
 FILENAME_STOP_TOKENS = {
     "acq",
     "acquisition",
@@ -461,6 +463,37 @@ def create_app(output_root: Optional[Path] = None) -> FastAPI:
             "image_review_packet": image_review_packet_summary(output_dir / "submission_qc_packet", output_dir),
             "image_review_tracker": tracker_rows,
         }
+
+    @app.post("/api/audits/{audit_id}/attachments")
+    async def upload_attachment(
+        audit_id: str,
+        file: UploadFile = File(...),
+        target_type: str = Form("action"),
+        target_id: str = Form(""),
+    ) -> dict[str, Any]:
+        job = require_job(settings, audit_id)
+        if job.status not in {"completed", "failed", "canceled"}:
+            raise HTTPException(status_code=409, detail="Attachments can be added after an audit writes outputs")
+        output_dir = Path(job.output_dir).resolve()
+        ensure_attachment_target_exists(output_dir, target_type, target_id)
+        attachment = await save_qc_attachment(output_dir, file, target_type, target_id)
+        response: dict[str, Any] = {"attachment": attachment}
+        if target_type == "action":
+            response["action_trackers"] = update_action_trackers(
+                output_dir,
+                target_id,
+                ActionUpdateRequest(attachment_reference=attachment["attachment_reference"]),
+            )
+        elif target_type == "image_review":
+            response["image_review_tracker"] = update_image_review_tracker(
+                output_dir,
+                target_id,
+                ImageReviewUpdateRequest(attachment_reference=attachment["attachment_reference"]),
+            )
+            response["image_review_packet"] = image_review_packet_summary(output_dir / "submission_qc_packet", output_dir)
+        else:
+            raise HTTPException(status_code=400, detail="target_type must be action or image_review")
+        return response
 
     @app.get("/api/audits/{audit_id}/report.md")
     def get_report(audit_id: str) -> PlainTextResponse:
@@ -1970,6 +2003,76 @@ def sync_image_handoff_with_tracker(review_dir: Path, tracker_row: dict[str, str
         write_image_handoff_csv(handoff_path, handoff_rows)
 
 
+def safe_attachment_component(value: str, fallback: str) -> str:
+    name = SAFE_ATTACHMENT_COMPONENT_RE.sub("_", Path(value or "").name.strip()).strip("._-")
+    if not name:
+        name = fallback
+    return name[:120]
+
+
+def ensure_attachment_target_exists(output_dir: Path, target_type: str, target_id: str) -> None:
+    if target_type == "action":
+        for name in ("unresolved_actions.csv", "resolved_actions.csv", "accepted_with_reason.csv"):
+            if any(row.get("action_id") == target_id for row in action_csv(output_dir / name)):
+                return
+        raise HTTPException(status_code=404, detail=f"Action not found: {target_id}")
+    if target_type == "image_review":
+        tracker_path = output_dir / "submission_qc_packet" / "image_review_packet" / "image_review_tracker.csv"
+        if not tracker_path.is_file():
+            raise HTTPException(status_code=404, detail="Image review tracker has not been generated")
+        if any(row.get("review_item_id") == target_id for row in image_review_tracker_csv(tracker_path)):
+            return
+        raise HTTPException(status_code=404, detail=f"Image review item not found: {target_id}")
+    raise HTTPException(status_code=400, detail="target_type must be action or image_review")
+
+
+async def save_qc_attachment(
+    output_dir: Path,
+    upload: UploadFile,
+    target_type: str,
+    target_id: str,
+) -> dict[str, str]:
+    if target_type not in {"action", "image_review"}:
+        raise HTTPException(status_code=400, detail="target_type must be action or image_review")
+    packet_dir = output_dir / "submission_qc_packet"
+    if not packet_dir.is_dir():
+        raise HTTPException(status_code=404, detail="Submission QC packet has not been generated")
+    if not target_id.strip():
+        raise HTTPException(status_code=400, detail="target_id is required")
+
+    safe_target_id = safe_attachment_component(target_id, "item")
+    original_name = safe_attachment_component(upload.filename or "attachment.bin", "attachment.bin")
+    stored_name = f"{int(time.time())}-{uuid4().hex[:8]}-{original_name}"
+    attachment_dir = safe_join(packet_dir.resolve(), f"attachments/{target_type}/{safe_target_id}")
+    attachment_dir.mkdir(parents=True, exist_ok=True)
+    attachment_path = safe_join(attachment_dir.resolve(), stored_name)
+
+    size = 0
+    with attachment_path.open("wb") as handle:
+        while True:
+            chunk = await upload.read(1024 * 1024)
+            if not chunk:
+                break
+            size += len(chunk)
+            if size > MAX_ATTACHMENT_BYTES:
+                handle.close()
+                attachment_path.unlink(missing_ok=True)
+                raise HTTPException(status_code=413, detail="Attachment exceeds the local size limit")
+            handle.write(chunk)
+
+    packet_rel = attachment_path.relative_to(packet_dir).as_posix()
+    output_rel = attachment_path.relative_to(output_dir).as_posix()
+    return {
+        "attachment_reference": packet_rel,
+        "artifact_path": output_rel,
+        "filename": original_name,
+        "stored_filename": stored_name,
+        "bytes": str(size),
+        "target_type": target_type,
+        "target_id": target_id,
+    }
+
+
 def submission_qc_packet_summary(output_dir: Path) -> dict[str, Any]:
     packet_dir = output_dir / "submission_qc_packet"
     if not packet_dir.is_dir():
@@ -2160,6 +2263,8 @@ def artifact_download_allowed(relpath: str) -> bool:
         }
     if as_posix.startswith("submission_qc_packet/audience_exports/") and len(relative.parts) == 3:
         return relative.name in {"README.md", "PI_BRIEF.md", "COAUTHOR_ACTIONS.md", "JOURNAL_RESPONSE_DRAFT.md"}
+    if as_posix.startswith("submission_qc_packet/attachments/") and len(relative.parts) >= 4:
+        return True
     return False
 
 

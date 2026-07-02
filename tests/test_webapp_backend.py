@@ -380,6 +380,76 @@ class WebappBackendTests(unittest.TestCase):
             self.assertEqual(correction_text, (packet / "correction_plan.csv").read_text(encoding="utf-8"))
             self.assertEqual(correction_md, (packet / "correction_plan.md").read_text(encoding="utf-8"))
 
+    def test_webapp_attachment_upload_updates_action_tracker_and_packet(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            app = create_app(output_root=tmp_path / "runs")
+            settings = app.state.settings
+            audit_id = "20260702-action-attachment"
+            output_dir = settings.audits_dir / audit_id
+            output_dir.mkdir(parents=True)
+            job = webapp_app.AuditJob(
+                audit_id=audit_id,
+                status="completed",
+                package_path=str(ROOT / "examples" / "minimal_package"),
+                mode="internal_presubmission",
+                scan_profile="quick",
+                domains="wetlab,animal,cell",
+                external_literature_provider="none",
+                reference_check_provider="none",
+                output_dir=str(output_dir),
+                created_at=time.time(),
+                updated_at=time.time(),
+                command=[],
+            )
+            webapp_app.save_job(settings, job)
+            for name in ("unresolved_actions.csv", "resolved_actions.csv", "accepted_with_reason.csv"):
+                with (output_dir / name).open("w", newline="", encoding="utf-8") as handle:
+                    writer = csv.DictWriter(handle, fieldnames=webapp_app.ACTION_FIELDNAMES)
+                    writer.writeheader()
+                    if name == "unresolved_actions.csv":
+                        writer.writerow({
+                            "action_id": "ACT-0042",
+                            "action_category": "provide_materials",
+                            "risk_level": "R1",
+                            "action_type": "missing_source",
+                            "location": "source_data",
+                            "required_action": "Attach corrected source table",
+                            "owner": "data_owner",
+                            "status": "unresolved",
+                            "source": "test",
+                        })
+            packet = output_dir / "submission_qc_packet"
+            packet.mkdir()
+            for name in ("unresolved_actions.csv", "resolved_actions.csv", "accepted_with_reason.csv"):
+                (packet / name).write_text((output_dir / name).read_text(encoding="utf-8"), encoding="utf-8")
+
+            with TestClient(app) as client:
+                response = client.post(
+                    f"/api/audits/{audit_id}/attachments",
+                    data={"target_type": "action", "target_id": "ACT-0042"},
+                    files={"file": ("corrected source table.pdf", b"local attachment", "application/pdf")},
+                )
+                response.raise_for_status()
+                attachment = response.json()["attachment"]
+                reference = attachment["attachment_reference"]
+                self.assertTrue(reference.startswith("attachments/action/ACT-0042/"))
+                self.assertTrue(reference.endswith("corrected_source_table.pdf"))
+                self.assertNotIn(str(tmp_path), reference)
+                stored = packet / reference
+                self.assertEqual(stored.read_bytes(), b"local attachment")
+
+                with (output_dir / "unresolved_actions.csv").open(newline="", encoding="utf-8") as handle:
+                    rows = list(csv.DictReader(handle))
+                self.assertEqual(rows[0]["attachment_reference"], reference)
+                self.assertEqual(reference, list(csv.DictReader((packet / "unresolved_actions.csv").open(newline="", encoding="utf-8")))[0]["attachment_reference"])
+
+                artifact_path = f"submission_qc_packet/{reference}"
+                self.assertTrue(webapp_app.artifact_download_allowed(artifact_path))
+                artifact = client.get(f"/api/audits/{audit_id}/artifact/{artifact_path}")
+                artifact.raise_for_status()
+                self.assertEqual(artifact.content, b"local attachment")
+
     def test_webapp_action_patch_routes_false_positive_to_accepted_tracker(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)

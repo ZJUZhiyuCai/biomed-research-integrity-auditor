@@ -107,6 +107,10 @@
   file path, folder, or link that supports a resolved or accepted action. This is a team
   follow-up reference, not uploaded evidence or an audit verdict. Correction-plan CSV/Markdown
   exports mirror the same reference for PI/co-author remediation tracking.
+- The webapp can now save local follow-up attachments into
+  `submission_qc_packet/attachments/` and write the packet-relative reference back to action
+  tracker or image-review tracker rows. These files are local QC packet attachments, not detector
+  evidence or external validation.
 - The webapp Action Tracker now displays copy-ready neutral inquiry and material-request
   templates for each action row, making the finding-to-follow-up loop visible without opening
   raw CSV files.

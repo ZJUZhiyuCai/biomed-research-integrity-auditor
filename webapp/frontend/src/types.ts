@@ -205,6 +205,16 @@ export interface ActionTrackers {
   accepted_with_reason?: ActionTrackerRow[];
 }
 
+export interface AttachmentUploadResult {
+  attachment_reference: string;
+  artifact_path: string;
+  filename: string;
+  stored_filename: string;
+  bytes: string;
+  target_type: string;
+  target_id: string;
+}
+
 export interface CorrectionPlanRow {
   finding_id?: string;
   risk?: string;

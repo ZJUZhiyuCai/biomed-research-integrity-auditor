@@ -97,7 +97,7 @@ biomed-audit /path/to/my_package --output-dir audit_outputs/my_package
 
 **团队协作**：
 
-- `unresolved_actions.csv`、`resolved_actions.csv`、`accepted_with_reason.csv` — 行动项跟踪表，包含 owner/status 字段，以及每个由 finding 生成的行动项对应的中性询问和补材料模板。
+- `unresolved_actions.csv`、`resolved_actions.csv`、`accepted_with_reason.csv` — 行动项跟踪表，包含 owner/status/attachment 字段，以及每个由 finding 生成的行动项对应的中性询问和补材料模板。Webapp 上传的附件会保存在本地 `submission_qc_packet/attachments/` 下。
 - `correction_plan.md` / `.csv` — 投稿前更正计划。
 - `submission_qc_packet/` — 留档包：报告、coverage、跟踪表、已验证溯源、文件哈希、分受众沟通草稿、图像复核包（如有图像文件）、作者签字模板。
 - `submission_qc_packet/audience_exports/` — 从中性行动队列生成的可编辑 `PI_BRIEF.md`、`COAUTHOR_ACTIONS.md` 和 `JOURNAL_RESPONSE_DRAFT.md`。

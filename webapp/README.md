@@ -101,17 +101,18 @@ Included:
 - Re-audit diff cards show fixed/new/persisted findings plus resolved, newly missing, and still
   missing materials; these are remediation-tracking views, not pass/fail status.
 - Action tracker rows can be edited locally with owner, status, note, accepted-reason, and
-  attachment-reference fields. The attachment reference is a local follow-up pointer such as a
-  file path or link and is mirrored in correction-plan exports; it is not an upload, external
-  verification, or pass/fail signal.
+  attachment fields. Users can type a local follow-up pointer or upload a file into that audit's
+  `submission_qc_packet/attachments/` folder; the tracker stores the packet-relative reference and
+  mirrors it in correction-plan exports. Attachments are team follow-up material, not external
+  verification or pass/fail signals.
 - Each action row surfaces copy-ready neutral inquiry and material-request templates when the
   CLI generated them, so teams can ask for clarification or source records without changing the
   calibrated audit result.
 - Image-review handoff rows are linked to action-tracker rows when `source_finding_id` is available,
   so teams can see the current owner/status/attachment reference next to the external-review route.
 - Image-review tracker rows can be edited locally with reviewer, review status, tool/method,
-  result note, and attachment reference. The update is written back to the QC packet CSVs; it is
-  still a team follow-up record, not external validation by itself.
+  result note, and attachment reference or upload. The update is written back to the QC packet CSVs;
+  it is still a team follow-up record, not external validation by itself.
 
 Not included yet:
 
