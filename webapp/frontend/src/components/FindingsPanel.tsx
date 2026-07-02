@@ -1,6 +1,5 @@
-// Risk register: R0–R4 + module filtering (module filter was a P0 requirement
-// in docs/webapp-plan.md but missing from the original UI). Each finding card
-// surfaces structured evidence metrics and clickable evidence crops.
+// Risk register: R0–R4 + module filtering. Each finding card surfaces
+// structured evidence metrics and clickable evidence crops.
 
 import { useMemo, useState } from "react";
 import { Filter } from "lucide-react";

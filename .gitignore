@@ -18,6 +18,8 @@ evals/scorecards/*
 !evals/scorecards/.gitkeep
 evals/prompts/*
 !evals/prompts/.gitkeep
+evals/llm_runs/*/outputs/
+evals/llm_runs/*/scorecards/summary.md
 audit_outputs/
 
 *.log

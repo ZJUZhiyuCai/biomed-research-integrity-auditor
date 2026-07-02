@@ -80,7 +80,7 @@ Not included yet:
 - Grammar/language checking engines.
 - A signed desktop application.
 
-Those remain P1/P2 features in [`docs/webapp-plan.md`](../docs/webapp-plan.md).
+Those remain future product features rather than current webapp behavior.
 
 ## Integrity Boundary
 

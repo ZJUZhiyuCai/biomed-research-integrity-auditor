@@ -52,7 +52,7 @@ This recreates `cases/case_001` through `cases/case_030` with neutral package na
 
 ## Archived Runs
 
-Persisted run evidence lives under `evals/llm_runs/<run_id>/`. A run archive should include the generated Markdown reports, scorecards, and a manifest stating the agent, commands, case count, mode mapping, and limitations.
+Persisted run evidence lives under `evals/llm_runs/<run_id>/`. A public run archive should include the scorecard and a manifest stating the commands, case count, mode mapping, and limitations. Generated Markdown reports should stay in ignored local output directories unless they have been sanitized, because audit reports may contain machine-specific paths.
 
 The current archived run is `evals/llm_runs/2026-06-30-codex-orchestrated/`:
 
@@ -61,4 +61,4 @@ The current archived run is `evals/llm_runs/2026-06-30-codex-orchestrated/`:
 - 0 boundary violations.
 - 0 risk-cap violations.
 
-This run is Codex-orchestrated through the default package-audit script. It is useful evidence that the harness has been executed and retained, but it is not an independent third-party blinded LLM evaluation.
+This run used the default package-audit script. It is useful evidence that the harness has been executed and retained, but it is not an independent third-party blinded LLM evaluation.

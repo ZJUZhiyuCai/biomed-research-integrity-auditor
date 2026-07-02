@@ -10,7 +10,7 @@ It is **not** a fraud detector. It never concludes that misconduct occurred. Ins
 
 Under the hood: a local **CLI**, a local-first **web app**, a Codex **skill**, and a scriptable detector pipeline.
 
-Current product-review status is tracked in [`docs/PRODUCT_REVIEW_2026-07-02.md`](docs/PRODUCT_REVIEW_2026-07-02.md): the original P0 issues are closed in current `main`; remaining work is mainly convenience intake and specialist image-forensics coverage.
+Current status is tracked in the source, tests, and changelog. Internal review notes and local run outputs are not kept in the public repository.
 
 ---
 
@@ -270,7 +270,7 @@ The harness rewards restraint as much as recall: over-claiming, ignoring benign 
 
 ### Archived eval run
 
-A persisted run at [`evals/llm_runs/2026-06-30-codex-orchestrated/`](evals/llm_runs/2026-06-30-codex-orchestrated/): 30/30 synthetic cases passed, 0 boundary violations, 0 risk-cap violations. This shows the harness was executed and retained — it is not an independent third-party validation, and does not measure real-manuscript performance.
+A persisted scorecard at [`evals/llm_runs/2026-06-30-codex-orchestrated/`](evals/llm_runs/2026-06-30-codex-orchestrated/): 30/30 synthetic cases passed, 0 boundary violations, 0 risk-cap violations. The manifest and scorecard are retained; generated per-case reports are not committed because local audit reports can contain machine-specific paths. This is not an independent third-party validation and does not measure real-manuscript performance.
 
 ### Public-concern benchmark
 
