@@ -10,6 +10,8 @@ It is **not** a fraud detector. It never concludes that misconduct occurred. Ins
 
 Under the hood: a local **CLI**, a local-first **web app**, a Codex **skill**, and a scriptable detector pipeline.
 
+Current product-review status is tracked in [`docs/PRODUCT_REVIEW_2026-07-02.md`](docs/PRODUCT_REVIEW_2026-07-02.md): the original P0 issues are closed in current `main`; remaining work is mainly convenience intake and specialist image-forensics coverage.
+
 ---
 
 ## Who is this for

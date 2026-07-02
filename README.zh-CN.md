@@ -10,6 +10,8 @@
 
 从工程上看：本地 **CLI** + 本地 **Web App** + 可安装的 Codex **Skill** + 可脚本化的检测器流水线（detector pipeline）。
 
+当前产品复核状态记录在 [`docs/PRODUCT_REVIEW_2026-07-02.md`](docs/PRODUCT_REVIEW_2026-07-02.md)：原 P0 问题在当前 `main` 已关闭，剩余主要是便利性 intake 和专业图像取证能力边界。
+
 ---
 
 ## 适合谁
