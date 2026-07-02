@@ -71,7 +71,7 @@ biomed-audit /path/to/my_package --output-dir audit_outputs/my_package
 
 **报告**（面向人类）：
 
-- `audit-report.md` — 双语 Markdown 报告：Quick Read、投稿准备状态、行动队列、覆盖范围（coverage）、需补充材料、发现卡片（finding cards）、技术附录。
+- `audit-report.md` — 双语 Markdown 报告。第一页优先呈现 Quick Read、Scope、Must Resolve 和 Materials Needed；后续再给投稿准备状态、行动队列、覆盖范围（coverage）、发现卡片（finding cards）和技术附录。
 
 **结构化证据**（机器可读）：
 
@@ -81,12 +81,26 @@ biomed-audit /path/to/my_package --output-dir audit_outputs/my_package
 - `claim_coverage.json` / `.csv` — 声明-证据覆盖（claim-to-evidence coverage），需提供 `claim_manifest.csv`。
 - `methodology_checklist.json` / `.csv` — ARRIVE、CONSORT、ICMJE、MIFlowCyt、omics 人工复核准备度。
 - `writing_readiness.json` / `.csv` — 写作与投稿准备度提示（不影响 R0–R4）。
+- `docx_structure.json` — DOCX 正文段落、图注样段落和 Word 表格的 best-effort 抽取，用于 intake 复核和 claim manifest 准备；如果存在批注、修订痕迹或嵌入对象/媒体，会记录提示；这不是 provenance 证明。
+- `pdf_structure.json`、`pdf_embedded_images.json`、`pdf_embedded_images/` — PDF 图注/类表格文本的 best-effort 抽取，以及 PDF 内嵌栅格图片导出；PDF 导出图只是展示层材料，不是 raw record。
+- `xlsx_structure.json` — XLSX workbook/sheet metadata、表头、公式计数、合并单元格和隐藏 sheet 的 best-effort 索引，用于 source-data 准备；这不是统计验证。
+- `prism_project_intake.json` — GraphPad Prism PZFX table/graph metadata 和可能 graph-to-table 线索的 best-effort 索引，用于准备 manifest；这些线索不是已验证 provenance。
+- `fcs_metadata_intake.json` — FCS 事件数、通道/marker、仪器 metadata 的 best-effort 索引，用于 flow 材料复核；这不是 gating、补偿或群体比例验证。
+- `pptx_structure.json` — PPTX slide 文本、备注文本、shape 替代文本、包内相对路径提及和显式 figure/source 路径对的 best-effort 抽取，用于准备 assembly manifest；这不是 provenance 证明。
+- `pptx_embedded_images.json`、`pptx_embedded_images/` — PPTX 组图文件内嵌栅格图片的 best-effort 导出；PPTX 导出图只是展示层材料，不是 raw record。
+- `key_embedded_images.json`、`key_embedded_images/` — zip 格式 Keynote `.key` 文件内嵌栅格图片的 best-effort 导出；Keynote 导出图只是展示层材料，不是 raw record。
+- `psd_preview_images.json`、`psd_preview_images/` — 可解码 PSD 文件扁平预览的 best-effort 导出；PSD 预览只是展示层材料，不是 raw record 或图层 provenance。
+- `image_metadata.json` — 对所供图像做 frame/channel/Z/T 与 OME/TIFF metadata 的 best-effort 读取；用于人工核对多通道/Z-stack 背景，不是图像真实性检查。
+- `channel_metadata_candidates.json` — 把已声明的同视野/不同通道关系与可用图像 metadata 交叉核对；缺少采集/通道 metadata 时报告 R1 核验缺口，不作为图像 integrity 结论。
+- `splice_forensics_candidates.json` — 对导出图像面板做弱 ELA/JPEG residual、JPEG-ghost profile、noise-map 与 CFA-like grid triage；这些只是封顶 R2 的复核提示，不是拼接/处理结论、稳健 JPEG ghost 分析或传感器模式认证。
+- `submission_qc_packet/image_review_packet/` — 给 ImageTwin/Proofig 或人工图像复核使用的候选目标清单、`external_tool_handoff.csv`/`.md` 和可编辑 `image_review_tracker.csv`，包含文件哈希、候选指标、复核问题、数据治理提示和可用的 crop 证据；它不是外部检索结果，也不是结论。
 
 **团队协作**：
 
-- `unresolved_actions.csv`、`resolved_actions.csv`、`accepted_with_reason.csv` — 行动项跟踪表。
+- `unresolved_actions.csv`、`resolved_actions.csv`、`accepted_with_reason.csv` — 行动项跟踪表，包含 owner/status 字段，以及每个由 finding 生成的行动项对应的中性询问和补材料模板。
 - `correction_plan.md` / `.csv` — 投稿前更正计划。
-- `submission_qc_packet/` — 留档包：报告、coverage、跟踪表、已验证溯源、文件哈希、作者签字模板。
+- `submission_qc_packet/` — 留档包：报告、coverage、跟踪表、已验证溯源、文件哈希、分受众沟通草稿、图像复核包（如有图像文件）、作者签字模板。
+- `submission_qc_packet/audience_exports/` — 从中性行动队列生成的可编辑 `PI_BRIEF.md`、`COAUTHOR_ACTIONS.md` 和 `JOURNAL_RESPONSE_DRAFT.md`。
 
 ---
 
@@ -133,9 +147,9 @@ material intake → structured extraction → provenance graph → detectors
 
 | 档位 | 适用场景 | 变化 |
 | --- | --- | --- |
-| `quick` | 第一次快速自查 | 保留快速 source/text/整图筛查；跳过 local-patch 深度图像筛查和外部短语检索。 |
-| `standard` | 默认投稿前 QC | 运行平衡检测集合，导出 submission QC packet。 |
-| `deep` | 回应质疑或重点复核 | 更严格的图像相似度阈值，在 coverage 中记录 deep-profile 参数。 |
+| `quick` | 第一次快速自查 | 保留快速 source/text/整图筛查；跳过 keypoint/local-patch 深度图像筛查和外部短语检索。 |
+| `standard` | 默认投稿前 QC | 运行平衡检测集合，包括 keypoint 几何图像筛查；导出 submission QC packet。 |
+| `deep` | 回应质疑或重点复核 | 使用更敏感的图像相似度设置，在 coverage 中记录 deep-profile 参数。 |
 
 ### 声明-证据清单（Claim manifest）
 
@@ -155,10 +169,11 @@ C001,"Treatment increases signal intensity",Results p.4,Fig1A,source_data/Fig1.c
 ```bash
 biomed-audit-diff audit_outputs/v1 audit_outputs/v2 \
   --output audit_outputs/v2/re_audit_diff.json \
-  --csv audit_outputs/v2/re_audit_diff.csv
+  --csv audit_outputs/v2/re_audit_diff.csv \
+  --markdown audit_outputs/v2/re_audit_diff.md
 ```
 
-也可以第二次运行时加 `--compare-to audit_outputs/v1`。diff 比较风险计数、缺失材料、traceability、未解决动作和 claim-evidence gaps。
+也可以第二次运行时加 `--compare-to audit_outputs/v1`。diff 比较风险计数、缺失材料、traceability、未解决动作、claim-evidence gaps，以及 finding movement（不再出现 / 新增 / 仍存在）。`re_audit_diff.md` 是面向人读的版本；webapp 也会展示 fixed/new/persisted 列表。
 
 ### 本地 Web App
 
@@ -177,7 +192,9 @@ cd webapp/frontend && npm install && npm run build && cd ../..
 biomed-audit-web
 ```
 
-Web App 包装了与 CLI 相同的流水线，固定显示 Audit Coverage，并提供本地材料准备工具。详见 [`webapp/README.md`](webapp/README.md)。
+Web App 包装了与 CLI 相同的流水线，固定显示 Audit Coverage，并提供本地材料准备工具：目录结构、基于文件名的 manifest 草稿建议、`assembly_manifest.csv` 和 `claim_manifest.csv` 生成。文件名建议会归一化简单的零填充和分隔符差异，例如 `Fig 02-A` 与 `F2A`，但仍只是录入辅助；如果出现多个同样合理的候选，界面会显示提示而不会自动建链接。详见 [`webapp/README.md`](webapp/README.md)。
+
+PPTX 组图文件也可以作为辅助材料：如果 slide 文本、speaker notes 或 shape 替代文本中明确写出 figure panel 路径和 raw/source 路径，流水线会写出 `pptx_structure.json`，记录这些文本层、路径提及和显式路径对，帮助准备 manifest；这些文字层链接只有经过 provenance parser 和 calibrator 处理后才可能成为 traceability evidence。PPTX 和 zip 格式 Keynote 内嵌图片会分别导出到 `pptx_embedded_images/` 或 `key_embedded_images/` 供 intake 复核；可解码 PSD 文件会导出扁平预览到 `psd_preview_images/`。这些导出/预览不会自动等同于已导出的图像 panel、raw record、图层 provenance 或 provenance 证明。PSD 图层/mask/历史，以及 `.ai`、`.indd` 和旧 `.ppt` 这类不透明组图工程文件仍会被记录为 R1 coverage gap，需要导出面板并人工复核。
 
 源码 fallback：`python -m webapp`。
 
@@ -197,17 +214,25 @@ Web App 包装了与 CLI 相同的流水线，固定显示 Audit Coverage，并�
 
 ### 图像筛查
 
-图像、局部 patch（local patch）和同图内 copy-move 检测只在单个材料包内运行，不跨论文或外部图像库搜索。当前不覆盖：任意角度旋转、透视变换、弹性形变、大幅缩放、splice forensics（JPEG ghost、CFA/噪声不一致）、光照/阴影不一致。报告会显式列出这一边界。
+图像、keypoint 几何、局部 patch（local patch）、同图内 copy-move 和弱拼接取证提示只在单个材料包内运行，不跨论文或外部图像库搜索。standard/deep 会用 OpenCV ORB keypoint + RANSAC homography 筛查旋转、缩放、裁剪或透视变化后的相似候选，并用弱 ELA/JPEG residual、JPEG-ghost profile、noise-map 与 CFA-like grid triage 提示局部导出/残差异常。当前仍不覆盖：弹性/非刚性形变、严重透视扭曲、ORB/RANSAC 能力外的低特征图像、弱 CFA-like grid triage 之外的专业传感器模式认证、弱 recompression-profile 提示之外的稳健 JPEG ghost 分析、光照/阴影不一致。报告会显式列出这一边界；如有图像候选，QC packet 会生成 ImageTwin/Proofig/人工专家复核用的外部工具交接表。
 
-大图包的 local-patch 筛查有运行时 tile/comparison 预算。触发预算时，报告记录 R1 覆盖缺口并建议 focused deep scan。
+如果 manifest 声明两个 panel 是同一视野不同通道，系统会把这条声明与已有 frame/channel/OME metadata 交叉核对。若材料包只有导出的单通道 panel、缺少原始多通道文件或 channel map，报告会记录 R1 材料核验缺口，要求补 raw multichannel file、通道表或组图记录。
+
+大图包的 keypoint 和 local-patch 筛查有运行时 pair/tile/comparison 预算。触发预算时，报告记录 R1 覆盖缺口并建议 focused deep scan。
 
 ### 统计筛查
 
 覆盖 SD/SEM/n 一致性、p-value 范围、整数计数可行性，以及带最小样本量门槛的弱分布提示（Benford-style 首位数字 ≥ 30 值、p-value clustering ≥ 20 值、digit/rounding ≥ 8 值、integer-count n ≥ 6）。这些弱筛查只有在达到最小样本量门槛时才自动运行，只能作为 triage 信号，不能单独作为证据。
 
-### 文本、引用与 PDF
+Source-data intake 支持 CSV/TSV/XLSX，也支持基础 GraphPad Prism `.pzfx` XML 列表格。流水线还会写出 `xlsx_structure.json`，索引 workbook/sheet metadata、表头、公式、合并单元格、隐藏 sheet 和 figure/table-like sheet 标签，用于材料准备。这个 workbook 索引不是统计验证，也不能证明 source-to-figure provenance。流水线还会写出 `prism_project_intake.json`，索引可解析 PZFX 的 table/graph metadata 和可能的 graph-to-table 线索，用于准备 manifest。这些线索不是已验证 figure provenance；复杂或不可解析的 Prism 工程会被报告为 R1 extraction gap，仍建议导出 CSV/XLSX 后再依赖统计覆盖。
 
-文本重叠筛查是包内的（package-internal）；外部短语检索是可选 triage，非穷尽式查重。Reference checking 需要 opt-in，目前限于 DOI/reference 元数据提示（Crossref-style lookup）。True-PDF intake 支持 machine-readable text 和可 OCR 的 scanned PDF；figure/caption extraction 有限。公开材料 review 受 source/raw 缺失限制，不能被读成学术不端结论。
+Flow cytometry intake 在提供 FCS 文件时会写出 `fcs_metadata_intake.json`。它索引事件数、通道/marker 标签、仪器字段、日期和补偿关键词，用于 MIFlowCyt 取向的材料准备复核。它不会重建 gate、验证补偿或复算报告的群体比例；完整 flow 复核仍需 workspace/gating 文件、对照、source table 和分析导出。
+
+### 文本、引用、DOCX 与 PDF
+
+文本重叠筛查是包内的（package-internal）；外部短语检索是可选 triage，非穷尽式查重。Reference checking 需要 opt-in，目前限于 DOI/reference 元数据提示（Crossref-style lookup）。True-PDF intake 支持 machine-readable text 和可 OCR 的 scanned PDF；流水线还会写出 `docx_structure.json` 记录 DOCX 正文/图注/表格结构，写出 `pdf_structure.json` best-effort 抽取可机器读取 PDF 中的图注样文本和类表格文本块，并写出 `pdf_embedded_images.json` 与 `pdf_embedded_images/` 导出 PDF 内嵌栅格图片；可解码 PSD 文件会写出 `psd_preview_images.json` 与 `psd_preview_images/`。DOCX/PDF/PSD 的结构或预览 artifact 只是 intake 辅助材料，不能替代 raw/source 记录、图层 provenance 或 provenance 证明。公开材料 review 受 source/raw 缺失限制，不能被读成学术不端结论。
+
+DOCX 稿件/方案可直接读取正文段落、caption 样式段落和表格单元格文本，用于文本重叠、writing-readiness 和材料准备/claim manifest 建议。它会提示 Word 批注、修订痕迹或嵌入对象/媒体是否存在，但不会复制批注内容、解析修订历史、抽取嵌入对象内容，也不能证明 figure-source provenance。旧 `.doc` 文件仍需另存为 DOCX、可提取文本的 PDF、TXT 或 MD。
 
 ---
 

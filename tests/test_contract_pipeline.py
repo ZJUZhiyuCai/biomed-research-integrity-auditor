@@ -3,6 +3,7 @@ from __future__ import annotations
 import builtins
 import csv
 import importlib.util
+from io import BytesIO
 import json
 import re
 import shutil
@@ -11,8 +12,11 @@ import sys
 import tempfile
 import tomllib
 import unittest
+import zipfile
+import zlib
 from unittest import mock
 from pathlib import Path
+from xml.sax.saxutils import escape
 
 import yaml
 from PIL import Image, ImageDraw, ImageFilter
@@ -123,6 +127,306 @@ def write_xlsx(path: Path, rows: list[list[object]], sheet_name: str = "Summary"
     workbook.close()
 
 
+def write_docx(
+    path: Path,
+    paragraphs: list[tuple[str, str | None]],
+    table_rows: list[list[str]] | None = None,
+    review_layers: bool = False,
+) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    def paragraph_xml(text: str, style: str | None = None) -> str:
+        style_xml = f'<w:pPr><w:pStyle w:val="{escape(style)}"/></w:pPr>' if style else ""
+        return f"<w:p>{style_xml}<w:r><w:t>{escape(text)}</w:t></w:r></w:p>"
+
+    table_xml = ""
+    if table_rows:
+        rows = []
+        for row in table_rows:
+            cells = "".join(
+                f"<w:tc>{paragraph_xml(str(cell))}</w:tc>"
+                for cell in row
+            )
+            rows.append(f"<w:tr>{cells}</w:tr>")
+        table_xml = f"<w:tbl>{''.join(rows)}</w:tbl>"
+
+    review_xml = ""
+    if review_layers:
+        review_xml = (
+            "<w:p><w:ins><w:r><w:t>Inserted review-layer text for intake testing.</w:t></w:r></w:ins></w:p>"
+        )
+    body = "".join(paragraph_xml(text, style) for text, style in paragraphs) + table_xml + review_xml
+    document = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+        f"<w:body>{body}</w:body>"
+        "</w:document>"
+    )
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr("[Content_Types].xml", '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"/>')
+        archive.writestr("word/document.xml", document)
+        if review_layers:
+            archive.writestr(
+                "word/comments.xml",
+                (
+                    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+                    '<w:comments xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+                    '<w:comment w:id="0"><w:p><w:r><w:t>Private reviewer note</w:t></w:r></w:p></w:comment>'
+                    "</w:comments>"
+                ),
+            )
+            archive.writestr("word/media/image1.png", b"placeholder image bytes")
+            archive.writestr("word/embeddings/oleObject1.bin", b"placeholder embedded object")
+
+
+def write_pptx(
+    path: Path,
+    slide_paragraphs: list[list[str]],
+    speaker_notes: list[list[str]] | None = None,
+    alt_texts: list[list[str]] | None = None,
+) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    def paragraph_xml(paragraphs: list[str]) -> str:
+        return "".join(
+            "<a:p><a:r><a:t>" + escape(paragraph) + "</a:t></a:r></a:p>"
+            for paragraph in paragraphs
+        )
+
+    def slide_xml(paragraphs: list[str], slide_alt_texts: list[str]) -> str:
+        body = "".join(
+            "<a:p><a:r><a:t>" + escape(paragraph) + "</a:t></a:r></a:p>"
+            for paragraph in paragraphs
+        )
+        alt_shapes = "".join(
+            f'<p:sp><p:nvSpPr><p:cNvPr id="{idx + 10}" name="AltText{idx}" descr="{escape(text)}"/></p:nvSpPr></p:sp>'
+            for idx, text in enumerate(slide_alt_texts)
+        )
+        return (
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            '<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" '
+            'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">'
+            f"<p:cSld><p:spTree>{body}{alt_shapes}</p:spTree></p:cSld>"
+            "</p:sld>"
+        )
+
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr("[Content_Types].xml", '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"/>')
+        for index, paragraphs in enumerate(slide_paragraphs, start=1):
+            slide_alt_texts = (alt_texts or [[]])[index - 1] if alt_texts and index <= len(alt_texts) else []
+            archive.writestr(f"ppt/slides/slide{index}.xml", slide_xml(paragraphs, slide_alt_texts))
+            if speaker_notes and index <= len(speaker_notes):
+                archive.writestr(
+                    f"ppt/slides/_rels/slide{index}.xml.rels",
+                    (
+                        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+                        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+                        f'<Relationship Id="rIdNotes{index}" '
+                        'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/notesSlide" '
+                        f'Target="../notesSlides/notesSlide{index}.xml"/>'
+                        "</Relationships>"
+                    ),
+                )
+                archive.writestr(
+                    f"ppt/notesSlides/notesSlide{index}.xml",
+                    (
+                        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+                        '<p:notes xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" '
+                        'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">'
+                        f"<p:cSld><p:spTree>{paragraph_xml(speaker_notes[index - 1])}</p:spTree></p:cSld>"
+                        "</p:notes>"
+                    ),
+                )
+
+
+def write_pptx_with_embedded_image(path: Path, image: Image.Image, slide_text: str = "Figure 1A") -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    image_bytes = BytesIO()
+    image.save(image_bytes, format="PNG")
+    slide = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<p:sld xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" '
+        'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" '
+        'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+        "<p:cSld><p:spTree>"
+        f"<a:p><a:r><a:t>{escape(slide_text)}</a:t></a:r></a:p>"
+        '<p:pic><p:blipFill><a:blip r:embed="rId1"/></p:blipFill></p:pic>'
+        "</p:spTree></p:cSld>"
+        "</p:sld>"
+    )
+    rels = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        '<Relationship Id="rId1" '
+        'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" '
+        'Target="../media/image1.png"/>'
+        "</Relationships>"
+    )
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr("[Content_Types].xml", '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"/>')
+        archive.writestr("ppt/slides/slide1.xml", slide)
+        archive.writestr("ppt/slides/_rels/slide1.xml.rels", rels)
+        archive.writestr("ppt/media/image1.png", image_bytes.getvalue())
+
+
+def write_key_with_embedded_image(path: Path, image: Image.Image) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    image_bytes = BytesIO()
+    image.save(image_bytes, format="PNG")
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr("Index/Document.iwa", b"placeholder-keynote-index")
+        archive.writestr("Data/image-1.png", image_bytes.getvalue())
+
+
+def write_pzfx(
+    path: Path,
+    headers: list[str],
+    rows: list[list[object]],
+    table_title: str = "Figure summary",
+    table_id: str = "Table1",
+    graph_title: str | None = None,
+) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    columns = []
+    for col_idx, header in enumerate(headers):
+        values = "".join(
+            f"<d>{escape(str(row[col_idx]))}</d>"
+            for row in rows
+            if col_idx < len(row)
+        )
+        columns.append(
+            f"<Column><Title>{escape(header)}</Title><Subcolumn>{values}</Subcolumn></Column>"
+        )
+    graph = ""
+    if graph_title:
+        graph = (
+            f"  <Graph ID=\"Graph1\" TableID=\"{escape(table_id)}\">"
+            f"<Title>{escape(graph_title)}</Title><SourceTable>{escape(table_id)}</SourceTable></Graph>\n"
+        )
+    path.write_text(
+        "<?xml version='1.0' encoding='UTF-8'?>\n"
+        "<GraphPadPrismFile>\n"
+        f"  <Table ID=\"{escape(table_id)}\"><Title>{escape(table_title)}</Title>{''.join(columns)}</Table>\n"
+        f"{graph}"
+        "</GraphPadPrismFile>\n",
+        encoding="utf-8",
+    )
+
+
+def write_minimal_fcs(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    pairs = [
+        ("$BEGINANALYSIS", "0"),
+        ("$ENDANALYSIS", "0"),
+        ("$BEGINDATA", "0"),
+        ("$ENDDATA", "0"),
+        ("$BYTEORD", "1,2,3,4"),
+        ("$DATATYPE", "F"),
+        ("$MODE", "L"),
+        ("$NEXTDATA", "0"),
+        ("$TOT", "1234"),
+        ("$PAR", "3"),
+        ("$CYT", "Synthetic cytometer"),
+        ("$CYTSN", "SN-001"),
+        ("$DATE", "02-JUL-2026"),
+        ("$FIL", "sample_A.fcs"),
+        ("$SRC", "Mouse spleen"),
+        ("$P1N", "FSC-A"),
+        ("$P1S", "FSC-A"),
+        ("$P1B", "32"),
+        ("$P1R", "262144"),
+        ("$P2N", "CD45-A"),
+        ("$P2S", "CD45"),
+        ("$P2B", "32"),
+        ("$P2R", "262144"),
+        ("$P3N", "CD3-A"),
+        ("$P3S", "CD3"),
+        ("$P3B", "32"),
+        ("$P3R", "262144"),
+        ("$SPILLOVER", "2,CD45-A,CD3-A,1,0.01,0.02,1"),
+    ]
+    delimiter = "|"
+    text = delimiter + delimiter.join(item for pair in pairs for item in pair) + delimiter
+    text_bytes = text.encode("latin-1")
+    header = bytearray(b" " * 58)
+    header[0:6] = b"FCS3.1"
+    text_start = 58
+    text_end = text_start + len(text_bytes) - 1
+    fields = {
+        (10, 18): text_start,
+        (18, 26): text_end,
+        (26, 34): 0,
+        (34, 42): 0,
+        (42, 50): 0,
+        (50, 58): 0,
+    }
+    for (start, end), value in fields.items():
+        header[start:end] = f"{value:>{end - start}d}".encode("ascii")
+    path.write_bytes(bytes(header) + text_bytes)
+
+
+def pdf_escape(text: str) -> str:
+    return text.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+
+
+def write_simple_pdf(path: Path, lines: list[str]) -> None:
+    commands = ["BT", "/F1 12 Tf", "72 720 Td"]
+    for idx, line in enumerate(lines):
+        if idx:
+            commands.append("0 -22 Td")
+        commands.append(f"({pdf_escape(line)}) Tj")
+    commands.append("ET")
+    compressed = zlib.compress("\n".join(commands).encode("ascii"))
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        (
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+            b"/Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>"
+        ),
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        (
+            f"<< /Length {len(compressed)} /Filter /FlateDecode >>\nstream\n".encode("ascii")
+            + compressed
+            + b"\nendstream"
+        ),
+    ]
+    chunks = [b"%PDF-1.4\n%\xE2\xE3\xCF\xD3\n"]
+    offsets = [0]
+    for idx, obj in enumerate(objects, start=1):
+        offsets.append(sum(len(chunk) for chunk in chunks))
+        chunks.append(f"{idx} 0 obj\n".encode("ascii"))
+        chunks.append(obj)
+        chunks.append(b"\nendobj\n")
+    xref_offset = sum(len(chunk) for chunk in chunks)
+    chunks.append(f"xref\n0 {len(objects) + 1}\n".encode("ascii"))
+    chunks.append(b"0000000000 65535 f \n")
+    for offset in offsets[1:]:
+        chunks.append(f"{offset:010d} 00000 n \n".encode("ascii"))
+    chunks.append(
+        (
+            f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\n"
+            f"startxref\n{xref_offset}\n%%EOF\n"
+        ).encode("ascii")
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"".join(chunks))
+
+
+def write_pdf_with_embedded_image(path: Path, image: Image.Image, caption: str = "Figure 1. Embedded panel.") -> None:
+    import fitz  # type: ignore
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    image_bytes = BytesIO()
+    image.save(image_bytes, format="PNG")
+    doc = fitz.open()
+    page = doc.new_page(width=360, height=280)
+    page.insert_text((36, 32), caption, fontsize=11)
+    page.insert_image(fitz.Rect(36, 56, 236, 256), stream=image_bytes.getvalue())
+    doc.save(str(path))
+    doc.close()
+
+
 def write_local_patch_package(package: Path, raw_pair: bool = False, manifest: str | None = None) -> None:
     (package / "figures").mkdir(parents=True)
     (package / "raw_images").mkdir(exist_ok=True)
@@ -141,6 +445,28 @@ def write_local_patch_package(package: Path, raw_pair: bool = False, manifest: s
         encoding="utf-8",
     )
     if manifest:
+        (package / "figure_assembly/assembly_manifest.csv").write_text(manifest, encoding="utf-8")
+
+
+def rotated_scaled_crop(image: Image.Image, angle: float = 17.0) -> Image.Image:
+    rotated = image.rotate(angle, resample=Image.Resampling.BICUBIC, expand=True)
+    width, height = rotated.size
+    cropped = rotated.crop((80, 80, width - 80, height - 80))
+    return cropped.resize(image.size, Image.Resampling.BICUBIC)
+
+
+def write_keypoint_geometric_package(package: Path, manifest: str | None = None) -> None:
+    (package / "figures").mkdir(parents=True)
+    write_minimal_source(package)
+    base = textured_image(303, size=(640, 640))
+    write_png(package / "figures/Figure_3A.png", base)
+    write_png(package / "figures/Figure_7C.png", rotated_scaled_crop(base))
+    (package / "manuscript.pdf").write_text(
+        "Figure 3A and Figure 7C are presented as separate experimental panels.\n",
+        encoding="utf-8",
+    )
+    if manifest:
+        (package / "figure_assembly").mkdir(parents=True)
         (package / "figure_assembly/assembly_manifest.csv").write_text(manifest, encoding="utf-8")
 
 
@@ -179,6 +505,75 @@ def write_low_contrast_copy_move_package(package: Path, copied: bool = True) -> 
     write_png(package / "figures/Figure_low_contrast.png", image)
     (package / "manuscript.pdf").write_text(
         "Figure low contrast is an exported microscopy-like panel supplied for image-integrity screening.\n",
+        encoding="utf-8",
+    )
+
+
+def write_splice_forensics_triage_package(package: Path) -> None:
+    from random import Random
+
+    (package / "figures").mkdir(parents=True)
+    write_minimal_source(package)
+
+    ordinary = textured_image(1701, (384, 384))
+    ordinary.save(package / "figures/Figure_ordinary.jpg", quality=92)
+
+    rng = Random(1702)
+    image = Image.new("RGB", (384, 384), (180, 180, 180))
+    pixels = image.load()
+    for y in range(384):
+        for x in range(384):
+            value = max(0, min(255, 180 + rng.randint(-4, 4)))
+            pixels[x, y] = (value, value, value)
+    patch = textured_image(1703, (128, 128))
+    image.paste(patch, (192, 192))
+    image.save(package / "figures/Figure_splice_prompt.jpg", quality=92)
+    (package / "manuscript.pdf").write_text(
+        "Figure splice prompt is an exported image panel supplied for weak image-forensics triage.\n",
+        encoding="utf-8",
+    )
+
+
+def write_cfa_grid_triage_package(package: Path) -> None:
+    (package / "figures").mkdir(parents=True)
+    write_minimal_source(package)
+    image = Image.new("RGB", (384, 384), (128, 128, 128))
+    pixels = image.load()
+    for y in range(160, 256):
+        for x in range(160, 256):
+            pixels[x, y] = (220, 40, 220) if (x + y) % 2 == 0 else (40, 220, 40)
+    image.save(package / "figures/Figure_cfa_grid_prompt.png")
+    (package / "manuscript.pdf").write_text(
+        "Figure CFA grid prompt is an exported image panel supplied for weak image-forensics triage.\n",
+        encoding="utf-8",
+    )
+
+
+def write_jpeg_ghost_triage_package(package: Path) -> None:
+    from random import Random
+
+    (package / "figures").mkdir(parents=True)
+    write_minimal_source(package)
+    rng = Random(4242)
+    image = Image.new("RGB", (384, 384))
+    pixels = image.load()
+    for y in range(384):
+        for x in range(384):
+            value = max(0, min(255, 128 + rng.randint(-35, 35)))
+            pixels[x, y] = (
+                value,
+                max(0, min(255, value + rng.randint(-8, 8))),
+                max(0, min(255, value + rng.randint(-8, 8))),
+            )
+    patch = image.crop((96, 96, 224, 224))
+    buffer = BytesIO()
+    patch.save(buffer, format="JPEG", quality=65)
+    buffer.seek(0)
+    with Image.open(buffer) as compressed_patch:
+        image.paste(compressed_patch.convert("RGB"), (192, 192))
+    image.save(package / "figures/Figure_jpeg_ghost_prompt.jpg", quality=95)
+    (package / "manuscript.pdf").write_text(
+        "Figure JPEG ghost prompt is an exported image panel supplied for weak image-forensics triage.\n",
         encoding="utf-8",
     )
 
@@ -416,6 +811,176 @@ class ContractPipelineTests(unittest.TestCase):
             self.assertIn("stack.tif#frame0001", locations)
             self.assertIn("matching_frame.png", locations)
 
+    def test_image_metadata_extractor_reads_ome_channel_and_z_hints(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "pkg"
+            figures = package / "figures"
+            figures.mkdir(parents=True)
+            ome_xml = (
+                '<OME><Image ID="Image:0"><Pixels DimensionOrder="XYZCT" Type="uint8" '
+                'SizeX="32" SizeY="32" SizeC="2" SizeZ="3" SizeT="1">'
+                '<Channel ID="Channel:0:0" Name="DAPI"/>'
+                '<Channel ID="Channel:0:1" Name="FITC"/>'
+                '</Pixels></Image></OME>'
+            )
+            frame_a = Image.new("L", (32, 32), 20)
+            frame_b = Image.new("L", (32, 32), 80)
+            frame_a.save(figures / "stack.ome.tif", save_all=True, append_images=[frame_b], description=ome_xml)
+            output = Path(tmp) / "image_metadata.json"
+            run([
+                PYTHON,
+                "scripts/image_metadata_extract.py",
+                str(package),
+                "--output",
+                str(output),
+            ])
+            payload = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual(payload["totals"]["image_files"], 1)
+            self.assertEqual(payload["totals"]["ome_metadata_files"], 1)
+            self.assertEqual(payload["totals"]["channel_metadata_files"], 1)
+            self.assertEqual(payload["totals"]["z_stack_metadata_files"], 1)
+            record = payload["images"][0]
+            self.assertEqual(record["channel_count"], 2)
+            self.assertEqual(record["z_stack_count"], 3)
+            self.assertEqual(record["n_frames"], 2)
+            self.assertTrue(record["microscopy_hints"]["possible_multichannel"])
+            self.assertTrue(record["microscopy_hints"]["possible_z_stack"])
+
+    def test_pipeline_reports_image_metadata_intake_coverage(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "pkg"
+            figures = package / "figures"
+            figures.mkdir(parents=True)
+            (package / "manuscript.pdf").write_text("Figure 1. OME metadata intake test.\n", encoding="utf-8")
+            ome_xml = (
+                '<OME><Image ID="Image:0"><Pixels DimensionOrder="XYZCT" Type="uint8" '
+                'SizeX="48" SizeY="48" SizeC="2" SizeZ="2" SizeT="1">'
+                '<Channel ID="Channel:0:0" Name="DAPI"/>'
+                '<Channel ID="Channel:0:1" Name="FITC"/>'
+                '</Pixels></Image></OME>'
+            )
+            frame_a = textured_image(303, (48, 48)).convert("L")
+            frame_b = textured_image(404, (48, 48)).convert("L")
+            frame_a.save(figures / "Figure_1_stack.ome.tif", save_all=True, append_images=[frame_b], description=ome_xml)
+            out = Path(tmp) / "out"
+            run([
+                PYTHON,
+                "scripts/audit_package.py",
+                str(package),
+                "--output-dir",
+                str(out),
+                "--case-id",
+                "image_metadata_case",
+                "--scan-profile",
+                "quick",
+            ])
+            metadata = json.loads((out / "image_metadata.json").read_text(encoding="utf-8"))
+            self.assertEqual(metadata["totals"]["ome_metadata_files"], 1)
+            coverage = json.loads((out / "coverage.json").read_text(encoding="utf-8"))
+            self.assertIn("image_frame_channel_metadata_intake", coverage["modules_executed"])
+            self.assertEqual(coverage["image_metadata_channel_files"], 1)
+            self.assertEqual(coverage["image_metadata_z_stack_files"], 1)
+            report = (out / "audit-report.md").read_text(encoding="utf-8")
+            self.assertIn("Image frame/channel metadata intake", report)
+            self.assertIn("Figure_1_stack.ome.tif", report)
+            packet_metadata = out / "submission_qc_packet" / "image_metadata.json"
+            self.assertTrue(packet_metadata.is_file())
+
+    def test_same_field_channel_manifest_without_metadata_emits_r1_gap(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "pkg"
+            (package / "figures").mkdir(parents=True)
+            (package / "figure_assembly").mkdir()
+            (package / "manuscript.pdf").write_text("Figure 1. Same field channel metadata test.\n", encoding="utf-8")
+            write_png(package / "figures/Figure_1A_DAPI.png", textured_image(511, (96, 96)))
+            write_png(package / "figures/Figure_1A_FITC.png", textured_image(512, (96, 96)))
+            (package / "figure_assembly/assembly_manifest.csv").write_text(
+                "figure_panel,source_record,relation_type,modality,notes\n"
+                "figures/Figure_1A_DAPI.png,figures/Figure_1A_FITC.png,"
+                "same_field_different_channel,microscopy,same field exported as two channels\n",
+                encoding="utf-8",
+            )
+            out = Path(tmp) / "out"
+            run([
+                PYTHON,
+                "scripts/audit_package.py",
+                str(package),
+                "--output-dir",
+                str(out),
+                "--case-id",
+                "channel_metadata_gap_case",
+                "--scan-profile",
+                "quick",
+            ])
+            payload = json.loads((out / "channel_metadata_candidates.json").read_text(encoding="utf-8"))
+            self.assertEqual(payload["declarations_checked"], 1)
+            self.assertEqual(payload["verification_gaps"], 1)
+            self.assertEqual(payload["candidates"][0]["candidate_type"], "channel_metadata_verification_gap")
+            calibrated = json.loads((out / "calibrated_findings.json").read_text(encoding="utf-8"))
+            gaps = [
+                item for item in calibrated["findings"]
+                if item["finding_type"] == "channel_metadata_verification_gap"
+            ]
+            self.assertEqual(len(gaps), 1)
+            self.assertEqual(gaps[0]["calibrated_risk_level"], "R1")
+            coverage = json.loads((out / "coverage.json").read_text(encoding="utf-8"))
+            self.assertIn("image_channel_metadata_consistency", coverage["modules_executed"])
+            self.assertEqual(coverage["channel_metadata_declarations_checked"], 1)
+            self.assertEqual(coverage["channel_metadata_verification_gaps"], 1)
+            report = (out / "audit-report.md").read_text(encoding="utf-8")
+            self.assertIn("Same-field channel metadata consistency", report)
+            self.assertIn("channel_metadata_verification_gap", report)
+            packet_payload = out / "submission_qc_packet" / "channel_metadata_candidates.json"
+            self.assertTrue(packet_payload.is_file())
+
+    def test_same_field_channel_manifest_with_ome_raw_metadata_does_not_emit_gap(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "pkg"
+            (package / "figures").mkdir(parents=True)
+            (package / "raw_images").mkdir()
+            (package / "figure_assembly").mkdir()
+            (package / "manuscript.pdf").write_text("Figure 1. OME channel support test.\n", encoding="utf-8")
+            write_png(package / "figures/Figure_1A_DAPI.png", textured_image(611, (64, 64)))
+            ome_xml = (
+                '<OME><Image ID="Image:0"><Pixels DimensionOrder="XYZCT" Type="uint8" '
+                'SizeX="64" SizeY="64" SizeC="2" SizeZ="1" SizeT="1">'
+                '<Channel ID="Channel:0:0" Name="DAPI"/>'
+                '<Channel ID="Channel:0:1" Name="FITC"/>'
+                '</Pixels></Image></OME>'
+            )
+            frame_a = textured_image(612, (64, 64)).convert("L")
+            frame_b = textured_image(613, (64, 64)).convert("L")
+            frame_a.save(package / "raw_images/acquisition_001.ome.tif", save_all=True, append_images=[frame_b], description=ome_xml)
+            (package / "figure_assembly/assembly_manifest.csv").write_text(
+                "figure_panel,source_record,relation_type,modality,notes\n"
+                "figures/Figure_1A_DAPI.png,raw_images/acquisition_001.ome.tif,"
+                "same_field_different_channel,microscopy,raw OME file contains both channels\n",
+                encoding="utf-8",
+            )
+            out = Path(tmp) / "out"
+            run([
+                PYTHON,
+                "scripts/audit_package.py",
+                str(package),
+                "--output-dir",
+                str(out),
+                "--case-id",
+                "channel_metadata_supported_case",
+                "--scan-profile",
+                "quick",
+            ])
+            payload = json.loads((out / "channel_metadata_candidates.json").read_text(encoding="utf-8"))
+            self.assertEqual(payload["declarations_checked"], 1)
+            self.assertEqual(payload["supported_declarations"], 1)
+            self.assertEqual(payload["verification_gaps"], 0)
+            self.assertEqual(payload["candidates"], [])
+            calibrated = json.loads((out / "calibrated_findings.json").read_text(encoding="utf-8"))
+            self.assertFalse(
+                any(item["finding_type"] == "channel_metadata_verification_gap" for item in calibrated["findings"])
+            )
+            coverage = json.loads((out / "coverage.json").read_text(encoding="utf-8"))
+            self.assertEqual(coverage["channel_metadata_supported_declarations"], 1)
+
     def test_calibrator_failure_writes_r1_partial_artifact(self) -> None:
         audit = load_audit_package()
         with tempfile.TemporaryDirectory() as tmp:
@@ -537,6 +1102,135 @@ class ContractPipelineTests(unittest.TestCase):
                 and item["finding_type"] == "SD is not consistent with SEM * sqrt(n)"
                 for item in payload["candidates"]
             ))
+
+    def test_xlsx_structure_extractor_records_workbook_sheet_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "xlsx_structure_case"
+            from openpyxl import Workbook
+
+            workbook = Workbook()
+            sheet = workbook.active
+            sheet.title = "Figure 6A"
+            sheet.append(["group", "mean", "sd", "n", "derived"])
+            sheet.append(["control", 1.0, 0.2, 4, "=B2+C2"])
+            sheet.append(["treated", 1.5, 0.3, 4, "=B3+C3"])
+            sheet.merge_cells("A5:B5")
+            hidden = workbook.create_sheet("QC notes")
+            hidden.sheet_state = "hidden"
+            hidden.append(["note", "owner"])
+            hidden.append(["raw values need export", "first_author"])
+            path = package / "source_data" / "Figure_6_source.xlsx"
+            path.parent.mkdir(parents=True)
+            workbook.save(path)
+            workbook.close()
+
+            output = Path(tmp) / "xlsx_structure.json"
+            run([
+                PYTHON,
+                "scripts/xlsx_structure_extract.py",
+                str(package),
+                "--output",
+                str(output),
+            ])
+            payload = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual(payload["input"]["xlsx_files"], 1)
+            self.assertFalse(payload["errors"])
+            self.assertEqual(len(payload["sheets"]), 2)
+            figure_sheet = next(item for item in payload["sheets"] if item["sheet_name"] == "Figure 6A")
+            self.assertEqual(figure_sheet["suggested_label"], "Figure 6A")
+            self.assertTrue(figure_sheet["looks_figure_or_table_like"])
+            self.assertEqual(figure_sheet["headers"][:5], ["group", "mean", "sd", "n", "derived"])
+            self.assertEqual(figure_sheet["formula_cell_count_scanned"], 2)
+            self.assertEqual(figure_sheet["merged_cell_range_count"], 1)
+            hidden_sheet = next(item for item in payload["sheets"] if item["sheet_name"] == "QC notes")
+            self.assertEqual(hidden_sheet["sheet_state"], "hidden")
+
+    def test_stats_detector_reads_pzfx_source_tables(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            source_dir = Path(tmp) / "source_data"
+            write_pzfx(
+                source_dir / "Figure_summary.pzfx",
+                ["group", "mean", "sd", "sem", "n"],
+                [
+                    ["control", 1.0, 0.2, 0.1, 4],
+                    ["treated", 1.5, 0.5, 0.1, 4],
+                ],
+            )
+            output = Path(tmp) / "stats.json"
+            run([
+                PYTHON,
+                "skill/biomed-research-integrity-auditor/scripts/stats_consistency_check.py",
+                str(source_dir),
+                "--output",
+                str(output),
+            ])
+            payload = json.loads(output.read_text(encoding="utf-8"))
+            validate_instance(payload, ROOT / "schemas" / "detector_output.schema.json", "pzfx stats detector")
+            self.assertFalse(payload["errors"])
+            self.assertTrue(any(path.endswith("Figure_summary.pzfx") for path in payload["files_screened"]))
+            self.assertTrue(any(
+                "Figure_summary.pzfx#figure_summary" in item["locations"][0]
+                and item["finding_type"] == "SD is not consistent with SEM * sqrt(n)"
+                for item in payload["candidates"]
+            ))
+
+    def test_prism_project_intake_indexes_graph_table_hints(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "prism_intake_case"
+            write_pzfx(
+                package / "source_data" / "Figure_summary.pzfx",
+                ["group", "mean", "sd", "sem", "n"],
+                [
+                    ["control", 1.0, 0.2, 0.1, 4],
+                    ["treated", 1.5, 0.5, 0.1, 4],
+                ],
+                table_title="Figure 1 source values",
+                table_id="TableFig1",
+                graph_title="Figure 1 graph",
+            )
+            output = Path(tmp) / "prism_project_intake.json"
+            run([
+                PYTHON,
+                "scripts/prism_project_intake.py",
+                str(package),
+                "--output",
+                str(output),
+            ])
+            payload = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual(payload["input"]["pzfx_files"], 1)
+            self.assertFalse(payload["errors"])
+            self.assertEqual(len(payload["tables"]), 1)
+            self.assertEqual(len(payload["graphs"]), 1)
+            self.assertEqual(len(payload["graph_table_links"]), 1)
+            link = payload["graph_table_links"][0]
+            self.assertEqual(link["graph_title"], "Figure 1 graph")
+            self.assertEqual(link["table_title"], "Figure 1 source values")
+            self.assertIn("not verified", link["interpretation"])
+
+    def test_fcs_metadata_intake_reads_header_text_keywords(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "fcs_intake_case"
+            write_minimal_fcs(package / "flow_fcs" / "sample_A.fcs")
+            output = Path(tmp) / "fcs_metadata_intake.json"
+            run([
+                PYTHON,
+                "scripts/fcs_metadata_intake.py",
+                str(package),
+                "--output",
+                str(output),
+            ])
+            payload = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual(payload["input"]["fcs_files"], 1)
+            self.assertFalse(payload["errors"])
+            self.assertEqual(payload["totals"]["readable_fcs_files"], 1)
+            self.assertEqual(payload["totals"]["total_events_reported"], 1234)
+            self.assertEqual(payload["totals"]["total_parameters_indexed"], 3)
+            self.assertEqual(payload["totals"]["files_with_compensation_keywords"], 1)
+            record = payload["fcs_files"][0]
+            self.assertEqual(record["cytometer"], "Synthetic cytometer")
+            self.assertEqual(record["parameters"][1]["marker"], "CD45")
+            self.assertTrue(record["compensation_present"])
+            self.assertIn("not gating", record["interpretation"])
 
     def test_stats_detector_ignores_censored_numeric_bounds(self) -> None:
         stats = load_stats_consistency_check()
@@ -796,6 +1490,29 @@ class ContractPipelineTests(unittest.TestCase):
             self.assertGreaterEqual(edge["score"], 0.985)
             self.assertTrue(Path(edge["evidence_crops"]["side_by_side"]).exists())
 
+    def test_keypoint_detector_finds_rotated_scaled_crop_candidate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "pkg"
+            write_keypoint_geometric_package(package)
+            output = Path(tmp) / "keypoint.json"
+            run([
+                PYTHON,
+                "detectors/image/keypoint_geometric_match.py",
+                str(package),
+                "--output",
+                str(output),
+            ])
+            payload = json.loads(output.read_text(encoding="utf-8"))
+            validate_instance(payload, ROOT / "schemas" / "detector_output.schema.json", "keypoint detector")
+            candidates = [item for item in payload["candidates"] if item["candidate_type"] == "keypoint_geometric_match"]
+            self.assertEqual(len(candidates), 1)
+            edge = candidates[0]["evidence"]["representative_edge"]
+            self.assertEqual(edge["similarity_scope"], "keypoint_geometric")
+            self.assertGreaterEqual(edge["good_matches"], 30)
+            self.assertGreaterEqual(edge["inlier_count"], 24)
+            self.assertGreaterEqual(edge["inlier_ratio"], 0.25)
+            self.assertGreater(abs(edge["rotation_degrees"]), 5)
+
     def test_local_patch_detector_finds_same_image_copy_move(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             package = Path(tmp) / "pkg"
@@ -868,6 +1585,171 @@ class ContractPipelineTests(unittest.TestCase):
             validate_instance(payload, ROOT / "schemas" / "detector_output.schema.json", "low-contrast no-copy detector")
             self.assertEqual(payload["same_image_candidate_count"], 0)
             self.assertEqual(payload["candidates"], [])
+
+    def test_splice_forensics_triage_flags_local_residual_outlier_only(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "pkg"
+            write_splice_forensics_triage_package(package)
+            output = Path(tmp) / "splice_forensics.json"
+            run([
+                PYTHON,
+                "detectors/image/splice_forensics_triage.py",
+                str(package),
+                "--output",
+                str(output),
+            ])
+            payload = json.loads(output.read_text(encoding="utf-8"))
+            validate_instance(payload, ROOT / "schemas" / "detector_output.schema.json", "splice forensics detector")
+            self.assertEqual(payload["images_screened"], 2)
+            self.assertGreaterEqual(payload["candidate_signal_count"], 1)
+            candidate_locations = {
+                location
+                for candidate in payload["candidates"]
+                for location in candidate["locations"]
+                if candidate["candidate_type"] == "splice_forensics_triage_signal"
+            }
+            self.assertIn("figures/Figure_splice_prompt.jpg", candidate_locations)
+            self.assertNotIn("figures/Figure_ordinary.jpg", candidate_locations)
+            first = [
+                item for item in payload["candidates"]
+                if item["candidate_type"] == "splice_forensics_triage_signal"
+            ][0]
+            self.assertIn("weak_forensic_triage_signal", first["risk_cap_tags"])
+            self.assertEqual(first["evidence_strength"], "weak_signal")
+            self.assertGreaterEqual(first["evidence"]["robust_z"], 8.0)
+
+    def test_splice_forensics_triage_flags_cfa_grid_outlier_as_weak_prompt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "pkg"
+            write_cfa_grid_triage_package(package)
+            output = Path(tmp) / "splice_forensics.json"
+            run([
+                PYTHON,
+                "detectors/image/splice_forensics_triage.py",
+                str(package),
+                "--output",
+                str(output),
+            ])
+            payload = json.loads(output.read_text(encoding="utf-8"))
+            validate_instance(payload, ROOT / "schemas" / "detector_output.schema.json", "CFA-grid splice triage detector")
+            signals = [
+                candidate for candidate in payload["candidates"]
+                if candidate["candidate_type"] == "splice_forensics_triage_signal"
+            ]
+            self.assertTrue(signals)
+            self.assertTrue(any(
+                item["evidence"]["analysis_type"] == "cfa_grid_consistency_outlier"
+                for item in signals
+            ))
+            cfa_signal = next(
+                item for item in signals
+                if item["evidence"]["analysis_type"] == "cfa_grid_consistency_outlier"
+            )
+            self.assertIn("weak_forensic_triage_signal", cfa_signal["risk_cap_tags"])
+            self.assertEqual(cfa_signal["evidence_strength"], "weak_signal")
+            self.assertGreaterEqual(cfa_signal["evidence"]["robust_z"], 3.5)
+            self.assertIn("sensor-pattern authentication", cfa_signal["evidence"]["interpretation"])
+
+    def test_splice_forensics_triage_flags_jpeg_ghost_profile_as_weak_prompt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "pkg"
+            write_jpeg_ghost_triage_package(package)
+            output = Path(tmp) / "splice_forensics.json"
+            run([
+                PYTHON,
+                "detectors/image/splice_forensics_triage.py",
+                str(package),
+                "--output",
+                str(output),
+            ])
+            payload = json.loads(output.read_text(encoding="utf-8"))
+            validate_instance(payload, ROOT / "schemas" / "detector_output.schema.json", "JPEG-ghost splice triage detector")
+            signals = [
+                candidate for candidate in payload["candidates"]
+                if candidate["candidate_type"] == "splice_forensics_triage_signal"
+            ]
+            self.assertTrue(signals)
+            self.assertTrue(any(
+                item["evidence"]["analysis_type"] == "jpeg_ghost_profile_outlier"
+                for item in signals
+            ))
+            ghost_signal = next(
+                item for item in signals
+                if item["evidence"]["analysis_type"] == "jpeg_ghost_profile_outlier"
+            )
+            self.assertIn("weak_forensic_triage_signal", ghost_signal["risk_cap_tags"])
+            self.assertEqual(ghost_signal["evidence_strength"], "weak_signal")
+            self.assertGreaterEqual(ghost_signal["evidence"]["robust_z"], 4.0)
+            self.assertGreaterEqual(ghost_signal["evidence"]["profile_range"], 4.0)
+            self.assertIn("not robust JPEG ghost analysis", ghost_signal["evidence"]["interpretation"])
+
+    def test_pipeline_reports_splice_forensics_triage_as_r2_weak_prompt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "pkg"
+            write_splice_forensics_triage_package(package)
+            out = Path(tmp) / "out"
+            run([
+                PYTHON,
+                "scripts/audit_package.py",
+                str(package),
+                "--output-dir",
+                str(out),
+                "--case-id",
+                "splice_forensics_case",
+            ])
+            payload = json.loads((out / "splice_forensics_candidates.json").read_text(encoding="utf-8"))
+            self.assertGreaterEqual(payload["candidate_signal_count"], 1)
+            coverage = json.loads((out / "coverage.json").read_text(encoding="utf-8"))
+            self.assertIn("image_splice_forensics_triage", coverage["modules_executed"])
+            self.assertEqual(coverage["splice_forensics_images_screened"], 2)
+            self.assertGreaterEqual(coverage["splice_forensics_candidates"], 1)
+            calibrated = json.loads((out / "calibrated_findings.json").read_text(encoding="utf-8"))
+            findings = [
+                item for item in calibrated["findings"]
+                if item["finding_type"] == "splice_forensics_triage_signal"
+            ]
+            self.assertTrue(findings)
+            self.assertTrue(all(item["calibrated_risk_level"] == "R2" for item in findings))
+            report = (out / "audit-report.md").read_text(encoding="utf-8")
+            self.assertIn("Weak splice-forensics triage", report)
+            self.assertIn("CFA-like grid", report)
+            self.assertIn("not proof of splicing", report)
+            packet = out / "submission_qc_packet" / "splice_forensics_candidates.json"
+            self.assertTrue(packet.is_file())
+            review_payload = out / "submission_qc_packet" / "image_review_packet" / "detector_payloads" / "splice_forensics_candidates.json"
+            self.assertTrue(review_payload.is_file())
+
+    def test_pipeline_reports_jpeg_ghost_profile_as_r2_weak_prompt(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "pkg"
+            write_jpeg_ghost_triage_package(package)
+            out = Path(tmp) / "out"
+            run([
+                PYTHON,
+                "scripts/audit_package.py",
+                str(package),
+                "--output-dir",
+                str(out),
+                "--case-id",
+                "jpeg_ghost_case",
+            ])
+            coverage = json.loads((out / "coverage.json").read_text(encoding="utf-8"))
+            self.assertGreaterEqual(coverage["splice_forensics_candidates"], 1)
+            self.assertTrue(any(
+                "jpeg_ghost_profile_outlier" in item.get("signals", [])
+                for item in coverage["splice_forensics_review_items"]
+            ))
+            calibrated = json.loads((out / "calibrated_findings.json").read_text(encoding="utf-8"))
+            findings = [
+                item for item in calibrated["findings"]
+                if item["finding_type"] == "splice_forensics_triage_signal"
+                and item["evidence"].get("analysis_type") == "jpeg_ghost_profile_outlier"
+            ]
+            self.assertTrue(findings)
+            self.assertTrue(all(item["calibrated_risk_level"] == "R2" for item in findings))
+            report = (out / "audit-report.md").read_text(encoding="utf-8")
+            self.assertIn("JPEG-ghost profile", report)
+            self.assertIn("not proof of splicing or robust JPEG-ghost analysis", report)
 
     def test_local_patch_detector_emits_budget_coverage_gap(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1357,6 +2239,445 @@ class ContractPipelineTests(unittest.TestCase):
             }
             self.assertEqual(recovered_markers, set(expected["expected_markers"]))
 
+    def test_pdf_structure_extractor_records_captions_and_table_like_blocks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "pdf_structure_case"
+            write_simple_pdf(
+                package / "manuscript.pdf",
+                [
+                    "Results",
+                    "Figure 2. Representative microscopy field linked to raw_images/acquisition_002.tif.",
+                    "Table 1. Quantification summary.",
+                    "Group  Mean  SD",
+                    "Control  1.2  0.3",
+                    "Treatment  1.8  0.4",
+                ],
+            )
+            output = Path(tmp) / "pdf_structure.json"
+            run([
+                PYTHON,
+                "scripts/pdf_structure_extract.py",
+                str(package),
+                "--output",
+                str(output),
+            ])
+            payload = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual(payload["input"]["pdf_files"], 1)
+            self.assertFalse(payload["errors"])
+            labels = {item["label"].lower() for item in payload["captions"]}
+            self.assertIn("figure 2", labels)
+            self.assertIn("table 1", labels)
+            self.assertEqual(len(payload["table_like_blocks"]), 1)
+            self.assertGreaterEqual(payload["table_like_blocks"][0]["row_count"], 3)
+
+    def test_docx_structure_extractor_records_paragraphs_captions_and_tables(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "docx_structure_case"
+            write_docx(
+                package / "manuscript" / "draft.docx",
+                [
+                    ("Results", "Heading1"),
+                    ("Figure 4A. Representative microscopy field linked to source records.", "Caption"),
+                    ("Table 2. Quantification summary.", "Caption"),
+                    ("The following paragraph is body text for intake testing.", None),
+                ],
+                table_rows=[
+                    ["Group", "Mean", "SD"],
+                    ["Control", "1.2", "0.3"],
+                    ["Treatment", "1.8", "0.4"],
+                ],
+            )
+            output = Path(tmp) / "docx_structure.json"
+            run([
+                PYTHON,
+                "scripts/docx_structure_extract.py",
+                str(package),
+                "--output",
+                str(output),
+            ])
+            payload = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual(payload["input"]["docx_files"], 1)
+            self.assertFalse(payload["errors"])
+            self.assertGreaterEqual(len(payload["paragraphs"]), 4)
+            labels = {item["label"].lower() for item in payload["captions"]}
+            self.assertIn("figure 4a", labels)
+            self.assertIn("table 2", labels)
+            self.assertEqual(len(payload["table_like_blocks"]), 1)
+            self.assertEqual(payload["table_like_blocks"][0]["row_count"], 3)
+
+    def test_docx_structure_extractor_records_review_layer_warnings(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "docx_review_layer_case"
+            write_docx(
+                package / "manuscript" / "draft.docx",
+                [
+                    ("Results", "Heading1"),
+                    ("Figure 4A. Representative microscopy field linked to source records.", "Caption"),
+                ],
+                review_layers=True,
+            )
+            output = Path(tmp) / "docx_structure.json"
+            run([
+                PYTHON,
+                "scripts/docx_structure_extract.py",
+                str(package),
+                "--output",
+                str(output),
+            ])
+            payload = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual(payload["schema_version"], "0.2.0")
+            self.assertFalse(payload["errors"])
+            warning_types = {item["warning_type"] for item in payload["warnings"]}
+            self.assertIn("docx_comments_present", warning_types)
+            self.assertIn("docx_tracked_changes_present", warning_types)
+            self.assertIn("docx_embedded_objects_present", warning_types)
+            docx_file = payload["docx_files"][0]
+            self.assertEqual(docx_file["comment_count"], 1)
+            self.assertEqual(docx_file["tracked_change_count"], 1)
+            self.assertEqual(docx_file["embedded_object_count"], 1)
+            self.assertEqual(docx_file["embedded_media_count"], 1)
+
+    def test_pdf_embedded_image_extractor_exports_presentation_images(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "pdf_image_case"
+            write_pdf_with_embedded_image(
+                package / "supplementary" / "Figure_S1.pdf",
+                textured_image(991, size=(96, 96)),
+                "Figure S1. Embedded presentation-layer microscopy panel.",
+            )
+            output = Path(tmp) / "pdf_embedded_images.json"
+            image_dir = Path(tmp) / "pdf_embedded_images"
+            run([
+                PYTHON,
+                "scripts/pdf_embedded_image_extract.py",
+                str(package),
+                "--output",
+                str(output),
+                "--image-dir",
+                str(image_dir),
+            ])
+            payload = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual(payload["input"]["pdf_files"], 1)
+            self.assertFalse(payload["errors"])
+            self.assertEqual(len(payload["images"]), 1)
+            image_record = payload["images"][0]
+            self.assertEqual(image_record["source_pdf"], "supplementary/Figure_S1.pdf")
+            self.assertIn("presentation-layer", image_record["interpretation"])
+            self.assertEqual(len(image_record["sha256"]), 64)
+            self.assertTrue((Path(tmp) / image_record["output_path"]).is_file())
+
+    def test_pipeline_records_pdf_embedded_image_intake_coverage(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "pdf_image_pkg"
+            package.mkdir(parents=True)
+            write_minimal_source(package)
+            write_pdf_with_embedded_image(
+                package / "supplementary" / "Figure_S2.pdf",
+                textured_image(992, size=(96, 96)),
+                "Figure S2. Embedded presentation-layer image for intake coverage.",
+            )
+            out = Path(tmp) / "out"
+            run([
+                PYTHON,
+                "scripts/audit_package.py",
+                str(package),
+                "--output-dir",
+                str(out),
+                "--case-id",
+                "pdf_embedded_image_case",
+            ])
+            exported = json.loads((out / "pdf_embedded_images.json").read_text(encoding="utf-8"))
+            self.assertEqual(len(exported["images"]), 1)
+            summary = json.loads((out / "AUDIT_JSON_SUMMARY.json").read_text(encoding="utf-8"))
+            coverage = summary["audit_coverage"]
+            self.assertIn("pdf_embedded_image_extraction", coverage["modules_executed"])
+            self.assertEqual(coverage["pdf_embedded_images_extracted"], 1)
+            self.assertEqual(coverage["pdf_embedded_image_error_count"], 0)
+            self.assertTrue(coverage["pdf_embedded_image_files"][0]["output_path"].startswith("pdf_embedded_images/"))
+            report = (out / "audit-report.md").read_text(encoding="utf-8")
+            self.assertIn("PDF embedded-image intake note / PDF 内嵌图片读取说明", report)
+            self.assertIn("导出的 PDF 内嵌图片只是展示层材料", report)
+            packet = out / "submission_qc_packet"
+            self.assertTrue((packet / "pdf_embedded_images.json").is_file())
+            self.assertTrue((packet / "pdf_embedded_images").is_dir())
+            packet_readme = (packet / "QC_PACKET_README.md").read_text(encoding="utf-8")
+            self.assertIn("pdf_embedded_images", packet_readme)
+
+    def test_pptx_embedded_image_extractor_exports_presentation_images(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "pptx_image_case"
+            write_pptx_with_embedded_image(
+                package / "figure_assembly" / "figure_layout.pptx",
+                textured_image(993, size=(88, 72)),
+                "Figure 1A assembly slide",
+            )
+            output = Path(tmp) / "pptx_embedded_images.json"
+            image_dir = Path(tmp) / "pptx_embedded_images"
+            run([
+                PYTHON,
+                "scripts/pptx_embedded_image_extract.py",
+                str(package),
+                "--output",
+                str(output),
+                "--image-dir",
+                str(image_dir),
+            ])
+            payload = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual(payload["input"]["pptx_files"], 1)
+            self.assertFalse(payload["errors"])
+            self.assertEqual(len(payload["images"]), 1)
+            image_record = payload["images"][0]
+            self.assertEqual(image_record["source_pptx"], "figure_assembly/figure_layout.pptx")
+            self.assertEqual(image_record["referenced_slides"], [1])
+            self.assertIn("presentation-layer", image_record["interpretation"])
+            self.assertEqual(len(image_record["sha256"]), 64)
+            self.assertTrue((Path(tmp) / image_record["output_path"]).is_file())
+
+    def test_pptx_structure_extractor_records_slide_text_and_explicit_path_pairs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "pptx_structure_case"
+            (package / "figures").mkdir(parents=True)
+            (package / "raw_images").mkdir()
+            (package / "source_data").mkdir()
+            (package / "figures" / "Figure_2A.png").write_bytes(b"figure")
+            (package / "raw_images" / "acq_002.tif").write_bytes(b"raw")
+            (package / "source_data" / "Figure_2A.csv").write_text("group,value\nA,1\n", encoding="utf-8")
+            write_pptx(
+                package / "figure_assembly" / "layout.pptx",
+                [[
+                    "Panel: figures/Figure_2A.png",
+                    "Raw image: raw_images/acq_002.tif",
+                    "Quantification table: source_data/Figure_2A.csv",
+                ]],
+                speaker_notes=[[
+                    "Speaker note: figures/Figure_2A.png maps to raw_images/acq_002.tif.",
+                ]],
+                alt_texts=[[
+                    "Alt text source link: figures/Figure_2A.png source_data/Figure_2A.csv.",
+                ]],
+            )
+            output = Path(tmp) / "pptx_structure.json"
+            run([
+                PYTHON,
+                "scripts/pptx_structure_extract.py",
+                str(package),
+                "--output",
+                str(output),
+            ])
+            payload = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual(payload["input"]["pptx_files"], 1)
+            self.assertFalse(payload["errors"])
+            self.assertEqual(payload["schema_version"], "0.2.0")
+            self.assertEqual(len(payload["slides"]), 1)
+            self.assertEqual(payload["slides"][0]["paragraph_count"], 3)
+            self.assertEqual(payload["slides"][0]["speaker_note_paragraph_count"], 1)
+            self.assertEqual(payload["slides"][0]["alt_text_count"], 1)
+            self.assertGreaterEqual(len(payload["explicit_path_mentions"]), 3)
+            self.assertEqual(
+                {item["target_path"] for item in payload["explicit_path_pairs"]},
+                {"raw_images/acq_002.tif", "source_data/Figure_2A.csv"},
+            )
+            extraction_methods = {item["extraction_method"] for item in payload["explicit_path_pairs"]}
+            self.assertIn("pptx_slide_explicit_paths", extraction_methods)
+            self.assertIn("pptx_notes_explicit_paths", extraction_methods)
+            self.assertIn("pptx_alt_text_explicit_paths", extraction_methods)
+
+    def test_pipeline_records_pptx_embedded_image_intake_coverage(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "pptx_image_pkg"
+            package.mkdir(parents=True)
+            write_minimal_source(package)
+            write_pptx_with_embedded_image(
+                package / "figure_assembly" / "figure_layout.pptx",
+                textured_image(994, size=(88, 72)),
+                "Figure 1B presentation image",
+            )
+            out = Path(tmp) / "out"
+            run([
+                PYTHON,
+                "scripts/audit_package.py",
+                str(package),
+                "--output-dir",
+                str(out),
+                "--case-id",
+                "pptx_embedded_image_case",
+            ])
+            exported = json.loads((out / "pptx_embedded_images.json").read_text(encoding="utf-8"))
+            self.assertEqual(len(exported["images"]), 1)
+            summary = json.loads((out / "AUDIT_JSON_SUMMARY.json").read_text(encoding="utf-8"))
+            coverage = summary["audit_coverage"]
+            self.assertIn("pptx_embedded_image_extraction", coverage["modules_executed"])
+            self.assertEqual(coverage["pptx_embedded_images_extracted"], 1)
+            self.assertEqual(coverage["pptx_embedded_image_error_count"], 0)
+            self.assertTrue(coverage["pptx_embedded_image_files"][0]["output_path"].startswith("pptx_embedded_images/"))
+            report = (out / "audit-report.md").read_text(encoding="utf-8")
+            self.assertIn("PPTX embedded-image intake note / PPTX 内嵌图片读取说明", report)
+            self.assertIn("导出的 PPTX 内嵌图片只是组图展示层材料", report)
+            packet = out / "submission_qc_packet"
+            self.assertTrue((packet / "pptx_embedded_images.json").is_file())
+            self.assertTrue((packet / "pptx_embedded_images").is_dir())
+            packet_readme = (packet / "QC_PACKET_README.md").read_text(encoding="utf-8")
+            self.assertIn("pptx_embedded_images", packet_readme)
+
+    def test_key_embedded_image_extractor_exports_presentation_images(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "key_image_case"
+            write_key_with_embedded_image(
+                package / "figure_assembly" / "figure_layout.key",
+                textured_image(995, size=(90, 70)),
+            )
+            output = Path(tmp) / "key_embedded_images.json"
+            image_dir = Path(tmp) / "key_embedded_images"
+            run([
+                PYTHON,
+                "scripts/key_embedded_image_extract.py",
+                str(package),
+                "--output",
+                str(output),
+                "--image-dir",
+                str(image_dir),
+            ])
+            payload = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual(payload["input"]["key_files"], 1)
+            self.assertFalse(payload["errors"])
+            self.assertEqual(len(payload["images"]), 1)
+            image_record = payload["images"][0]
+            self.assertEqual(image_record["source_key"], "figure_assembly/figure_layout.key")
+            self.assertEqual(image_record["internal_path"], "Data/image-1.png")
+            self.assertIn("presentation-layer", image_record["interpretation"])
+            self.assertEqual(len(image_record["sha256"]), 64)
+            self.assertTrue((Path(tmp) / image_record["output_path"]).is_file())
+
+    def test_pipeline_records_key_embedded_image_intake_coverage(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "key_image_pkg"
+            package.mkdir(parents=True)
+            write_minimal_source(package)
+            write_key_with_embedded_image(
+                package / "figure_assembly" / "figure_layout.key",
+                textured_image(996, size=(90, 70)),
+            )
+            out = Path(tmp) / "out"
+            run([
+                PYTHON,
+                "scripts/audit_package.py",
+                str(package),
+                "--output-dir",
+                str(out),
+                "--case-id",
+                "key_embedded_image_case",
+            ])
+            exported = json.loads((out / "key_embedded_images.json").read_text(encoding="utf-8"))
+            self.assertEqual(len(exported["images"]), 1)
+            summary = json.loads((out / "AUDIT_JSON_SUMMARY.json").read_text(encoding="utf-8"))
+            coverage = summary["audit_coverage"]
+            self.assertIn("key_embedded_image_extraction", coverage["modules_executed"])
+            self.assertEqual(coverage["key_embedded_images_extracted"], 1)
+            self.assertEqual(coverage["key_embedded_image_error_count"], 0)
+            self.assertTrue(coverage["key_embedded_image_files"][0]["output_path"].startswith("key_embedded_images/"))
+            self.assertTrue(any(
+                item.get("gap_type") == "opaque_figure_assembly_project_requires_export"
+                for item in coverage["unsupported_relevant_files"]
+            ))
+            report = (out / "audit-report.md").read_text(encoding="utf-8")
+            self.assertIn("Keynote embedded-image intake note / Keynote 内嵌图片读取说明", report)
+            self.assertIn("导出的 Keynote 内嵌图片只是组图展示层材料", report)
+            packet = out / "submission_qc_packet"
+            self.assertTrue((packet / "key_embedded_images.json").is_file())
+            self.assertTrue((packet / "key_embedded_images").is_dir())
+            packet_readme = (packet / "QC_PACKET_README.md").read_text(encoding="utf-8")
+            self.assertIn("key_embedded_images", packet_readme)
+
+    def test_psd_preview_extractor_exports_flattened_preview_when_decodable(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "psd_preview_case"
+            psd_path = package / "figure_assembly" / "figure_layout.psd"
+            psd_path.parent.mkdir(parents=True)
+            textured_image(997, size=(84, 68)).save(psd_path, format="PNG")
+            output = Path(tmp) / "psd_preview_images.json"
+            image_dir = Path(tmp) / "psd_preview_images"
+            run([
+                PYTHON,
+                "scripts/psd_preview_extract.py",
+                str(package),
+                "--output",
+                str(output),
+                "--image-dir",
+                str(image_dir),
+            ])
+            payload = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual(payload["input"]["psd_files"], 1)
+            self.assertFalse(payload["errors"])
+            self.assertEqual(len(payload["images"]), 1)
+            image_record = payload["images"][0]
+            self.assertEqual(image_record["source_psd"], "figure_assembly/figure_layout.psd")
+            self.assertTrue(image_record["output_path"].startswith("psd_preview_images/"))
+            self.assertIn("flattened presentation-layer PSD preview", image_record["interpretation"])
+            self.assertEqual(len(image_record["sha256"]), 64)
+            self.assertTrue((Path(tmp) / image_record["output_path"]).is_file())
+
+    def test_psd_preview_extractor_records_unavailable_preview_errors(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "bad_psd_case"
+            psd_path = package / "figure_assembly" / "broken_layout.psd"
+            psd_path.parent.mkdir(parents=True)
+            psd_path.write_bytes(b"not a decodable PSD preview")
+            output = Path(tmp) / "psd_preview_images.json"
+            run([
+                PYTHON,
+                "scripts/psd_preview_extract.py",
+                str(package),
+                "--output",
+                str(output),
+                "--image-dir",
+                str(Path(tmp) / "psd_preview_images"),
+            ])
+            payload = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual(payload["input"]["psd_files"], 1)
+            self.assertEqual(len(payload["images"]), 0)
+            self.assertEqual(len(payload["errors"]), 1)
+            self.assertEqual(payload["psd_files"][0]["status"], "preview_unavailable")
+            self.assertEqual(payload["errors"][0]["path"], "figure_assembly/broken_layout.psd")
+
+    def test_pipeline_records_psd_preview_intake_coverage(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "psd_preview_pkg"
+            package.mkdir(parents=True)
+            write_minimal_source(package)
+            psd_path = package / "figure_assembly" / "figure_layout.psd"
+            psd_path.parent.mkdir(parents=True, exist_ok=True)
+            textured_image(998, size=(84, 68)).save(psd_path, format="PNG")
+            out = Path(tmp) / "out"
+            run([
+                PYTHON,
+                "scripts/audit_package.py",
+                str(package),
+                "--output-dir",
+                str(out),
+                "--case-id",
+                "psd_preview_case",
+            ])
+            exported = json.loads((out / "psd_preview_images.json").read_text(encoding="utf-8"))
+            self.assertEqual(len(exported["images"]), 1)
+            summary = json.loads((out / "AUDIT_JSON_SUMMARY.json").read_text(encoding="utf-8"))
+            coverage = summary["audit_coverage"]
+            self.assertIn("psd_flattened_preview_extraction", coverage["modules_executed"])
+            self.assertEqual(coverage["psd_preview_images_extracted"], 1)
+            self.assertEqual(coverage["psd_preview_image_error_count"], 0)
+            self.assertTrue(coverage["psd_preview_image_files"][0]["output_path"].startswith("psd_preview_images/"))
+            self.assertTrue(any(
+                item.get("gap_type") == "opaque_figure_assembly_project_requires_export"
+                for item in coverage["unsupported_relevant_files"]
+            ))
+            report = (out / "audit-report.md").read_text(encoding="utf-8")
+            self.assertIn("PSD flattened-preview intake note / PSD 扁平预览读取说明", report)
+            self.assertIn("导出的 PSD 扁平预览只是组图展示层材料", report)
+            packet = out / "submission_qc_packet"
+            self.assertTrue((packet / "psd_preview_images.json").is_file())
+            self.assertTrue((packet / "psd_preview_images").is_dir())
+            packet_readme = (packet / "QC_PACKET_README.md").read_text(encoding="utf-8")
+            self.assertIn("psd_preview_images", packet_readme)
+
     def test_external_literature_fixture_search_emits_calibrated_candidate(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             package = Path(tmp) / "pkg"
@@ -1732,6 +3053,33 @@ class ProvenanceManifestTests(unittest.TestCase):
             self.assertEqual(payload["links"][0]["target_path"], "raw_images/raw_A.png")
             self.assertEqual(payload["links"][0]["extraction_method"], "structured_csv_manifest")
 
+    def test_pptx_assembly_text_can_declare_figure_to_raw_traceability(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "pkg"
+            (package / "figures").mkdir(parents=True)
+            (package / "raw_images").mkdir()
+            (package / "figure_assembly").mkdir()
+            (package / "figures/Figure_1A.png").write_bytes(b"figure")
+            (package / "raw_images/acquisition_001.tif").write_bytes(b"raw")
+            write_pptx(
+                package / "figure_assembly" / "figure_layout.pptx",
+                [[
+                    "Figure 1A source: figures/Figure_1A.png",
+                    "Raw acquisition: raw_images/acquisition_001.tif",
+                ]],
+            )
+            output = Path(tmp) / "links.json"
+            run([PYTHON, "provenance/parse_assembly_manifest.py", str(package), "--output", str(output)])
+            payload = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual(payload["parsed_files"], ["figure_assembly/figure_layout.pptx"])
+            self.assertEqual(len(payload["links"]), 1)
+            link = payload["links"][0]
+            self.assertEqual(link["source_path"], "figures/Figure_1A.png")
+            self.assertEqual(link["target_path"], "raw_images/acquisition_001.tif")
+            self.assertEqual(link["risk_effect"], "expected_traceability")
+            self.assertEqual(link["extraction_method"], "pptx_slide_explicit_paths")
+            self.assertLess(link["confidence"], 0.95)
+
     def test_text_manifest_ordered_mapping_phrase_is_warning_not_traceability(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             package = Path(tmp) / "pkg"
@@ -1974,8 +3322,158 @@ class EndToEndTests(unittest.TestCase):
             summary = json.loads((out / "pipeline_summary.json").read_text(encoding="utf-8"))
             self.assertTrue(any(path.endswith("stats_consistency_candidates.json") for path in summary["detector_outputs"]))
             self.assertFalse(any(path.endswith("audit_coverage_candidates.json") for path in summary["detector_outputs"]))
+            xlsx_structure = json.loads((out / "xlsx_structure.json").read_text(encoding="utf-8"))
+            self.assertEqual(len(xlsx_structure["sheets"]), 1)
+            self.assertEqual(xlsx_structure["sheets"][0]["headers"][:5], ["group", "mean", "sd", "sem", "n"])
+            audit_summary = json.loads((out / "AUDIT_JSON_SUMMARY.json").read_text(encoding="utf-8"))
+            coverage = audit_summary["audit_coverage"]
+            self.assertIn("xlsx_workbook_structure_intake", coverage["modules_executed"])
+            self.assertEqual(coverage["xlsx_files_structurally_read"], 1)
+            self.assertEqual(coverage["xlsx_sheets_indexed"], 1)
             calibrated = json.loads((out / "calibrated_findings.json").read_text(encoding="utf-8"))
             self.assertTrue(any(item["finding_type"] == "SD is not consistent with SEM * sqrt(n)" for item in calibrated["findings"]))
+            report = (out / "audit-report.md").read_text(encoding="utf-8")
+            self.assertIn("XLSX workbook structure intake note / XLSX workbook 结构读取说明", report)
+            packet = out / "submission_qc_packet"
+            self.assertTrue((packet / "xlsx_structure.json").is_file())
+            self.assertIn("xlsx_structure.json", (packet / "QC_PACKET_README.md").read_text(encoding="utf-8"))
+
+    def test_pzfx_source_data_runs_stats_without_format_gap(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "pzfx_source_case"
+            write_pzfx(
+                package / "source_data" / "Figure_summary.pzfx",
+                ["group", "mean", "sd", "sem", "n"],
+                [
+                    ["control", 1.0, 0.2, 0.1, 4],
+                    ["treated", 1.5, 0.5, 0.1, 4],
+                ],
+            )
+            out = Path(tmp) / "out"
+            run([
+                PYTHON,
+                "scripts/audit_package.py",
+                str(package),
+                "--output-dir",
+                str(out),
+                "--case-id",
+                "pzfx_source_case",
+            ])
+            summary = json.loads((out / "pipeline_summary.json").read_text(encoding="utf-8"))
+            self.assertTrue(any(path.endswith("stats_consistency_candidates.json") for path in summary["detector_outputs"]))
+            self.assertFalse(any(path.endswith("format_coverage_candidates.json") for path in summary["detector_outputs"]))
+            coverage = json.loads((out / "coverage.json").read_text(encoding="utf-8"))
+            self.assertIn("statistics_consistency", coverage["modules_executed"])
+            self.assertEqual(coverage["unsupported_relevant_file_count"], 0)
+            calibrated = json.loads((out / "calibrated_findings.json").read_text(encoding="utf-8"))
+            self.assertTrue(any(
+                item["finding_type"] == "SD is not consistent with SEM * sqrt(n)"
+                and "Figure_summary.pzfx" in item["location"]
+                for item in calibrated["findings"]
+            ))
+
+    def test_pipeline_records_prism_project_intake_coverage(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "prism_project_pkg"
+            write_pzfx(
+                package / "source_data" / "Figure_summary.pzfx",
+                ["group", "mean", "sd", "sem", "n"],
+                [
+                    ["control", 1.0, 0.2, 0.1, 4],
+                    ["treated", 1.5, 0.5, 0.1, 4],
+                ],
+                table_title="Figure 1 source values",
+                table_id="TableFig1",
+                graph_title="Figure 1 graph",
+            )
+            out = Path(tmp) / "out"
+            run([
+                PYTHON,
+                "scripts/audit_package.py",
+                str(package),
+                "--output-dir",
+                str(out),
+                "--case-id",
+                "prism_project_case",
+            ])
+            prism_payload = json.loads((out / "prism_project_intake.json").read_text(encoding="utf-8"))
+            self.assertEqual(len(prism_payload["graph_table_links"]), 1)
+            coverage = json.loads((out / "coverage.json").read_text(encoding="utf-8"))
+            self.assertIn("prism_project_intake", coverage["modules_executed"])
+            self.assertEqual(coverage["prism_pzfx_files_read"], 1)
+            self.assertEqual(coverage["prism_tables_indexed"], 1)
+            self.assertEqual(coverage["prism_graphs_indexed"], 1)
+            self.assertEqual(coverage["prism_possible_graph_table_links"], 1)
+            self.assertEqual(coverage["prism_project_error_count"], 0)
+            report = (out / "audit-report.md").read_text(encoding="utf-8")
+            self.assertIn("GraphPad Prism project intake note / GraphPad Prism 项目读取说明", report)
+            self.assertIn("可能的 graph-to-table 线索", report)
+            packet = out / "submission_qc_packet"
+            self.assertTrue((packet / "prism_project_intake.json").is_file())
+            packet_readme = (packet / "QC_PACKET_README.md").read_text(encoding="utf-8")
+            self.assertIn("prism_project_intake.json", packet_readme)
+
+    def test_pipeline_records_fcs_metadata_intake_coverage(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "fcs_metadata_pkg"
+            package.mkdir(parents=True)
+            write_minimal_source(package)
+            write_minimal_fcs(package / "flow_fcs" / "sample_A.fcs")
+            out = Path(tmp) / "out"
+            run([
+                PYTHON,
+                "scripts/audit_package.py",
+                str(package),
+                "--domains",
+                "flow",
+                "--output-dir",
+                str(out),
+                "--case-id",
+                "fcs_metadata_case",
+            ])
+            fcs_payload = json.loads((out / "fcs_metadata_intake.json").read_text(encoding="utf-8"))
+            self.assertEqual(fcs_payload["totals"]["readable_fcs_files"], 1)
+            coverage = json.loads((out / "coverage.json").read_text(encoding="utf-8"))
+            self.assertIn("flow_fcs_metadata_intake", coverage["modules_executed"])
+            self.assertEqual(coverage["fcs_files_read"], 1)
+            self.assertEqual(coverage["fcs_parameters_indexed"], 3)
+            self.assertEqual(coverage["fcs_total_events_reported"], 1234)
+            self.assertEqual(coverage["fcs_files_with_compensation_keywords"], 1)
+            report = (out / "audit-report.md").read_text(encoding="utf-8")
+            self.assertIn("Flow/FCS metadata intake note / Flow/FCS metadata 读取说明", report)
+            self.assertIn("不能替代 FlowJo/workspace/gating", report)
+            packet = out / "submission_qc_packet"
+            self.assertTrue((packet / "fcs_metadata_intake.json").is_file())
+            packet_readme = (packet / "QC_PACKET_README.md").read_text(encoding="utf-8")
+            self.assertIn("fcs_metadata_intake.json", packet_readme)
+
+    def test_unparseable_pzfx_source_data_emits_r1_extraction_gap(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "bad_pzfx_source_case"
+            (package / "source_data").mkdir(parents=True)
+            (package / "source_data" / "Figure_summary.pzfx").write_text("<GraphPadPrismFile />", encoding="utf-8")
+            out = Path(tmp) / "out"
+            run([
+                PYTHON,
+                "scripts/audit_package.py",
+                str(package),
+                "--output-dir",
+                str(out),
+                "--case-id",
+                "bad_pzfx_source_case",
+            ])
+            stats_payload = json.loads((out / "stats_consistency_candidates.json").read_text(encoding="utf-8"))
+            gap = next(item for item in stats_payload["candidates"] if item["candidate_type"] == "audit_coverage_gap")
+            self.assertEqual(gap["evidence"]["gap_type"], "source_table_extraction_failed")
+            self.assertIn("Figure_summary.pzfx", gap["locations"][0])
+            calibrated = json.loads((out / "calibrated_findings.json").read_text(encoding="utf-8"))
+            findings = [
+                item for item in calibrated["findings"]
+                if item["finding_type"] == "source data extraction gap"
+                and item["evidence"].get("gap_type") == "source_table_extraction_failed"
+            ]
+            self.assertTrue(findings)
+            self.assertTrue(all(item["calibrated_risk_level"] == "R1" for item in findings))
 
     def test_unsupported_package_emits_audit_coverage_gap(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -2005,7 +3503,7 @@ class EndToEndTests(unittest.TestCase):
             (package / "manuscript").mkdir(parents=True)
             (package / "source_data").mkdir()
             (package / "supplementary").mkdir()
-            (package / "manuscript" / "draft.docx").write_bytes(b"word container placeholder")
+            (package / "manuscript" / "draft.doc").write_bytes(b"legacy word container placeholder")
             (package / "source_data" / "figure_values.xls").write_bytes(b"legacy excel placeholder")
             (package / "source_data" / "figure_values.pzfx").write_text("<GraphPadPrismFile />", encoding="utf-8")
             (package / "supplementary" / "Figure_S1.pdf").write_text(
@@ -2031,7 +3529,7 @@ class EndToEndTests(unittest.TestCase):
                 for item in calibrated["findings"]
                 if item.get("module") == "audit.format_coverage"
             ]
-            self.assertEqual(len(format_gaps), 4)
+            self.assertEqual(len(format_gaps), 3)
             self.assertTrue(all(item["calibrated_risk_level"] == "R1" for item in format_gaps))
             gap_types = {
                 item["evidence"]["gap_type"]
@@ -2040,28 +3538,75 @@ class EndToEndTests(unittest.TestCase):
             self.assertEqual(gap_types, {
                 "document_text_container_not_screened",
                 "legacy_excel_source_not_screened",
-                "graphpad_prism_project_not_screened",
                 "pdf_embedded_figures_not_image_screened",
             })
 
             audit_summary = json.loads((out / "AUDIT_JSON_SUMMARY.json").read_text(encoding="utf-8"))
             coverage = audit_summary["audit_coverage"]
-            self.assertEqual(coverage["unsupported_relevant_file_count"], 4)
+            self.assertEqual(coverage["unsupported_relevant_file_count"], 3)
             self.assertIn("unsupported relevant file formats", audit_summary["materials_missing"])
             actions = [
                 row
                 for rows in audit_summary["action_queue"]["categories"].values()
                 for row in rows
                 if row.get("source") == "AUDIT_JSON_SUMMARY.findings"
-                and row.get("action_type") == "audit_coverage_gap"
+                and row.get("action_type") in {"audit_coverage_gap", "source data extraction gap"}
             ]
             self.assertEqual(len(actions), 4)
             report = (out / "audit-report.md").read_text(encoding="utf-8")
             self.assertIn("Relevant files not automatically screened / 相关但未自动筛查的文件", report)
-            self.assertIn("draft.docx", report)
+            self.assertIn("draft.doc", report)
             self.assertIn("figure_values.xls", report)
             self.assertIn("figure_values.pzfx", report)
             self.assertIn("Figure_S1.pdf", report)
+            self.assertTrue(any(
+                item["finding_type"] == "source data extraction gap"
+                and "figure_values.pzfx" in json.dumps(item["evidence"])
+                for item in calibrated["findings"]
+            ))
+
+    def test_opaque_figure_assembly_projects_emit_export_coverage_gap(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "opaque_assembly_case"
+            package.mkdir(parents=True)
+            write_minimal_source(package)
+            (package / "figure_assembly").mkdir()
+            for name in ("layout.psd", "layout.ai", "layout.indd", "legacy_layout.ppt"):
+                (package / "figure_assembly" / name).write_bytes(b"opaque assembly placeholder")
+            out = Path(tmp) / "out"
+            run([
+                PYTHON,
+                "scripts/audit_package.py",
+                str(package),
+                "--output-dir",
+                str(out),
+                "--case-id",
+                "opaque_assembly_case",
+            ])
+
+            summary = json.loads((out / "AUDIT_JSON_SUMMARY.json").read_text(encoding="utf-8"))
+            coverage = summary["audit_coverage"]
+            gaps = [
+                item for item in coverage["unsupported_relevant_files"]
+                if item.get("gap_type") == "opaque_figure_assembly_project_requires_export"
+            ]
+            self.assertEqual(len(gaps), 4)
+            missing_paths = {item["path"] for item in gaps}
+            self.assertEqual(missing_paths, {
+                "figure_assembly/layout.psd",
+                "figure_assembly/layout.ai",
+                "figure_assembly/layout.indd",
+                "figure_assembly/legacy_layout.ppt",
+            })
+            calibrated = json.loads((out / "calibrated_findings.json").read_text(encoding="utf-8"))
+            self.assertTrue(any(
+                item.get("finding_type") == "audit_coverage_gap"
+                and item.get("evidence", {}).get("gap_type") == "opaque_figure_assembly_project_requires_export"
+                for item in calibrated["findings"]
+            ))
+            report = (out / "audit-report.md").read_text(encoding="utf-8")
+            self.assertIn("layout.psd", report)
+            self.assertIn("original assembly project", report)
 
     def test_text_results_overlap_without_disclosure_can_reach_r3(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -2158,6 +3703,131 @@ class EndToEndTests(unittest.TestCase):
             self.assertTrue(local_findings)
             self.assertTrue(any(item["calibrated_risk_level"] == "R3" for item in local_findings))
             self.assertTrue((out / "evidence" / "local_patch").exists())
+            pipeline_summary = json.loads((out / "pipeline_summary.json").read_text(encoding="utf-8"))
+            review_packet = Path(pipeline_summary["submission_qc_packet"]["image_review_packet"]["packet_dir"])
+            self.assertTrue((review_packet / "image_review_manifest.json").is_file())
+            self.assertTrue((review_packet / "image_review_candidates.csv").is_file())
+            self.assertTrue((review_packet / "image_review_tracker.csv").is_file())
+            self.assertTrue((review_packet / "external_tool_handoff.csv").is_file())
+            self.assertTrue((review_packet / "EXTERNAL_TOOL_HANDOFF.md").is_file())
+            self.assertTrue((review_packet / "image_files.csv").is_file())
+            copied_crops = sorted((review_packet / "evidence" / "local_patch").glob("*side_by_side.png"))
+            self.assertTrue(copied_crops)
+            review_readme = (review_packet / "README.md").read_text(encoding="utf-8")
+            self.assertIn("ImageTwin", review_readme)
+            self.assertIn("not determine misconduct", review_readme)
+            self.assertIn("image_review_tracker.csv", review_readme)
+            self.assertIn("external_tool_handoff.csv", review_readme)
+            handoff_guide = (review_packet / "EXTERNAL_TOOL_HANDOFF.md").read_text(encoding="utf-8")
+            self.assertIn("not an external-search result", handoff_guide)
+            self.assertIn("上传外部服务前", handoff_guide)
+            with (review_packet / "image_review_tracker.csv").open(newline="", encoding="utf-8") as handle:
+                tracker_rows = list(csv.DictReader(handle))
+            self.assertEqual(len(tracker_rows), len(local_findings))
+            self.assertIn("external_tool_or_method", tracker_rows[0])
+            self.assertIn("attachment_reference", tracker_rows[0])
+            self.assertEqual(tracker_rows[0]["review_status"], "unresolved")
+            with (review_packet / "external_tool_handoff.csv").open(newline="", encoding="utf-8") as handle:
+                handoff_rows = list(csv.DictReader(handle))
+            self.assertEqual(len(handoff_rows), len(local_findings))
+            self.assertIn("recommended_tool_route", handoff_rows[0])
+            self.assertIn("review_question", handoff_rows[0])
+            self.assertIn("data_governance_note", handoff_rows[0])
+
+    def test_keypoint_geometric_match_reaches_r3_and_records_coverage(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "keypoint_case"
+            write_keypoint_geometric_package(package)
+            out = Path(tmp) / "out"
+            run([
+                PYTHON,
+                "scripts/audit_package.py",
+                str(package),
+                "--output-dir",
+                str(out),
+                "--case-id",
+                "keypoint_case",
+            ])
+            keypoint_payload = json.loads((out / "keypoint_contextual_candidates.json").read_text(encoding="utf-8"))
+            candidates = [
+                item for item in keypoint_payload["candidates"]
+                if item["candidate_type"] == "keypoint_geometric_match"
+            ]
+            self.assertTrue(candidates)
+            edge = candidates[0]["evidence"]["contextual_edges"][0]
+            self.assertEqual(edge["similarity_scope"], "keypoint_geometric")
+            calibrated = json.loads((out / "calibrated_findings.json").read_text(encoding="utf-8"))
+            findings = [item for item in calibrated["findings"] if item["finding_type"] == "keypoint_geometric_match"]
+            self.assertTrue(findings)
+            self.assertTrue(any(item["calibrated_risk_level"] == "R3" for item in findings))
+            summary = json.loads((out / "AUDIT_JSON_SUMMARY.json").read_text(encoding="utf-8"))
+            coverage = summary["audit_coverage"]
+            self.assertIn("image_keypoint_geometric_match", coverage["modules_executed"])
+            self.assertGreaterEqual(coverage["keypoint_pairs_screened"], 1)
+            self.assertGreaterEqual(coverage["keypoint_candidates"], 1)
+            report = (out / "audit-report.md").read_text(encoding="utf-8")
+            self.assertIn("Keypoint geometric image screen", report)
+            self.assertIn("RANSAC inliers", report)
+            pipeline_summary = json.loads((out / "pipeline_summary.json").read_text(encoding="utf-8"))
+            image_review = pipeline_summary["submission_qc_packet"]["image_review_packet"]
+            self.assertGreaterEqual(image_review["candidate_count"], 1)
+            self.assertGreaterEqual(image_review["image_file_count"], 2)
+            review_packet = Path(image_review["packet_dir"])
+            manifest = json.loads((review_packet / "image_review_manifest.json").read_text(encoding="utf-8"))
+            self.assertEqual(manifest["candidate_count"], image_review["candidate_count"])
+            self.assertEqual(manifest["tracker_csv"], "image_review_tracker.csv")
+            self.assertEqual(manifest["external_tool_handoff_csv"], "external_tool_handoff.csv")
+            self.assertEqual(manifest["external_tool_handoff_guide"], "EXTERNAL_TOOL_HANDOFF.md")
+            self.assertEqual(image_review["tracker_count"], image_review["candidate_count"])
+            self.assertEqual(image_review["external_handoff_count"], image_review["candidate_count"])
+            self.assertIn("keypoint_image_candidates.json", "\n".join(manifest["detector_payloads"]))
+            with (review_packet / "image_review_candidates.csv").open(newline="", encoding="utf-8") as handle:
+                rows = list(csv.DictReader(handle))
+            self.assertTrue(any(row["finding_type"] == "keypoint_geometric_match" for row in rows))
+            with (review_packet / "image_review_tracker.csv").open(newline="", encoding="utf-8") as handle:
+                tracker_rows = list(csv.DictReader(handle))
+            self.assertTrue(any(row["finding_type"] == "keypoint_geometric_match" for row in tracker_rows))
+            self.assertTrue(all(row["recommended_external_review"] for row in tracker_rows))
+            with (review_packet / "external_tool_handoff.csv").open(newline="", encoding="utf-8") as handle:
+                handoff_rows = list(csv.DictReader(handle))
+            keypoint_handoff = [row for row in handoff_rows if row["finding_type"] == "keypoint_geometric_match"]
+            self.assertTrue(keypoint_handoff)
+            self.assertIn("ImageTwin/Proofig", keypoint_handoff[0]["recommended_tool_route"])
+            self.assertIn("institutional", keypoint_handoff[0]["data_governance_note"])
+            forbidden_prefixes = ("/" + "Users/", "/" + "private/tmp")
+            self.assertFalse(any(any(prefix in json.dumps(row) for prefix in forbidden_prefixes) for row in rows))
+            self.assertFalse(any(any(prefix in json.dumps(row) for prefix in forbidden_prefixes) for row in tracker_rows))
+            self.assertFalse(any(any(prefix in json.dumps(row) for prefix in forbidden_prefixes) for row in handoff_rows))
+
+    def test_declared_same_field_keypoint_match_caps_at_r1_pending_verification(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "declared_keypoint_case"
+            write_keypoint_geometric_package(
+                package,
+                "figure_panel,source_record,relation_type,modality,notes\n"
+                "figures/Figure_3A.png,figures/Figure_7C.png,same_field_different_channel,microscopy,registered same field\n",
+            )
+            out = Path(tmp) / "out"
+            run([
+                PYTHON,
+                "scripts/audit_package.py",
+                str(package),
+                "--output-dir",
+                str(out),
+                "--case-id",
+                "declared_keypoint_case",
+            ])
+            keypoint_payload = json.loads((out / "keypoint_contextual_candidates.json").read_text(encoding="utf-8"))
+            candidates = [
+                item for item in keypoint_payload["candidates"]
+                if item["candidate_type"] == "keypoint_geometric_match"
+            ]
+            self.assertTrue(candidates)
+            self.assertIn("declared_geometric_match_requires_verification", candidates[0]["risk_cap_tags"])
+            calibrated = json.loads((out / "calibrated_findings.json").read_text(encoding="utf-8"))
+            findings = [item for item in calibrated["findings"] if item["finding_type"] == "keypoint_geometric_match"]
+            self.assertTrue(findings)
+            self.assertTrue(all(item["calibrated_risk_level"] == "R1" for item in findings))
 
     def test_disclosed_reuse_cap_is_candidate_specific(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -2326,6 +3996,220 @@ class EndToEndTests(unittest.TestCase):
             ]
             self.assertTrue(external_findings)
             self.assertLessEqual(risk_value(external_findings[0]["calibrated_risk_level"]), risk_value("R3"))
+
+    def test_text_detector_extracts_docx_body_caption_and_table_text(self) -> None:
+        from detectors.text import text_overlap_screen as tos
+
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "docx_text_case"
+            write_docx(
+                package / "manuscript" / "draft.docx",
+                [
+                    ("Results", None),
+                    (RESULTS_OVERLAP, None),
+                    ("Figure 2. Quantified nuclear signal intensity in treated cells.", "Caption"),
+                ],
+                table_rows=[
+                    ["group", "mean", "sd"],
+                    ["control", "1.0", "0.2"],
+                    ["treated", "1.8", "0.3"],
+                ],
+            )
+            (package / "prior_drafts").mkdir(parents=True)
+            (package / "prior_drafts" / "old_results.md").write_text(
+                f"Results\n\n{RESULTS_OVERLAP}\n",
+                encoding="utf-8",
+            )
+
+            result = tos.scan(package, ngram=5, threshold=0.35, min_tokens=20)
+
+            validate_instance(result, ROOT / "schemas" / "detector_output.schema.json", "docx text detector")
+            self.assertFalse(result["errors"])
+            self.assertGreaterEqual(result["paragraphs_screened"], 2)
+            docx_candidates = [
+                item for item in result["candidates"]
+                if "draft.docx" in item["evidence"].get("document_a", "")
+                or "draft.docx" in item["evidence"].get("document_b", "")
+            ]
+            self.assertTrue(docx_candidates)
+            self.assertTrue(any(item["risk_suggestion"] == "R3_possible" for item in docx_candidates))
+
+    def test_pipeline_uses_docx_for_text_and_writing_readiness_without_format_gap(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "docx_pipeline_case"
+            write_docx(
+                package / "manuscript" / "draft.docx",
+                [
+                    ("Abstract", None),
+                    ("This manuscript includes extractable Word document text for audit intake.", None),
+                    ("Results", None),
+                    (RESULTS_OVERLAP, None),
+                ],
+            )
+            (package / "prior_drafts").mkdir(parents=True)
+            (package / "prior_drafts" / "old_results.md").write_text(
+                f"Results\n\n{RESULTS_OVERLAP}\n",
+                encoding="utf-8",
+            )
+            out = Path(tmp) / "out"
+            run([
+                PYTHON,
+                "scripts/audit_package.py",
+                str(package),
+                "--output-dir",
+                str(out),
+                "--case-id",
+                "docx_pipeline_case",
+            ])
+
+            summary = json.loads((out / "pipeline_summary.json").read_text(encoding="utf-8"))
+            self.assertTrue(any(path.endswith("text_overlap_candidates.json") for path in summary["detector_outputs"]))
+            self.assertFalse(any(path.endswith("format_coverage_candidates.json") for path in summary["detector_outputs"]))
+            coverage = json.loads((out / "coverage.json").read_text(encoding="utf-8"))
+            self.assertIn("package_internal_text_overlap", coverage["modules_executed"])
+            self.assertFalse(coverage["unsupported_relevant_files"])
+            writing = json.loads((out / "writing_readiness.json").read_text(encoding="utf-8"))
+            self.assertGreater(writing["language_checks"]["sentence_count"], 0)
+
+            calibrated = json.loads((out / "calibrated_findings.json").read_text(encoding="utf-8"))
+            text_findings = [
+                item for item in calibrated["findings"]
+                if item["module"] == "text.text_overlap_screen"
+            ]
+            self.assertTrue(text_findings)
+            self.assertTrue(any("draft.docx" in json.dumps(item["evidence"]) for item in text_findings))
+
+    def test_pipeline_uses_pptx_assembly_text_for_positive_traceability(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "pptx_assembly_case"
+            (package / "figures").mkdir(parents=True)
+            (package / "raw_images").mkdir()
+            (package / "figure_assembly").mkdir()
+            write_minimal_source(package)
+            image = textured_image(91, size=(128, 128))
+            write_png(package / "figures" / "Figure_1A.png", image)
+            write_png(package / "raw_images" / "acquisition_001.png", image)
+            write_pptx(
+                package / "figure_assembly" / "figure_layout.pptx",
+                [[
+                    "Figure panel: figures/Figure_1A.png",
+                    "Source raw image: raw_images/acquisition_001.png",
+                ]],
+            )
+            (package / "manuscript.pdf").write_text("Results\n\nNeutral manuscript text.\n", encoding="utf-8")
+            out = Path(tmp) / "out"
+            run([
+                PYTHON,
+                "scripts/audit_package.py",
+                str(package),
+                "--output-dir",
+                str(out),
+                "--case-id",
+                "pptx_assembly_case",
+            ])
+
+            assembly = json.loads((out / "assembly_links.json").read_text(encoding="utf-8"))
+            self.assertEqual(assembly["parsed_files"], ["figure_assembly/figure_layout.pptx"])
+            self.assertEqual(assembly["links"][0]["extraction_method"], "pptx_slide_explicit_paths")
+            pptx_structure = json.loads((out / "pptx_structure.json").read_text(encoding="utf-8"))
+            self.assertEqual(len(pptx_structure["slides"]), 1)
+            self.assertEqual(len(pptx_structure["explicit_path_pairs"]), 1)
+            summary = json.loads((out / "AUDIT_JSON_SUMMARY.json").read_text(encoding="utf-8"))
+            coverage = summary["audit_coverage"]
+            self.assertIn("pptx_slide_text_path_structure_extraction", coverage["modules_executed"])
+            self.assertEqual(coverage["pptx_files_structurally_read"], 1)
+            self.assertEqual(coverage["pptx_slides_read"], 1)
+            self.assertEqual(coverage["pptx_explicit_path_pairs"], 1)
+            self.assertTrue(summary["positive_provenance"])
+            self.assertTrue(any(
+                item["figure_panel"] == "figures/Figure_1A.png"
+                and item["source_record"] == "raw_images/acquisition_001.png"
+                and item["evidence_source"] == "figure_assembly/figure_layout.pptx#slide1"
+                for item in summary["positive_provenance"]
+            ))
+            report = (out / "audit-report.md").read_text(encoding="utf-8")
+            self.assertIn("PPTX text/path intake note / PPTX 文本与路径读取说明", report)
+            self.assertIn("PPTX explicit path pairs", report)
+            packet = out / "submission_qc_packet"
+            self.assertTrue((packet / "pptx_structure.json").is_file())
+            self.assertIn("pptx_structure.json", (packet / "QC_PACKET_README.md").read_text(encoding="utf-8"))
+
+    def test_pipeline_uses_pptx_speaker_notes_for_positive_traceability(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "pptx_notes_assembly_case"
+            (package / "figures").mkdir(parents=True)
+            (package / "raw_images").mkdir()
+            (package / "figure_assembly").mkdir()
+            write_minimal_source(package)
+            image = textured_image(929, size=(128, 128))
+            write_png(package / "figures" / "Figure_1A.png", image)
+            write_png(package / "raw_images" / "acquisition_001.png", image)
+            write_pptx(
+                package / "figure_assembly" / "figure_layout.pptx",
+                [["Visible slide label: Figure 1A"]],
+                speaker_notes=[[
+                    "Assembly note: figures/Figure_1A.png derives from raw_images/acquisition_001.png.",
+                ]],
+            )
+            (package / "manuscript.pdf").write_text("Results\n\nNeutral manuscript text.\n", encoding="utf-8")
+            out = Path(tmp) / "out"
+            run([
+                PYTHON,
+                "scripts/audit_package.py",
+                str(package),
+                "--output-dir",
+                str(out),
+                "--case-id",
+                "pptx_notes_assembly_case",
+            ])
+
+            assembly = json.loads((out / "assembly_links.json").read_text(encoding="utf-8"))
+            self.assertEqual(assembly["links"][0]["extraction_method"], "pptx_notes_explicit_paths")
+            pptx_structure = json.loads((out / "pptx_structure.json").read_text(encoding="utf-8"))
+            self.assertEqual(pptx_structure["slides"][0]["speaker_note_paragraph_count"], 1)
+            self.assertEqual(pptx_structure["explicit_path_pairs"][0]["extraction_method"], "pptx_notes_explicit_paths")
+            summary = json.loads((out / "AUDIT_JSON_SUMMARY.json").read_text(encoding="utf-8"))
+            coverage = summary["audit_coverage"]
+            self.assertEqual(coverage["pptx_speaker_note_paragraphs_extracted"], 1)
+            self.assertEqual(coverage["pptx_explicit_path_pairs"], 1)
+            self.assertTrue(any(
+                item["figure_panel"] == "figures/Figure_1A.png"
+                and item["source_record"] == "raw_images/acquisition_001.png"
+                and item["evidence_source"] == "figure_assembly/figure_layout.pptx#slide1:speaker_notes"
+                for item in summary["positive_provenance"]
+            ))
+            report = (out / "audit-report.md").read_text(encoding="utf-8")
+            self.assertIn("PPTX speaker-note paragraphs extracted", report)
+
+    def test_invalid_docx_emits_text_extraction_coverage_gap(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "invalid_docx_case"
+            (package / "manuscript").mkdir(parents=True)
+            (package / "manuscript" / "draft.docx").write_bytes(b"not a valid docx")
+            out = Path(tmp) / "out"
+            run([
+                PYTHON,
+                "scripts/audit_package.py",
+                str(package),
+                "--output-dir",
+                str(out),
+                "--case-id",
+                "invalid_docx_case",
+            ])
+
+            text_payload = json.loads((out / "text_overlap_candidates.json").read_text(encoding="utf-8"))
+            validate_instance(text_payload, ROOT / "schemas" / "detector_output.schema.json", "invalid docx text gap")
+            gap = next(item for item in text_payload["candidates"] if item["candidate_type"] == "audit_coverage_gap")
+            self.assertEqual(gap["evidence"]["gap_type"], "text_extraction_failed")
+            self.assertTrue(any("draft.docx" in location for location in gap["locations"]))
+            calibrated = json.loads((out / "calibrated_findings.json").read_text(encoding="utf-8"))
+            extraction_findings = [
+                item for item in calibrated["findings"]
+                if item["finding_type"] == "audit_coverage_gap"
+                and item["evidence"].get("gap_type") == "text_extraction_failed"
+            ]
+            self.assertTrue(extraction_findings)
+            self.assertTrue(all(item["calibrated_risk_level"] == "R1" for item in extraction_findings))
 
     def test_external_search_reports_gap_on_partial_provider_failure(self) -> None:
         from detectors.text import external_literature_search as els
@@ -2505,6 +4389,7 @@ class EndToEndTests(unittest.TestCase):
             packet = pipeline_summary["submission_qc_packet"]
             self.assertIn("author_signoff.yaml", packet["files"])
             self.assertIn("audit-report.html", packet["files"])
+            self.assertIn("image_metadata.json", packet["files"])
             self.assertIn("methodology_checklist.json", packet["files"])
             self.assertIn("methodology_checklist.csv", packet["files"])
             self.assertIn("unresolved_actions.csv", packet["files"])
@@ -2578,6 +4463,7 @@ class EndToEndTests(unittest.TestCase):
                 "required_correction": "=provide source data",
                 "owner": "+owner",
                 "evidence_after_correction": "@evidence",
+                "attachment_reference": "=supplemental_link",
                 "status": "unresolved",
                 "source_action_id": "ACT-0001",
             }])
@@ -2586,6 +4472,7 @@ class EndToEndTests(unittest.TestCase):
             self.assertTrue(row["required_correction"].startswith("'="))
             self.assertTrue(row["owner"].startswith("'+"))
             self.assertTrue(row["evidence_after_correction"].startswith("'@"))
+            self.assertTrue(row["attachment_reference"].startswith("'="))
 
             missing_csv = tmp_path / "missing_materials.csv"
             write_missing_materials_csv(missing_csv, {
@@ -2613,8 +4500,8 @@ class EndToEndTests(unittest.TestCase):
             old.mkdir()
             new.mkdir()
             for path, risk, missing, provenance, actions, claim_gaps in [
-                (old, "R3", ["source data"], [], ["ACT-0001", "ACT-0002"], 2),
-                (new, "R1", [], [{"provenance_id": "PROV-0001"}], ["ACT-0001"], 0),
+                (old, "R3", ["source data", "raw images"], [], ["ACT-0001", "ACT-0002"], 2),
+                (new, "R1", ["raw images", "protocol"], [{"provenance_id": "PROV-0001"}], ["ACT-0001"], 0),
             ]:
                 (path / "AUDIT_JSON_SUMMARY.json").write_text(json.dumps({
                     "overall_risk": risk,
@@ -2655,6 +4542,7 @@ class EndToEndTests(unittest.TestCase):
                 )
             output = tmp_path / "diff.json"
             csv_output = tmp_path / "diff.csv"
+            markdown_output = tmp_path / "diff.md"
             run([
                 PYTHON,
                 "scripts/compare_audit_runs.py",
@@ -2664,19 +4552,30 @@ class EndToEndTests(unittest.TestCase):
                 str(output),
                 "--csv",
                 str(csv_output),
+                "--markdown",
+                str(markdown_output),
             ])
             diff = json.loads(output.read_text(encoding="utf-8"))
             self.assertEqual(diff["overall_risk"], {"previous": "R3", "current": "R1"})
             self.assertEqual(diff["positive_provenance_count"], {"previous": 0, "current": 1})
             self.assertEqual(diff["unresolved_action_count"], {"previous": 2, "current": 1})
+            self.assertEqual(diff["material_changes"]["resolved"], ["source data"])
+            self.assertEqual(diff["material_changes"]["new"], ["protocol"])
+            self.assertEqual(diff["material_changes"]["persisted"], ["raw images"])
             self.assertEqual(diff["finding_changes"]["fixed_count"], 1)
             self.assertEqual(diff["finding_changes"]["new_count"], 1)
             self.assertEqual(diff["finding_changes"]["persisted_count"], 1)
             self.assertEqual(diff["finding_changes"]["fixed"][0]["finding_id"], "F-FIXED")
             self.assertEqual(diff["finding_changes"]["new"][0]["finding_id"], "F-NEW")
             self.assertIn("claim_evidence_gaps,2,0", csv_output.read_text(encoding="utf-8"))
+            self.assertIn("materials_resolved,1,", csv_output.read_text(encoding="utf-8"))
+            self.assertIn("materials_new,,1", csv_output.read_text(encoding="utf-8"))
             self.assertIn("fixed:F-FIXED,R3,", csv_output.read_text(encoding="utf-8"))
             self.assertIn("new:F-NEW,,R2", csv_output.read_text(encoding="utf-8"))
+            markdown = markdown_output.read_text(encoding="utf-8")
+            self.assertIn("Re-audit Diff / 复审差异", markdown)
+            self.assertIn("Still Missing / 仍缺失", markdown)
+            self.assertIn("raw images", markdown)
 
     def test_report_includes_audit_coverage_scope(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -2708,11 +4607,136 @@ class EndToEndTests(unittest.TestCase):
             self.assertTrue(coverage["scope_note"])
             image_boundary = coverage["image_screening_boundary"]
             self.assertIn("whole-image near-duplicate screening", image_boundary["automated_checks"][0])
-            self.assertTrue(any("arbitrary-angle rotation" in item for item in image_boundary["not_covered"]))
+            self.assertTrue(any("OpenCV ORB keypoint" in item for item in image_boundary["automated_checks"]))
+            self.assertTrue(any("ORB/RANSAC" in item for item in image_boundary["not_covered"]))
             self.assertIn("not a complete image-forensics clearance", image_boundary["interpretation_note"])
             self.assertIn("Image screening boundary / 图像筛查边界", report)
-            self.assertIn("arbitrary-angle rotation", report)
+            self.assertIn("OpenCV ORB keypoint", report)
+            self.assertIn("ORB/RANSAC", report)
             self.assertIn("不是完整图像取证结论", report)
+
+    def test_pipeline_records_pdf_caption_and_table_structure_coverage(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "pdf_structure_pkg"
+            package.mkdir(parents=True)
+            write_minimal_source(package)
+            write_simple_pdf(
+                package / "manuscript.pdf",
+                [
+                    "Results",
+                    "Figure 3. Dose response microscopy panel with source data references.",
+                    "Table 2. Summary values used for the manuscript.",
+                    "Group  Mean  SD",
+                    "Control  1.0  0.2",
+                    "Treatment  1.5  0.3",
+                    "The paragraph after the table is neutral manuscript text for intake testing.",
+                ],
+            )
+            out = Path(tmp) / "out"
+            run([
+                PYTHON,
+                "scripts/audit_package.py",
+                str(package),
+                "--output-dir",
+                str(out),
+                "--case-id",
+                "pdf_structure_case",
+            ])
+            structure = json.loads((out / "pdf_structure.json").read_text(encoding="utf-8"))
+            self.assertEqual(len(structure["captions"]), 2)
+            self.assertEqual(len(structure["table_like_blocks"]), 1)
+            summary = json.loads((out / "AUDIT_JSON_SUMMARY.json").read_text(encoding="utf-8"))
+            coverage = summary["audit_coverage"]
+            self.assertIn("pdf_caption_table_structure_extraction", coverage["modules_executed"])
+            self.assertEqual(coverage["pdf_files_screened"], 1)
+            self.assertEqual(coverage["pdf_captions_extracted"], 2)
+            self.assertEqual(coverage["pdf_table_like_blocks_extracted"], 1)
+            self.assertEqual(coverage["pdf_structure_error_count"], 0)
+            report = (out / "audit-report.md").read_text(encoding="utf-8")
+            self.assertIn("PDF structure intake note / PDF 结构读取说明", report)
+            self.assertIn("PDF captions extracted", report)
+
+    def test_pipeline_records_docx_caption_and_table_structure_coverage(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "docx_structure_pkg"
+            package.mkdir(parents=True)
+            write_minimal_source(package)
+            write_docx(
+                package / "manuscript" / "draft.docx",
+                [
+                    ("Results", "Heading1"),
+                    ("Figure 5B. Treatment changed marker intensity in representative cells.", "Caption"),
+                    ("Table 3. Cohort and endpoint summary.", "Caption"),
+                    ("The following paragraph is body text for intake testing.", None),
+                ],
+                table_rows=[
+                    ["Group", "Mean", "SD"],
+                    ["Control", "1.0", "0.2"],
+                    ["Treatment", "1.5", "0.3"],
+                ],
+            )
+            out = Path(tmp) / "out"
+            run([
+                PYTHON,
+                "scripts/audit_package.py",
+                str(package),
+                "--output-dir",
+                str(out),
+                "--case-id",
+                "docx_structure_case",
+            ])
+            structure = json.loads((out / "docx_structure.json").read_text(encoding="utf-8"))
+            self.assertEqual(len(structure["captions"]), 2)
+            self.assertEqual(len(structure["table_like_blocks"]), 1)
+            summary = json.loads((out / "AUDIT_JSON_SUMMARY.json").read_text(encoding="utf-8"))
+            coverage = summary["audit_coverage"]
+            self.assertIn("docx_caption_table_structure_extraction", coverage["modules_executed"])
+            self.assertEqual(coverage["docx_files_screened"], 1)
+            self.assertGreaterEqual(coverage["docx_paragraphs_extracted"], 4)
+            self.assertEqual(coverage["docx_captions_extracted"], 2)
+            self.assertEqual(coverage["docx_table_like_blocks_extracted"], 1)
+            self.assertEqual(coverage["docx_structure_error_count"], 0)
+            report = (out / "audit-report.md").read_text(encoding="utf-8")
+            self.assertIn("DOCX structure intake note / DOCX 结构读取说明", report)
+            self.assertIn("DOCX captions extracted", report)
+            packet = out / "submission_qc_packet"
+            self.assertTrue((packet / "docx_structure.json").is_file())
+            self.assertIn("docx_structure.json", (packet / "QC_PACKET_README.md").read_text(encoding="utf-8"))
+
+    def test_pipeline_reports_docx_review_layer_warnings(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "docx_review_layer_pkg"
+            package.mkdir(parents=True)
+            write_minimal_source(package)
+            write_docx(
+                package / "manuscript" / "draft.docx",
+                [
+                    ("Results", "Heading1"),
+                    ("Figure 5B. Treatment changed marker intensity in representative cells.", "Caption"),
+                ],
+                review_layers=True,
+            )
+            out = Path(tmp) / "out"
+            run([
+                PYTHON,
+                "scripts/audit_package.py",
+                str(package),
+                "--output-dir",
+                str(out),
+                "--case-id",
+                "docx_review_layer_case",
+            ])
+            structure = json.loads((out / "docx_structure.json").read_text(encoding="utf-8"))
+            self.assertEqual(len(structure["warnings"]), 3)
+            summary = json.loads((out / "AUDIT_JSON_SUMMARY.json").read_text(encoding="utf-8"))
+            coverage = summary["audit_coverage"]
+            self.assertEqual(coverage["docx_structure_warning_count"], 3)
+            self.assertTrue(any("DOCX review layers" in item for item in coverage["modules_not_executed"]))
+            warning_types = {item["warning_type"] for item in coverage["docx_structure_warnings"]}
+            self.assertIn("docx_comments_present", warning_types)
+            report = (out / "audit-report.md").read_text(encoding="utf-8")
+            self.assertIn("DOCX review-layer warnings / DOCX 审阅层提示", report)
+            self.assertIn("tracked revisions", report)
 
     def test_report_is_bilingual_and_human_readable_for_no_finding_r1(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -2731,6 +4755,16 @@ class EndToEndTests(unittest.TestCase):
             self.assertEqual(report.count("```json AUDIT_JSON_SUMMARY"), 1)
             self.assertIn("# Biomedical Research Integrity Audit / 生物医药研究诚信审计报告", report)
             self.assertIn("## Quick Read / 快速结论", report)
+            headings = [line for line in report.splitlines() if line.startswith("## ")]
+            self.assertEqual(
+                headings[:4],
+                [
+                    "## Quick Read / 快速结论",
+                    "## Scope / 范围",
+                    "## Must Resolve / 必须处理",
+                    "## Materials Needed / 需要补充的材料",
+                ],
+            )
             self.assertIn("## Materials Needed / 需要补充的材料", report)
             self.assertIn("Not yet submission-ready", report)
             self.assertIn("Open actions / 待处理行动项", report)
@@ -2784,10 +4818,20 @@ class EndToEndTests(unittest.TestCase):
             self.assertIn("## Submission Readiness / 投稿准备状态", report)
             self.assertIn("## Presubmission Action Queue / 投稿前行动队列", report)
             self.assertIn("Must resolve before submission / 投稿前必须处理", report)
+            self.assertIn("Copy-ready neutral follow-up / 可复制的中性跟进文字", report)
+            self.assertIn("not a conclusion about intent or responsibility", report)
             summary = json.loads((out / "AUDIT_JSON_SUMMARY.json").read_text(encoding="utf-8"))
             self.assertEqual(summary["scan_profile"], "standard")
             self.assertGreaterEqual(summary["action_queue"]["counts"]["must_resolve"], 1)
             self.assertIn("resolved", summary["action_queue"]["status_options"])
+            self.assertIn("neutral_inquiry_template", summary["action_queue"]["tracker_fields"])
+            self.assertIn("material_request_template", summary["action_queue"]["tracker_fields"])
+            self.assertIn("attachment_reference", summary["action_queue"]["tracker_fields"])
+            self.assertIn("source_finding_id", summary["action_queue"]["tracker_fields"])
+            summary_findings = summary["findings"]
+            self.assertTrue(summary_findings)
+            self.assertTrue(all(item.get("neutral_inquiry_template") for item in summary_findings))
+            self.assertTrue(all(item.get("material_request_template") for item in summary_findings))
 
             with (out / "unresolved_actions.csv").open(encoding="utf-8") as handle:
                 unresolved_rows = list(csv.DictReader(handle))
@@ -2796,12 +4840,49 @@ class EndToEndTests(unittest.TestCase):
             self.assertIn("status", unresolved_rows[0])
             self.assertIn("human_note", unresolved_rows[0])
             self.assertIn("accepted_with_reason", unresolved_rows[0])
+            self.assertIn("attachment_reference", unresolved_rows[0])
+            self.assertIn("source_finding_id", unresolved_rows[0])
+            self.assertIn("neutral_inquiry_template", unresolved_rows[0])
+            self.assertIn("material_request_template", unresolved_rows[0])
+            finding_action_rows = [
+                row for row in unresolved_rows
+                if row.get("source") == "AUDIT_JSON_SUMMARY.findings"
+            ]
+            self.assertTrue(finding_action_rows)
+            self.assertTrue(any(row["source_finding_id"] for row in finding_action_rows))
+            self.assertTrue(all(row["neutral_inquiry_template"] for row in finding_action_rows))
+            self.assertTrue(all(row["material_request_template"] for row in finding_action_rows))
+            pipeline_summary = json.loads((out / "pipeline_summary.json").read_text(encoding="utf-8"))
+            qc_packet = pipeline_summary["submission_qc_packet"]
+            exports = qc_packet["audience_exports"]
+            self.assertEqual(
+                set(exports),
+                {"pi_brief", "coauthor_actions", "journal_response_draft"},
+            )
+            packet_dir = Path(qc_packet["packet_dir"])
+            pi_brief = (packet_dir / exports["pi_brief"]).read_text(encoding="utf-8")
+            coauthor_actions = (packet_dir / exports["coauthor_actions"]).read_text(encoding="utf-8")
+            journal_draft = (packet_dir / exports["journal_response_draft"]).read_text(encoding="utf-8")
+            self.assertIn("PI Brief / PI 快速版", pi_brief)
+            self.assertIn("Must Resolve First", pi_brief)
+            self.assertIn("Co-author Action Requests", coauthor_actions)
+            self.assertIn("Message to send / 可发送文字", coauthor_actions)
+            self.assertIn("Journal / Reviewer Response Draft", journal_draft)
+            self.assertIn("Drafting aid only", journal_draft)
+            self.assertIn("not conclusions about intent or responsibility", journal_draft)
+            packet_start = (packet_dir / "START_HERE.md").read_text(encoding="utf-8")
+            self.assertIn("audience_exports/PI_BRIEF.md", packet_start)
+            root_start = (out / "START_HERE.md").read_text(encoding="utf-8")
+            self.assertIn("submission_qc_packet/audience_exports", root_start)
             with (out / "correction_plan.csv").open(encoding="utf-8") as handle:
                 correction_rows = list(csv.DictReader(handle))
             self.assertGreaterEqual(len(correction_rows), 1)
             self.assertIn("required_correction", correction_rows[0])
             self.assertIn("evidence_after_correction", correction_rows[0])
-            self.assertIn("Pre-submission Correction Plan", (out / "correction_plan.md").read_text(encoding="utf-8"))
+            self.assertIn("attachment_reference", correction_rows[0])
+            correction_md = (out / "correction_plan.md").read_text(encoding="utf-8")
+            self.assertIn("Pre-submission Correction Plan", correction_md)
+            self.assertIn("Attachment/reference", correction_md)
             self.assertTrue((out / "resolved_actions.csv").is_file())
             self.assertTrue((out / "accepted_with_reason.csv").is_file())
 

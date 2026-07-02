@@ -51,23 +51,34 @@ what you have. More complete packages can be checked more thoroughly.
 
 ```text
 my_package/
-├── manuscript.pdf              your manuscript (PDF or extracted text)
+├── manuscript.docx             your manuscript (DOCX, PDF, TXT, or MD)
 ├── supplementary/              supplementary files
 ├── figures/                    the figure panels as shown in the paper (PNG/JPG/TIFF)
 ├── raw_images/                 the original/uncropped acquisitions the figures came from
 ├── figure_assembly/
-│   └── assembly_manifest.csv   declares which raw file each figure panel came from
-├── source_data/                the numbers behind the figures (CSV / TSV / XLSX)
+│   ├── assembly_manifest.csv   declares which raw file each figure panel came from
+│   ├── figure_layout.pptx      optional: slide text can declare paths; embedded images are exported for intake
+│   └── figure_layout.key       optional: zip-based Keynote embedded images are exported for intake
+├── source_data/                the numbers behind the figures (CSV / TSV / XLSX / basic PZFX)
 ├── protocols/                  sample maps, methods notes, batch records
 ├── statistics_code/            analysis notes or scripts
 └── claim_manifest.csv          optional: links each manuscript claim to evidence files
 ```
 
-If your working manuscript is a Word `.docx`, export a PDF or plain-text copy into the
-package before running the audit. You may keep the `.docx` for recordkeeping, but the current
-text detectors rely on PDF/text intake. If your source data live in legacy Excel `.xls` or
-GraphPad Prism `.pzfx`, also export CSV/XLSX tables under `source_data/`; otherwise the report
-should be read as incomplete for those statistical checks.
+DOCX manuscripts can be read directly for body text, caption-styled paragraphs, and table cell
+text. If Word comments, tracked revisions, or embedded objects are present, the report will flag
+them as material-prep warnings because those layers are not read as body/caption/table evidence.
+Legacy Word `.doc` files still need to be saved as DOCX, extractable PDF, TXT, or MD. Source
+data can be CSV/TSV/XLSX; basic GraphPad Prism `.pzfx` XML column tables are also parsed for
+statistical checks. Legacy Excel `.xls` and complex/unparseable Prism projects should still be
+exported to CSV/XLSX under `source_data/`; otherwise the report should be read as incomplete for
+those statistical checks.
+
+Machine-readable PDFs can also produce `pdf_structure.json`, a best-effort list of caption-like and
+table-like text blocks. The audit also writes `pdf_embedded_images.json` and `pdf_embedded_images/`
+when raster images can be exported from PDFs. These PDF-derived files are presentation-layer intake
+artifacts only; still provide actual panel exports plus raw/uncropped images for provenance-aware
+image screening.
 
 ### The assembly manifest (strongly recommended)
 
@@ -85,6 +96,15 @@ A manifest line is a *claim*, not proof. The tool cross-checks it: a declared
 whole-image duplicates is reported as a `manifest_conflict`, not cleared. So you cannot make a
 real duplicate disappear by writing a manifest line.
 
+If you also include PPTX assembly files, put explicit relative paths in slide text, speaker notes,
+or shape alt text, such as `figures/Figure_1A.png` and `raw_images/acquisition_001.tif`.
+Text-level PPTX links are useful traceability hints. Embedded PPTX raster images are exported to
+`pptx_embedded_images/` for intake review, but they are presentation-layer assembly artifacts,
+not raw records or provenance proof.
+Zip-based Keynote `.key` files can similarly produce `key_embedded_images/`. Opaque files such as
+`.psd`, `.ai`, `.indd`, and legacy `.ppt` are inventoried as coverage gaps; export the final panels
+to PNG/JPG/TIFF and keep the original project file for manual review.
+
 ### The claim manifest (recommended for submission QC)
 
 If you provide `claim_manifest.csv`, the report includes **Claim Coverage**: how many manuscript
@@ -96,6 +116,7 @@ C001,"Treatment increases signal intensity",Results p.4,Fig1A,source_data/Fig1.c
 ```
 
 Claim coverage is only a completeness check. It does not say whether the claim is true.
+The local web app's Package Prep panel can create this CSV for you if you prefer not to edit it by hand.
 
 ---
 
@@ -154,7 +175,7 @@ biomed-audit /path/to/my_package --scan-profile standard --output-dir audit_outp
 biomed-audit /path/to/my_package --scan-profile deep --output-dir audit_outputs/deep
 ```
 
-- `quick` is for a first pass. It keeps fast checks and explicitly skips expensive local-patch/copy-move deep image screening and external phrase search.
+- `quick` is for a first pass. It keeps fast checks and explicitly skips expensive keypoint/local-patch/copy-move deep image screening and external phrase search.
 - `standard` is the default pre-submission self-audit.
 - `deep` is for focused rechecks or response-to-concern work. For journal/reviewer concerns, follow `docs/response-to-concern-guide.md`.
 
@@ -166,9 +187,13 @@ Outputs land in `audit_outputs/my_package/`:
 - `audit_snapshot.json` / `file_hash_manifest.json` — file hashes for the exact package version reviewed.
 - `claim_coverage.json` / `claim_coverage.csv` — claim-to-evidence coverage when `claim_manifest.csv` is supplied.
 - `methodology_checklist.json` / `methodology_checklist.csv` — supporting-material readiness prompts for manual methodology review.
-- `unresolved_actions.csv`, `resolved_actions.csv`, `accepted_with_reason.csv` — team trackers for the action queue.
+- `image_metadata.json` — frame/channel/Z/T metadata intake for image files, including OME/TIFF hints when available.
+- `unresolved_actions.csv`, `resolved_actions.csv`, `accepted_with_reason.csv` — team trackers for the action queue, including owner/status columns and copy-ready neutral inquiry/material-request text for finding-derived actions.
 - `submission_qc_packet/` — a leave-behind packet with action trackers, verified traceability,
-  missing materials, file hashes, claim coverage, methodology checklist, and an author sign-off template.
+  missing materials, file hashes, claim coverage, methodology checklist, an image-review target packet
+  when image files are present, audience-specific editable drafts, and an author sign-off template.
+- `submission_qc_packet/audience_exports/` — PI brief, co-author action requests, and journal/reviewer response draft scaffold. Edit these before sharing; they are communication aids, not conclusions.
+- `re_audit_diff.md` — when a run uses `--compare-to`, a human-readable view of findings that no longer appear, new findings, still-present findings, and still-missing materials.
 
 ---
 
@@ -213,12 +238,13 @@ The report is bilingual by default. Read the human Markdown sections first; use 
 | Section | What it tells you |
 | --- | --- |
 | **Quick Read / 快速结论** | The top-level risk, number of candidate findings, materials reviewed, missing categories, and the reminder that no findings is not proof of correctness. Start here. |
+| **Scope / 范围** | The mode, scan profile, case ID, package root, and the reminder that the report covers only supplied materials and executed modules. |
+| **Must Resolve / 必须处理** | The highest-priority items to handle before submission, with suggested owner/status fields. If empty, still read Materials Needed and Audit Coverage. |
+| **Materials Needed / 需要补充的材料** | Expected material categories that were not found, each as a completeness gap. |
 | **Submission Readiness / 投稿准备状态** | A workflow status for whether must-resolve actions remain. It is not a pass/fail decision. |
-| **Presubmission Action Queue / 投稿前行动队列** | The practical task queue grouped as must resolve, provide materials, clarify/disclose, and low-priority checks. |
-| **Scope / 范围** | The mode, case ID, and package root. |
+| **Presubmission Action Queue / 投稿前行动队列** | The practical task queue grouped as must resolve, provide materials, clarify/disclose, and low-priority checks, with neutral follow-up text you can copy into co-author requests. |
 | **Audit Coverage / 本次检查覆盖** | Which detector modules ran, which did not, image panels screened, unreadable image files, detector failures, and the scope note. Use this to know what was actually checked. |
 | **Claim Coverage / 声明-证据覆盖** | Claim-to-evidence completeness when `claim_manifest.csv` is supplied. This is not claim correctness. |
-| **Materials Needed / 需要补充的材料** | Expected material categories that were not found, each as a completeness gap. |
 | **Verified Traceability Evidence / 已验证可追溯证据** | Figure-to-raw links the tool confirmed as positive provenance evidence. |
 | **Risk Register / 风险登记** | One row per candidate finding with level, module, location, and type. |
 | **Findings / Evidence Ledger / 发现项与证据台账** | Human-readable finding cards: observation, why it matters, evidence summary, benign explanations, materials needed, and recommended action. |

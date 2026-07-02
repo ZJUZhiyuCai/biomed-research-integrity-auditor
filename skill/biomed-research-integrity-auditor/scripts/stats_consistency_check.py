@@ -8,6 +8,7 @@ import csv
 import json
 import math
 import re
+import xml.etree.ElementTree as ET
 from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
@@ -15,7 +16,8 @@ from typing import Any
 
 CSV_EXTS = {".csv", ".tsv"}
 XLSX_EXTS = {".xlsx"}
-TABLE_EXTS = CSV_EXTS | XLSX_EXTS
+PZFX_EXTS = {".pzfx"}
+TABLE_EXTS = CSV_EXTS | XLSX_EXTS | PZFX_EXTS
 NUMERIC_HINTS = ("mean", "sd", "sem", "se", "n", "p", "p_value", "pvalue")
 TIME_HINT_RE = re.compile(r"(^|[_\-\s])(t\d+|day\d+|d\d+|week\d+|w\d+|hour\d+|h\d+|baseline|endpoint)($|[_\-\s])", re.I)
 TIME_TOKEN_RE = re.compile(
@@ -233,10 +235,131 @@ def read_xlsx_tables(path: Path) -> list[tuple[Path, list[dict[str, str]]]]:
     return tables
 
 
+def xml_local_name(tag: str) -> str:
+    return tag.rsplit("}", 1)[-1].lower()
+
+
+def xml_node_text(node: ET.Element) -> str:
+    return " ".join(text.strip() for text in node.itertext() if text and text.strip())
+
+
+def first_child_text(node: ET.Element, names: set[str]) -> str:
+    for child in list(node):
+        if xml_local_name(child.tag) in names:
+            return xml_node_text(child)
+    return ""
+
+
+def pzfx_column_title(column: ET.Element, index: int) -> str:
+    for attr in ("Title", "title", "Name", "name"):
+        value = column.attrib.get(attr)
+        if value and value.strip():
+            return normalize_header(value)
+    title = first_child_text(column, {"title"})
+    if title:
+        return normalize_header(title)
+    return f"column_{index}"
+
+
+def pzfx_column_values(column: ET.Element) -> list[str]:
+    values = [
+        xml_node_text(node)
+        for node in column.iter()
+        if xml_local_name(node.tag) in {"d", "data", "value"} and xml_node_text(node)
+    ]
+    if values:
+        return values
+    direct_values = []
+    for child in list(column):
+        name = xml_local_name(child.tag)
+        if name in {"title", "subcolumn"}:
+            continue
+        text = xml_node_text(child)
+        if text:
+            direct_values.append(text)
+    return direct_values
+
+
+def read_pzfx_tables(path: Path) -> list[tuple[Path, list[dict[str, str]]]]:
+    try:
+        root = ET.parse(path).getroot()
+    except Exception as exc:  # noqa: BLE001 - callers surface this as a coverage gap.
+        raise ValueError(f"PZFX XML extraction failed: {exc}") from exc
+
+    tables: list[tuple[Path, list[dict[str, str]]]] = []
+    for table_index, table in enumerate([node for node in root.iter() if xml_local_name(node.tag) == "table"], start=1):
+        table_title = first_child_text(table, {"title"}) or table.attrib.get("ID") or table.attrib.get("id") or f"Table{table_index}"
+        columns = [
+            child
+            for child in list(table)
+            if xml_local_name(child.tag).endswith("column") or xml_local_name(child.tag) == "column"
+        ]
+        if not columns:
+            continue
+        headers: list[str] = []
+        values_by_header: list[tuple[str, list[str]]] = []
+        for column_index, column in enumerate(columns, start=1):
+            header = pzfx_column_title(column, column_index)
+            if header in headers:
+                header = f"{header}_{column_index}"
+            values = pzfx_column_values(column)
+            if not values:
+                continue
+            headers.append(header)
+            values_by_header.append((header, values))
+        if not values_by_header:
+            continue
+        row_count = max(len(values) for _, values in values_by_header)
+        rows: list[dict[str, str]] = []
+        for row_index in range(row_count):
+            row = {
+                header: values[row_index] if row_index < len(values) else ""
+                for header, values in values_by_header
+            }
+            if any(str(value).strip() for value in row.values()):
+                rows.append(row)
+        if rows:
+            tables.append((Path(f"{path.name}#{normalize_header(str(table_title)) or f'table_{table_index}'}"), rows))
+    if not tables:
+        raise ValueError("PZFX file did not contain parseable column tables")
+    return tables
+
+
 def read_tables(path: Path) -> list[tuple[Path, list[dict[str, str]]]]:
     if path.suffix.lower() in XLSX_EXTS:
         return read_xlsx_tables(path)
+    if path.suffix.lower() in PZFX_EXTS:
+        return read_pzfx_tables(path)
     return [(path, read_delimited_table(path))]
+
+
+def source_table_extraction_gap(path: Path, error: str) -> dict[str, Any]:
+    return {
+        "candidate_id": "",
+        "detector": "stats.consistency_check",
+        "candidate_type": "audit_coverage_gap",
+        "locations": [str(path)],
+        "finding_type": "source data extraction gap",
+        "evidence": {
+            "gap_type": "source_table_extraction_failed",
+            "message": "A supplied source-data table container could not be parsed for statistical screening.",
+            "file": str(path),
+            "error": error,
+        },
+        "evidence_strength": "weak_signal",
+        "risk_suggestion": "R1_max",
+        "risk_cap_tags": ["audit_coverage_gap", "completeness_gap", "source_table_extraction_failed"],
+        "benign_explanations": [
+            "the Prism/GraphPad project may contain valid data in a layout not supported by this lightweight XML extractor",
+            "equivalent CSV/XLSX exports may exist outside the supplied package",
+        ],
+        "required_materials": [
+            "GraphPad Prism source table exported to CSV or XLSX",
+            "or a PZFX file containing parseable XML column tables",
+        ],
+        "recommended_action": "Export Prism source tables and plotted values to CSV/XLSX, or provide a parseable PZFX source table, then re-run statistical screening.",
+        "requires_contextual_calibration": True,
+    }
 
 
 def row_label(path: Path, idx: int, row: dict[str, str]) -> str:
@@ -1220,7 +1343,7 @@ def collect_files(path: Path) -> list[Path]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("path", type=Path, help="CSV/TSV file or folder containing source-data tables")
+    parser.add_argument("path", type=Path, help="CSV/TSV/XLSX/PZFX file or folder containing source-data tables")
     parser.add_argument("--sem-tolerance", type=float, default=1e-3)
     parser.add_argument("--min-pairs", type=int, default=4, help="Minimum paired numeric rows for column relationship checks")
     parser.add_argument("--min-digit-count", type=int, default=None, help="Override minimum numeric values for terminal-digit, rounding, and precision checks")
@@ -1271,12 +1394,14 @@ def main() -> int:
                 ))
         except Exception as exc:  # noqa: BLE001 - report unreadable data without aborting.
             errors.append({"path": str(file_path), "error": str(exc)})
+            if file_path.suffix.lower() in PZFX_EXTS:
+                candidates.append(source_table_extraction_gap(file_path, str(exc)))
     candidates.extend(check_cross_file_sequence_reuse(tables, args.min_pairs))
     for idx, item in enumerate(candidates, start=1):
         item["candidate_id"] = f"BIOMED-STAT-{idx:04d}"
     result = {
         "detector_name": "stats.consistency_check",
-        "detector_version": "0.3.1",
+        "detector_version": "0.4.0",
         "input": {
             "path": str(target),
             "sem_tolerance": args.sem_tolerance,

@@ -17,12 +17,23 @@ import {
   inspectPackage,
   listAudits,
   saveAssemblyManifest,
+  saveClaimManifest,
   scaffoldPackage,
   updateAction,
+  updateImageReview,
   uploadZip
 } from "./api";
 import { getLabels } from "./i18n";
-import type { AuditJob, ExamplePackage, Language, ManifestRow, PackageInventory, SummaryPayload, Theme } from "./types";
+import type {
+  AuditJob,
+  ClaimManifestRow,
+  ExamplePackage,
+  Language,
+  ManifestRow,
+  PackageInventory,
+  SummaryPayload,
+  Theme
+} from "./types";
 
 const THEME_KEY = "biomed-self-audit-theme";
 const MAX_ZIP_BYTES = 250 * 1024 * 1024;
@@ -263,6 +274,21 @@ function AppInner() {
     }
   }
 
+  async function handleSaveClaimManifest(rows: ClaimManifestRow[]) {
+    if (!packagePath.trim()) {
+      toast("error", t.invalidPath);
+      return;
+    }
+    try {
+      const payload = await saveClaimManifest(packagePath, rows);
+      setPackageInventory(payload.inventory);
+      toast("success", t.claimManifestSaved);
+    } catch (err) {
+      setError(String(err));
+      toast("error", String(err));
+    }
+  }
+
   async function handleDelete() {
     if (!selectedAuditId) return;
     try {
@@ -294,6 +320,19 @@ function AppInner() {
     if (!selectedAuditId) return;
     try {
       await updateAction(selectedAuditId, actionId, patch);
+      const summary = await getSummary(selectedAuditId);
+      setDetail(summary);
+      toast("success", t.actionSaved);
+    } catch (err) {
+      setError(String(err));
+      toast("error", String(err));
+    }
+  }
+
+  async function handleImageReviewUpdate(reviewItemId: string, patch: Parameters<typeof updateImageReview>[2]) {
+    if (!selectedAuditId) return;
+    try {
+      await updateImageReview(selectedAuditId, reviewItemId, patch);
       const summary = await getSummary(selectedAuditId);
       setDetail(summary);
       toast("success", t.actionSaved);
@@ -353,11 +392,13 @@ function AppInner() {
         onInspectPackage={handleInspectPackage}
         onScaffoldPackage={handleScaffoldPackage}
         onSaveManifest={handleSaveManifest}
+        onSaveClaimManifest={handleSaveClaimManifest}
         onRunExample={handleRunExample}
         onRefresh={() => selectedAuditId && loadSelected(selectedAuditId)}
         onDelete={handleDelete}
         onCancel={handleCancel}
         onActionUpdate={handleActionUpdate}
+        onImageReviewUpdate={handleImageReviewUpdate}
         onEvidence={openEvidence}
       />
       {lightbox && (

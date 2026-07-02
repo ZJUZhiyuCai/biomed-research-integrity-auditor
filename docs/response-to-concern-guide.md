@@ -54,7 +54,8 @@ Read in this order:
 2. `audit-report.md`
 3. `unresolved_actions.csv`
 4. `verified_traceability.csv`
-5. `calibrated_findings.json` only when you need the structured evidence payload.
+5. `submission_qc_packet/audience_exports/JOURNAL_RESPONSE_DRAFT.md` as a starting point for a neutral reply; edit it before sharing.
+6. `calibrated_findings.json` only when you need the structured evidence payload.
 
 For each concern, write down:
 
@@ -69,6 +70,12 @@ Use the template at:
 
 `skill/biomed-research-integrity-auditor/templates/author-query-letter.md`
 
+Each audit also writes an editable draft at:
+
+`submission_qc_packet/audience_exports/JOURNAL_RESPONSE_DRAFT.md`
+
+That draft is generated from the neutral action queue. Do not submit it unchanged; replace placeholders, attach source/raw records, and remove any item that has not been reviewed by the responsible author.
+
 Keep the response factual:
 
 - "The raw image for Figure 2B is supplied as ..."
@@ -81,4 +88,3 @@ Avoid:
 - Declaring misconduct or absence of misconduct.
 - Claiming the tool has proven a figure correct.
 - Hiding unresolved gaps behind a low risk band.
-

@@ -86,7 +86,9 @@
           "evidence_type": {"type": "string"},
           "benign_explanations_considered": {"type": "array", "items": {"type": "string"}},
           "required_materials_to_resolve": {"type": "array", "items": {"type": "string"}},
-          "recommended_action": {"type": "string"}
+          "recommended_action": {"type": "string"},
+          "neutral_inquiry_template": {"type": "string"},
+          "material_request_template": {"type": "string"}
         }
       }
     },
@@ -228,6 +230,7 @@
         "status",
         "human_note",
         "accepted_with_reason",
+        "attachment_reference",
         "source"
       ],
       "properties": {
@@ -235,6 +238,7 @@
         "action_category": {"type": "string"},
         "risk_level": {"enum": ["R0", "R1", "R2", "R3", "R4"]},
         "action_type": {"type": "string"},
+        "source_finding_id": {"type": "string"},
         "item": {"type": "string"},
         "location": {"type": "string"},
         "required_action": {"type": "string"},
@@ -242,6 +246,9 @@
         "status": {"enum": ["unresolved", "resolved", "accepted_with_reason", "false_positive"]},
         "human_note": {"type": "string"},
         "accepted_with_reason": {"type": "string"},
+        "attachment_reference": {"type": "string"},
+        "neutral_inquiry_template": {"type": "string"},
+        "material_request_template": {"type": "string"},
         "source": {"type": "string"}
       }
     }

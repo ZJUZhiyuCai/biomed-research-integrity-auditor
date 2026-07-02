@@ -266,6 +266,14 @@ def is_same_image_copy_move_edge(edge: dict[str, Any]) -> bool:
     )
 
 
+def source_similarity_candidate_type(source_candidate_type: str) -> str:
+    if source_candidate_type == "local_patch_reuse":
+        return "local_patch_reuse"
+    if source_candidate_type == "keypoint_geometric_match":
+        return "keypoint_geometric_match"
+    return "image_reuse_cluster"
+
+
 def classify_similarity_edge(
     edge: dict[str, Any],
     context: dict[str, Any],
@@ -279,6 +287,7 @@ def classify_similarity_edge(
     classified["left_role"] = left_role
     classified["right_role"] = right_role
     is_local_patch = edge.get("similarity_scope") == "local_patch"
+    is_keypoint_geometric = edge.get("similarity_scope") == "keypoint_geometric"
 
     if is_same_image_copy_move_edge(edge):
         classified.update({
@@ -318,6 +327,21 @@ def classify_similarity_edge(
                         "raw image files for both declared panels",
                         "per-channel, same-field, lane, or reprobe acquisition metadata",
                         "figure assembly history demonstrating the declared relationship",
+                    ],
+                })
+                return classified
+            if is_keypoint_geometric:
+                classified.update({
+                    "contextual_tag": "declared_geometric_match_requires_verification",
+                    "reportable_as_risk": True,
+                    "positive_evidence": False,
+                    "risk_suggestion": "R1_max",
+                    "declared_relation_unverified": True,
+                    "provenance_edge": declared_edge,
+                    "required_materials_to_resolve": [
+                        "raw image files for both declared panels",
+                        "per-channel, same-field, lane, or reprobe acquisition metadata",
+                        "figure assembly or registration history demonstrating the declared relationship",
                     ],
                 })
                 return classified
@@ -397,6 +421,7 @@ def risk_edges_for_cluster(classified_edges: list[dict[str, Any]]) -> list[dict[
         "disclosed_legitimate_reuse",
         "disclosed_unjustified_reuse",
         "declared_local_patch_requires_verification",
+        "declared_geometric_match_requires_verification",
         "manifest_conflict",
         "same_image_copy_move",
     }
@@ -418,6 +443,10 @@ def candidate_from_edges(candidate: dict[str, Any], risk_edges: list[dict[str, A
         candidate_type = "local_patch_reuse"
         risk_suggestion = "R1_max"
         evidence_strength = "candidate"
+    elif "declared_geometric_match_requires_verification" in tags:
+        candidate_type = "keypoint_geometric_match"
+        risk_suggestion = "R1_max"
+        evidence_strength = "candidate"
     elif "local_patch_cross_context" in tags:
         candidate_type = "local_patch_reuse"
         risk_suggestion = "R3_possible"
@@ -431,15 +460,15 @@ def candidate_from_edges(candidate: dict[str, Any], risk_edges: list[dict[str, A
         risk_suggestion = "R3_possible"
         evidence_strength = "candidate"
     elif "cross_context_reuse_candidate" in tags:
-        candidate_type = "local_patch_reuse" if source_candidate_type == "local_patch_reuse" else "image_reuse_cluster"
+        candidate_type = source_similarity_candidate_type(source_candidate_type)
         risk_suggestion = "R3_possible"
         evidence_strength = "candidate"
     elif "disclosed_unjustified_reuse" in tags:
-        candidate_type = "local_patch_reuse" if source_candidate_type == "local_patch_reuse" else "image_reuse_cluster"
+        candidate_type = source_similarity_candidate_type(source_candidate_type)
         risk_suggestion = "R3_possible"
         evidence_strength = "candidate"
     elif "disclosed_legitimate_reuse" in tags:
-        candidate_type = "local_patch_reuse" if source_candidate_type == "local_patch_reuse" else "image_reuse_cluster"
+        candidate_type = source_similarity_candidate_type(source_candidate_type)
         risk_suggestion = "R3_possible_pending_context"
         evidence_strength = "candidate"
     elif "unresolved_fig_raw_similarity" in tags:
@@ -496,6 +525,20 @@ def candidate_from_edges(candidate: dict[str, Any], risk_edges: list[dict[str, A
         item["recommended_action"] = (
             "Verify the declared same-field/same-membrane relationship against raw images, acquisition metadata, "
             "and figure assembly history before treating this local similarity as resolved."
+        )
+    if "declared_geometric_match_requires_verification" in tags:
+        item["benign_explanations"] = [
+            "the panels may genuinely share a field, lane, membrane, channel set, reprobe history, or registration workflow",
+            "keypoint alignment can be expected for registered same-field images, but the manifest is not independent verification",
+        ]
+        item["required_materials"] = [
+            "raw image files for both declared panels",
+            "per-channel, same-field, lane, or reprobe acquisition metadata",
+            "figure assembly or registration history demonstrating the declared relationship",
+        ]
+        item["recommended_action"] = (
+            "Verify the declared same-field/same-membrane relationship against raw images, acquisition metadata, "
+            "and figure assembly history before treating this geometric match as resolved."
         )
     if "manifest_conflict" in tags:
         item["benign_explanations"] = [

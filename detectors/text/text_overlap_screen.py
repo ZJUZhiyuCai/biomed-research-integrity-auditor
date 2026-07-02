@@ -7,12 +7,15 @@ import argparse
 import json
 import re
 import shutil
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+import xml.etree.ElementTree as ET
 
 
-TEXT_EXTS = {".txt", ".md", ".pdf"}
+TEXT_EXTS = {".txt", ".md", ".pdf", ".docx"}
+WORD_NS = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 INCLUDED_PARTS = {
     "manuscript",
     "supplementary",
@@ -148,9 +151,78 @@ def extract_pdf_text(path: Path) -> str:
     return extract_pdf_ocr_text(path)
 
 
+def word_text(element: ET.Element) -> str:
+    parts: list[str] = []
+    for node in element.iter():
+        if node.tag == f"{WORD_NS}t" and node.text:
+            parts.append(node.text)
+        elif node.tag == f"{WORD_NS}tab":
+            parts.append("\t")
+        elif node.tag in {f"{WORD_NS}br", f"{WORD_NS}cr"}:
+            parts.append("\n")
+    return normalize_space("".join(parts))
+
+
+def word_paragraph_style(paragraph: ET.Element) -> str:
+    style = paragraph.find(f"{WORD_NS}pPr/{WORD_NS}pStyle")
+    if style is None:
+        return ""
+    return str(style.attrib.get(f"{WORD_NS}val", "")).lower()
+
+
+def extract_docx_text(path: Path) -> str:
+    try:
+        with zipfile.ZipFile(path) as archive:
+            document_xml = archive.read("word/document.xml")
+    except Exception as exc:  # noqa: BLE001 - callers surface this as an extraction gap.
+        raise ValueError(f"DOCX text extraction failed: {exc}") from exc
+
+    try:
+        root = ET.fromstring(document_xml)
+    except ET.ParseError as exc:
+        raise ValueError(f"DOCX document.xml parse failed: {exc}") from exc
+
+    body = root.find(f".//{WORD_NS}body")
+    if body is None:
+        raise ValueError("DOCX document.xml does not contain a Word body")
+
+    blocks: list[str] = []
+    for child in list(body):
+        if child.tag == f"{WORD_NS}p":
+            text = word_text(child)
+            if not text:
+                continue
+            style = word_paragraph_style(child)
+            if style == "caption" and not text.lower().startswith(("figure", "fig.", "table")):
+                text = f"Caption: {text}"
+            blocks.append(text)
+        elif child.tag == f"{WORD_NS}tbl":
+            rows: list[str] = []
+            for row in child.findall(f"{WORD_NS}tr"):
+                cells = []
+                for cell in row.findall(f"{WORD_NS}tc"):
+                    cell_text = " ".join(
+                        text
+                        for text in (word_text(paragraph) for paragraph in cell.findall(f"{WORD_NS}p"))
+                        if text
+                    )
+                    cells.append(cell_text)
+                if any(cells):
+                    rows.append("\t".join(cells))
+            if rows:
+                blocks.append("\n".join(rows))
+
+    text = "\n\n".join(blocks).strip()
+    if not text:
+        raise ValueError("DOCX text extraction returned no text")
+    return text
+
+
 def read_text(path: Path) -> str:
     if is_true_pdf(path):
         return extract_pdf_text(path)
+    if path.suffix.lower() == ".docx":
+        return extract_docx_text(path)
     return path.read_text(encoding="utf-8", errors="ignore")
 
 
@@ -307,6 +379,36 @@ def candidate_from_pair(
     }
 
 
+def extraction_gap_candidate(error: dict[str, Any], idx: int) -> dict[str, Any]:
+    path = str(error.get("path", "unknown document"))
+    return {
+        "candidate_id": f"TEXTEXTRACT-{idx:04d}",
+        "detector": "text.text_overlap_screen",
+        "candidate_type": "audit_coverage_gap",
+        "locations": [path],
+        "evidence": {
+            "gap_type": "text_extraction_failed",
+            "message": "A supplied manuscript or text container could not be extracted for text screening.",
+            "path": path,
+            "category": error.get("category", ""),
+            "error": error.get("error", ""),
+        },
+        "evidence_strength": "weak_signal",
+        "risk_suggestion": "R1_max",
+        "risk_cap_tags": ["audit_coverage_gap", "completeness_gap", "text_extraction_failed"],
+        "benign_explanations": [
+            "the file may be corrupt, encrypted, or saved in a container variant not supported by the current extractor",
+            "an equivalent extractable PDF/TXT/DOCX copy may exist outside the supplied package",
+        ],
+        "required_materials": [
+            "extractable manuscript or supplement text",
+            "source DOCX/PDF or plain-text export",
+        ],
+        "recommended_action": "Provide an extractable DOCX, machine-text PDF, OCR text, or TXT/MD export and re-run text screening.",
+        "requires_contextual_calibration": True,
+    }
+
+
 def scan(root: Path, ngram: int, threshold: float, min_tokens: int) -> dict[str, Any]:
     paragraphs: list[Paragraph] = []
     errors = []
@@ -314,9 +416,16 @@ def scan(root: Path, ngram: int, threshold: float, min_tokens: int) -> dict[str,
         try:
             paragraphs.extend(parse_paragraphs(root, path, category, ngram, min_tokens))
         except Exception as exc:  # noqa: BLE001 - unreadable text should not abort package audit.
-            errors.append({"path": str(path.relative_to(root)), "error": str(exc)})
+            errors.append({
+                "path": str(path.relative_to(root)),
+                "category": category,
+                "error": str(exc),
+                "stage": "text_extraction",
+            })
 
     candidates: list[dict[str, Any]] = []
+    for error in errors:
+        candidates.append(extraction_gap_candidate(error, len(candidates) + 1))
     seen: set[tuple[str, str]] = set()
     for idx, left in enumerate(paragraphs):
         for right in paragraphs[idx + 1:]:

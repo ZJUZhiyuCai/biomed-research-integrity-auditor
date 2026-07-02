@@ -44,6 +44,7 @@ from scripts.submission_qc import (  # noqa: E402
     write_missing_materials_csv,
     write_json as write_qc_json,
     write_re_audit_diff_csv,
+    write_re_audit_diff_markdown,
     write_unresolved_actions_csv,
     write_verified_traceability_csv,
 )
@@ -54,11 +55,20 @@ DETECTOR_SCHEMA = ROOT / "schemas" / "detector_output.schema.json"
 CALIBRATED_SCHEMA = ROOT / "schemas" / "calibrated_findings.schema.json"
 SUMMARY_SCHEMA = ROOT / "schemas" / "audit_summary.schema.json"
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp"}
-SOURCE_EXTS = {".csv", ".tsv", ".xlsx"}
-TEXT_EXTS = {".txt", ".md", ".pdf"}
-DOCUMENT_CONTAINER_EXTS = {".doc", ".docx"}
-LEGACY_SOURCE_EXTS = {".xls", ".pzfx"}
+SOURCE_EXTS = {".csv", ".tsv", ".xlsx", ".pzfx"}
+TEXT_EXTS = {".txt", ".md", ".pdf", ".docx"}
+PDF_EXTS = {".pdf"}
+DOCX_EXTS = {".docx"}
+XLSX_EXTS = {".xlsx"}
+PPTX_EXTS = {".pptx"}
+KEY_EXTS = {".key"}
+PSD_EXTS = {".psd"}
+PZFX_EXTS = {".pzfx"}
+FCS_EXTS = {".fcs"}
+DOCUMENT_CONTAINER_EXTS = {".doc"}
+LEGACY_SOURCE_EXTS = {".xls"}
 PDF_IMAGE_CONTAINER_CATEGORIES = {"figures", "figure_assembly", "supplementary"}
+OPAQUE_ASSEMBLY_CONTAINER_EXTS = {".ai", ".indd", ".key", ".ppt", ".psd"}
 MODES = ("internal_presubmission", "external_public_material", "response_to_concern")
 SCAN_PROFILES = ("quick", "standard", "deep")
 EXTERNAL_LITERATURE_PROVIDERS = ("auto", "none", "fixture", "europepmc", "crossref")
@@ -71,6 +81,9 @@ RAW_CANDIDATE_ARTIFACTS = (
     "stats_consistency_candidates.json",
     "pseudoreplication_candidates.json",
     "global_image_candidates.json",
+    "keypoint_image_candidates.json",
+    "channel_metadata_candidates.json",
+    "splice_forensics_candidates.json",
     "local_patch_candidates.json",
     "text_overlap_candidates.json",
     "external_literature_candidates.json",
@@ -81,28 +94,34 @@ IMAGE_SCREENING_BOUNDARY = {
     "automated_checks": [
         "whole-image near-duplicate screening within the supplied package",
         "D4 transforms for whole-image matches (identity, 90/180/270 rotation, horizontal/vertical flip, transpose, transverse)",
+        "OpenCV ORB keypoint plus RANSAC homography screening for rotated, rescaled, cropped, or perspective-shifted image candidates",
         "overlapping-tile local patch reuse across supplied images",
         "same-image copy-move screening for non-overlapping repeated regions",
         "limited low-contrast same-image probing and multi-frame TIFF-like frame screening",
+        "same-field/different-channel manifest declarations checked against available frame/channel metadata",
+        "weak ELA/JPEG residual, JPEG-ghost profile, noise-map, and CFA-like grid triage for localized export/residual anomalies",
     ],
     "automated_checks_zh": [
         "在所供材料包内部做整图近重复筛查",
         "整图匹配支持 D4 变换（原图、90/180/270 度旋转、水平/垂直翻转、转置、反转置）",
+        "使用 OpenCV ORB keypoint 与 RANSAC homography 筛查旋转、缩放、裁剪或透视变化后的图像相似候选",
         "在所供图像之间做重叠 tile 的局部 patch 复用筛查",
         "在同一图像内部筛查非重叠区域的 copy-move 候选",
         "有限的低对比同图探测，以及 multi-frame TIFF-like 文件的逐帧筛查",
+        "把同视野/不同通道 manifest 声明与已有 frame/channel metadata 做交叉核对",
+        "用弱 ELA/JPEG residual、JPEG-ghost profile、noise-map 和 CFA-like grid triage 提示局部导出/残差异常",
     ],
     "not_covered": [
         "cross-paper or external image-corpus search",
-        "arbitrary-angle rotation, perspective warp, elastic deformation, or substantial rescaling",
-        "general splice forensics such as ELA, JPEG ghost analysis, CFA/noise inconsistency, or lighting/shadow inconsistency",
+        "elastic deformation, nonrigid registration, severe perspective distortion, or very low-feature images outside ORB/RANSAC limits",
+        "specialist splice forensics beyond weak triage, such as sensor-pattern authentication, lighting/shadow inconsistency, or robust JPEG ghost analysis beyond weak profile prompts",
         "manual verification of whether a repeated region is scientifically justified by sample maps, lanes, channels, or raw acquisition metadata",
         "proof that a figure is authentic or free of manipulation",
     ],
     "not_covered_zh": [
         "跨论文或外部图像库检索",
-        "任意角度旋转、透视变换、弹性形变或大幅缩放",
-        "通用拼接取证，例如 ELA、JPEG ghost、CFA/噪声不一致或光照/阴影不一致",
+        "ORB/RANSAC 能力之外的弹性形变、非刚性配准、严重透视扭曲或特征点很少的图像",
+        "弱提示之外的专业拼接取证，例如传感器模式认证、光照/阴影不一致或弱 profile 提示之外的稳健 JPEG ghost 分析",
         "人工核验重复区域是否能被样本图、泳道、通道或原始采集元数据合理解释",
         "证明图像真实、未被处理或完全无问题",
     ],
@@ -239,6 +258,509 @@ def build_provenance(package: Path, manifest: Path, output_dir: Path) -> Path:
         str(provenance_graph),
     ])
     return provenance_graph
+
+
+def build_pdf_structure(package: Path, output_dir: Path) -> Path | None:
+    if not has_files(package, PDF_EXTS):
+        return None
+    output = output_dir / "pdf_structure.json"
+    cmd = [
+        PYTHON,
+        "scripts/pdf_structure_extract.py",
+        str(package),
+        "--output",
+        str(output),
+    ]
+    result = subprocess.run(cmd, cwd=ROOT, check=False, capture_output=True, text=True)
+    if result.returncode == 0 and output.exists():
+        return output
+    payload = {
+        "schema_version": "0.2.0",
+        "extractor": "scripts.pdf_structure_extract",
+        "scope_note": (
+            "PDF structure extraction did not complete. Embedded PDF image export is handled "
+            "by pdf_embedded_images.json when that artifact is available."
+        ),
+        "input": {
+            "package": str(package),
+            "pdf_files": 0,
+            "command": command_display(cmd),
+        },
+        "pdfs": [],
+        "captions": [],
+        "table_like_blocks": [],
+        "errors": [
+            {
+                "stage": "pdf_structure_extraction",
+                "error": "pdf structure extractor exited non-zero or did not write output",
+                "returncode": result.returncode,
+                "stdout_tail": text_tail(result.stdout),
+                "stderr_tail": text_tail(result.stderr),
+            }
+        ],
+    }
+    write_json(output, payload)
+    return output
+
+
+def build_docx_structure(package: Path, output_dir: Path) -> Path | None:
+    if not has_files(package, DOCX_EXTS):
+        return None
+    output = output_dir / "docx_structure.json"
+    cmd = [
+        PYTHON,
+        "scripts/docx_structure_extract.py",
+        str(package),
+        "--output",
+        str(output),
+    ]
+    result = subprocess.run(cmd, cwd=ROOT, check=False, capture_output=True, text=True)
+    if result.returncode == 0 and output.exists():
+        return output
+    payload = {
+        "schema_version": "0.1.0",
+        "extractor": "scripts.docx_structure_extract",
+        "scope_note": (
+            "DOCX structure extraction did not complete. DOCX text may still be used by text screening "
+            "when readable, but paragraph/caption/table structure remains an intake coverage gap."
+        ),
+        "input": {
+            "package": str(package),
+            "docx_files": 0,
+            "command": command_display(cmd),
+        },
+        "docx_files": [],
+        "paragraphs": [],
+        "captions": [],
+        "table_like_blocks": [],
+        "warnings": [],
+        "errors": [
+            {
+                "stage": "docx_structure_extraction",
+                "error": "docx structure extractor exited non-zero or did not write output",
+                "returncode": result.returncode,
+                "stdout_tail": text_tail(result.stdout),
+                "stderr_tail": text_tail(result.stderr),
+            }
+        ],
+    }
+    write_json(output, payload)
+    return output
+
+
+def build_prism_project_intake(package: Path, output_dir: Path) -> Path | None:
+    if not has_files(package, PZFX_EXTS):
+        return None
+    output = output_dir / "prism_project_intake.json"
+    cmd = [
+        PYTHON,
+        "scripts/prism_project_intake.py",
+        str(package),
+        "--output",
+        str(output),
+    ]
+    result = subprocess.run(cmd, cwd=ROOT, check=False, capture_output=True, text=True)
+    if result.returncode == 0 and output.exists():
+        return output
+    payload = {
+        "schema_version": "0.1.0",
+        "extractor": "scripts.prism_project_intake",
+        "scope_note": (
+            "GraphPad Prism PZFX project intake did not complete. Prism project structure remains "
+            "a source-data coverage gap until CSV/XLSX exports or parseable PZFX metadata are supplied."
+        ),
+        "input": {
+            "package": str(package),
+            "pzfx_files": 0,
+            "command": command_display(cmd),
+        },
+        "pzfx_files": [],
+        "tables": [],
+        "graphs": [],
+        "graph_table_links": [],
+        "errors": [
+            {
+                "stage": "prism_project_intake",
+                "error": "prism project intake exited non-zero or did not write output",
+                "returncode": result.returncode,
+                "stdout_tail": text_tail(result.stdout),
+                "stderr_tail": text_tail(result.stderr),
+            }
+        ],
+    }
+    write_json(output, payload)
+    return output
+
+
+def build_xlsx_structure(package: Path, output_dir: Path) -> Path | None:
+    if not has_files(package, XLSX_EXTS):
+        return None
+    output = output_dir / "xlsx_structure.json"
+    cmd = [
+        PYTHON,
+        "scripts/xlsx_structure_extract.py",
+        str(package),
+        "--output",
+        str(output),
+    ]
+    result = subprocess.run(cmd, cwd=ROOT, check=False, capture_output=True, text=True)
+    if result.returncode == 0 and output.exists():
+        return output
+    payload = {
+        "schema_version": "0.1.0",
+        "extractor": "scripts.xlsx_structure_extract",
+        "scope_note": (
+            "XLSX workbook structure intake did not complete. XLSX files may still be used by source-data "
+            "detectors when readable, but workbook sheet/header/formula metadata remains a coverage gap."
+        ),
+        "input": {
+            "package": str(package),
+            "xlsx_files": 0,
+            "command": command_display(cmd),
+        },
+        "xlsx_files": [],
+        "sheets": [],
+        "errors": [
+            {
+                "stage": "xlsx_structure_extraction",
+                "error": "xlsx structure extractor exited non-zero or did not write output",
+                "returncode": result.returncode,
+                "stdout_tail": text_tail(result.stdout),
+                "stderr_tail": text_tail(result.stderr),
+            }
+        ],
+    }
+    write_json(output, payload)
+    return output
+
+
+def build_fcs_metadata_intake(package: Path, output_dir: Path) -> Path | None:
+    if not has_files(package, FCS_EXTS):
+        return None
+    output = output_dir / "fcs_metadata_intake.json"
+    cmd = [
+        PYTHON,
+        "scripts/fcs_metadata_intake.py",
+        str(package),
+        "--output",
+        str(output),
+    ]
+    result = subprocess.run(cmd, cwd=ROOT, check=False, capture_output=True, text=True)
+    if result.returncode == 0 and output.exists():
+        return output
+    payload = {
+        "schema_version": "0.1.0",
+        "extractor": "scripts.fcs_metadata_intake",
+        "scope_note": (
+            "FCS metadata intake did not complete. Flow cytometry raw-file metadata remains "
+            "a coverage gap until readable FCS files, gating/workspace files, and source exports are supplied."
+        ),
+        "input": {
+            "package": str(package),
+            "fcs_files": 0,
+            "command": command_display(cmd),
+        },
+        "totals": {
+            "fcs_files": 0,
+            "readable_fcs_files": 0,
+            "unreadable_fcs_files": 0,
+            "total_events_reported": 0,
+            "total_parameters_indexed": 0,
+            "files_with_compensation_keywords": 0,
+        },
+        "fcs_files": [],
+        "errors": [
+            {
+                "stage": "fcs_metadata_intake",
+                "error": "FCS metadata intake exited non-zero or did not write output",
+                "returncode": result.returncode,
+                "stdout_tail": text_tail(result.stdout),
+                "stderr_tail": text_tail(result.stderr),
+            }
+        ],
+    }
+    write_json(output, payload)
+    return output
+
+
+def build_pdf_embedded_images(package: Path, output_dir: Path) -> Path | None:
+    if not has_files(package, PDF_EXTS):
+        return None
+    output = output_dir / "pdf_embedded_images.json"
+    image_dir = output_dir / "pdf_embedded_images"
+    cmd = [
+        PYTHON,
+        "scripts/pdf_embedded_image_extract.py",
+        str(package),
+        "--output",
+        str(output),
+        "--image-dir",
+        str(image_dir),
+    ]
+    result = subprocess.run(cmd, cwd=ROOT, check=False, capture_output=True, text=True)
+    if result.returncode == 0 and output.exists():
+        return output
+    payload = {
+        "schema_version": "0.1.0",
+        "extractor": "scripts.pdf_embedded_image_extract",
+        "scope_note": (
+            "PDF embedded-image extraction did not complete. PDF images remain presentation-layer "
+            "container content and are not raw/source records."
+        ),
+        "input": {
+            "package": str(package),
+            "pdf_files": 0,
+            "image_dir": str(image_dir),
+            "command": command_display(cmd),
+        },
+        "pdfs": [],
+        "images": [],
+        "errors": [
+            {
+                "stage": "pdf_embedded_image_extraction",
+                "error": "pdf embedded-image extractor exited non-zero or did not write output",
+                "returncode": result.returncode,
+                "stdout_tail": text_tail(result.stdout),
+                "stderr_tail": text_tail(result.stderr),
+            }
+        ],
+    }
+    write_json(output, payload)
+    return output
+
+
+def build_pptx_embedded_images(package: Path, output_dir: Path) -> Path | None:
+    if not has_files(package, PPTX_EXTS):
+        return None
+    output = output_dir / "pptx_embedded_images.json"
+    image_dir = output_dir / "pptx_embedded_images"
+    cmd = [
+        PYTHON,
+        "scripts/pptx_embedded_image_extract.py",
+        str(package),
+        "--output",
+        str(output),
+        "--image-dir",
+        str(image_dir),
+    ]
+    result = subprocess.run(cmd, cwd=ROOT, check=False, capture_output=True, text=True)
+    if result.returncode == 0 and output.exists():
+        return output
+    payload = {
+        "schema_version": "0.1.0",
+        "extractor": "scripts.pptx_embedded_image_extract",
+        "scope_note": (
+            "PPTX embedded-image extraction did not complete. PPTX images remain presentation-layer "
+            "figure-assembly content and are not raw/source records."
+        ),
+        "input": {
+            "package": str(package),
+            "pptx_files": 0,
+            "image_dir": str(image_dir),
+            "command": command_display(cmd),
+        },
+        "pptx_files": [],
+        "images": [],
+        "errors": [
+            {
+                "stage": "pptx_embedded_image_extraction",
+                "error": "pptx embedded-image extractor exited non-zero or did not write output",
+                "returncode": result.returncode,
+                "stdout_tail": text_tail(result.stdout),
+                "stderr_tail": text_tail(result.stderr),
+            }
+        ],
+    }
+    write_json(output, payload)
+    return output
+
+
+def build_pptx_structure(package: Path, output_dir: Path) -> Path | None:
+    if not has_files(package, PPTX_EXTS):
+        return None
+    output = output_dir / "pptx_structure.json"
+    cmd = [
+        PYTHON,
+        "scripts/pptx_structure_extract.py",
+        str(package),
+        "--output",
+        str(output),
+    ]
+    result = subprocess.run(cmd, cwd=ROOT, check=False, capture_output=True, text=True)
+    if result.returncode == 0 and output.exists():
+        return output
+    payload = {
+        "schema_version": "0.1.0",
+        "extractor": "scripts.pptx_structure_extract",
+        "scope_note": (
+            "PPTX text/path structure extraction did not complete. PPTX files remain "
+            "presentation-layer assembly containers until explicit panel/source exports or "
+            "structured assembly manifests are supplied."
+        ),
+        "input": {
+            "package": str(package),
+            "pptx_files": 0,
+            "command": command_display(cmd),
+        },
+        "pptx_files": [],
+        "slides": [],
+        "explicit_path_mentions": [],
+        "explicit_path_pairs": [],
+        "warnings": [],
+        "errors": [
+            {
+                "stage": "pptx_structure_extraction",
+                "error": "pptx structure extractor exited non-zero or did not write output",
+                "returncode": result.returncode,
+                "stdout_tail": text_tail(result.stdout),
+                "stderr_tail": text_tail(result.stderr),
+            }
+        ],
+    }
+    write_json(output, payload)
+    return output
+
+
+def build_key_embedded_images(package: Path, output_dir: Path) -> Path | None:
+    if not has_files(package, KEY_EXTS):
+        return None
+    output = output_dir / "key_embedded_images.json"
+    image_dir = output_dir / "key_embedded_images"
+    cmd = [
+        PYTHON,
+        "scripts/key_embedded_image_extract.py",
+        str(package),
+        "--output",
+        str(output),
+        "--image-dir",
+        str(image_dir),
+    ]
+    result = subprocess.run(cmd, cwd=ROOT, check=False, capture_output=True, text=True)
+    if result.returncode == 0 and output.exists():
+        return output
+    payload = {
+        "schema_version": "0.1.0",
+        "extractor": "scripts.key_embedded_image_extract",
+        "scope_note": (
+            "Keynote embedded-image extraction did not complete. Keynote images remain presentation-layer "
+            "figure-assembly content and are not raw/source records."
+        ),
+        "input": {
+            "package": str(package),
+            "key_files": 0,
+            "image_dir": str(image_dir),
+            "command": command_display(cmd),
+        },
+        "key_files": [],
+        "images": [],
+        "errors": [
+            {
+                "stage": "key_embedded_image_extraction",
+                "error": "key embedded-image extractor exited non-zero or did not write output",
+                "returncode": result.returncode,
+                "stdout_tail": text_tail(result.stdout),
+                "stderr_tail": text_tail(result.stderr),
+            }
+        ],
+    }
+    write_json(output, payload)
+    return output
+
+
+def build_psd_preview_images(package: Path, output_dir: Path) -> Path | None:
+    if not has_files(package, PSD_EXTS):
+        return None
+    output = output_dir / "psd_preview_images.json"
+    image_dir = output_dir / "psd_preview_images"
+    cmd = [
+        PYTHON,
+        "scripts/psd_preview_extract.py",
+        str(package),
+        "--output",
+        str(output),
+        "--image-dir",
+        str(image_dir),
+    ]
+    result = subprocess.run(cmd, cwd=ROOT, check=False, capture_output=True, text=True)
+    if result.returncode == 0 and output.exists():
+        return output
+    payload = {
+        "schema_version": "0.1.0",
+        "extractor": "scripts.psd_preview_extract",
+        "scope_note": (
+            "PSD flattened-preview extraction did not complete. PSD files remain opaque "
+            "presentation-layer figure-assembly content and are not raw/source records."
+        ),
+        "input": {
+            "package": str(package),
+            "psd_files": 0,
+            "image_dir": str(image_dir),
+            "command": command_display(cmd),
+        },
+        "psd_files": [],
+        "images": [],
+        "errors": [
+            {
+                "stage": "psd_preview_extraction",
+                "error": "psd preview extractor exited non-zero or did not write output",
+                "returncode": result.returncode,
+                "stdout_tail": text_tail(result.stdout),
+                "stderr_tail": text_tail(result.stderr),
+            }
+        ],
+    }
+    write_json(output, payload)
+    return output
+
+
+def build_image_metadata(package: Path, output_dir: Path) -> Path | None:
+    if not has_files(package, IMAGE_EXTS):
+        return None
+    output = output_dir / "image_metadata.json"
+    cmd = [
+        PYTHON,
+        "scripts/image_metadata_extract.py",
+        str(package),
+        "--output",
+        str(output),
+    ]
+    result = subprocess.run(cmd, cwd=ROOT, check=False, capture_output=True, text=True)
+    if result.returncode == 0 and output.exists():
+        return output
+    payload = {
+        "schema_version": "0.1.0",
+        "extractor": "scripts.image_metadata_extract",
+        "scope_note": (
+            "Image metadata extraction did not complete. Frame/channel/Z-stack metadata "
+            "should be reviewed manually from acquisition records before interpreting multi-channel relationships."
+        ),
+        "input": {
+            "image_files": 0,
+            "command": command_display(cmd),
+        },
+        "totals": {
+            "image_files": 0,
+            "readable_images": 0,
+            "unreadable_images": 0,
+            "multiframe_images": 0,
+            "ome_metadata_files": 0,
+            "channel_metadata_files": 0,
+            "z_stack_metadata_files": 0,
+            "manual_metadata_review_files": 0,
+        },
+        "images": [],
+        "errors": [
+            {
+                "stage": "image_metadata_extraction",
+                "error": "image metadata extractor exited non-zero or did not write output",
+                "returncode": result.returncode,
+                "stdout_tail": text_tail(result.stdout),
+                "stderr_tail": text_tail(result.stderr),
+            }
+        ],
+    }
+    write_json(output, payload)
+    return output
 
 
 def validate_detector(path: Path) -> None:
@@ -425,8 +947,83 @@ def run_image_detector(package: Path, output_dir: Path, provenance_graph: Path, 
     else:
         outputs.append(global_result.output)
 
+    channel_metadata_output = output_dir / "channel_metadata_candidates.json"
+    channel_metadata_result = run_detector("channel_metadata", package, output_dir, [
+        PYTHON,
+        "detectors/image/channel_metadata_consistency.py",
+        str(package),
+        "--provenance",
+        str(provenance_graph),
+        "--metadata",
+        str(output_dir / "image_metadata.json"),
+        "--output",
+        str(channel_metadata_output),
+    ], channel_metadata_output)
+    outputs.append(channel_metadata_result.output)
+
     if scan_profile == "quick":
         return outputs
+
+    splice_output = output_dir / "splice_forensics_candidates.json"
+    splice_cmd = [
+        PYTHON,
+        "detectors/image/splice_forensics_triage.py",
+        str(package),
+        "--output",
+        str(splice_output),
+    ]
+    if scan_profile == "deep":
+        splice_cmd.extend([
+            "--ela-z-threshold",
+            "6.0",
+            "--noise-z-threshold",
+            "6.0",
+            "--max-images",
+            "500",
+        ])
+    splice_result = run_detector("splice_forensics", package, output_dir, splice_cmd, splice_output)
+    outputs.append(splice_result.output)
+
+    keypoint_output = output_dir / "keypoint_image_candidates.json"
+    keypoint_cmd = [
+        PYTHON,
+        "detectors/image/keypoint_geometric_match.py",
+        str(package),
+        "--provenance",
+        str(provenance_graph),
+        "--output",
+        str(keypoint_output),
+    ]
+    if scan_profile == "deep":
+        keypoint_cmd.extend([
+            "--max-dimension",
+            "1400",
+            "--min-inliers",
+            "18",
+            "--min-inlier-ratio",
+            "0.20",
+            "--max-pair-comparisons",
+            "5000",
+        ])
+    keypoint_result = run_detector("keypoint_image", package, output_dir, keypoint_cmd, keypoint_output)
+
+    if keypoint_result.ok:
+        keypoint_contextual_output = output_dir / "keypoint_contextual_candidates.json"
+        keypoint_contextual_result = run_detector("keypoint_contextual", package, output_dir, [
+            PYTHON,
+            "calibrators/contextual_joiner.py",
+            "--input",
+            str(keypoint_output),
+            "--package",
+            str(package),
+            "--provenance",
+            str(provenance_graph),
+            "--output",
+            str(keypoint_contextual_output),
+        ], keypoint_contextual_output)
+        outputs.append(keypoint_contextual_result.output)
+    else:
+        outputs.append(keypoint_result.output)
 
     local_patch_output = output_dir / "local_patch_candidates.json"
     local_patch_cmd = [
@@ -607,9 +1204,9 @@ def unsupported_format_groups(manifest: dict[str, Any]) -> list[dict[str, Any]]:
             add(
                 "document_text_container_not_screened",
                 file_item,
-                "Word document containers are inventoried but not text-screened by the current automated text detectors.",
-                "Export the current manuscript/protocol text to PDF or plain text and keep the original document for records.",
-                ["PDF with extractable text", "TXT/MD text export"],
+                "Legacy Word document containers are inventoried but not text-screened by the current automated text detectors.",
+                "Save the current manuscript/protocol as DOCX, PDF with extractable text, or plain text and keep the original document for records.",
+                ["DOCX", "PDF with extractable text", "TXT/MD text export"],
             )
         elif extension == ".xls" and category in {"source_data", "statistics_code", "protocols"}:
             add(
@@ -619,21 +1216,21 @@ def unsupported_format_groups(manifest: dict[str, Any]) -> list[dict[str, Any]]:
                 "Export each relevant sheet to CSV/TSV or modern XLSX, then re-run the audit.",
                 ["CSV/TSV per sheet", "XLSX"],
             )
-        elif extension == ".pzfx" and category in {"source_data", "statistics_code"}:
-            add(
-                "graphpad_prism_project_not_screened",
-                file_item,
-                "GraphPad Prism .pzfx projects are inventoried but not parsed by the current source-data detectors.",
-                "Export plotted values and statistical summary tables from Prism to CSV/TSV/XLSX, then re-run the audit.",
-                ["CSV/TSV exported data", "XLSX exported tables"],
-            )
         elif extension == ".pdf" and category in PDF_IMAGE_CONTAINER_CATEGORIES:
             add(
                 "pdf_embedded_figures_not_image_screened",
                 file_item,
-                "PDF figure/supplement containers may contain embedded panels that are not image-screened as pixels.",
-                "Export each figure panel or supplementary image to PNG/JPG/TIFF and include raw/uncropped images when available.",
-                ["PNG/JPG/TIFF panel exports", "raw or uncropped image files"],
+                "PDF figure/supplement containers may contain presentation-layer embedded panels. The audit can export embedded raster images for intake review, but these exports are not raw records or provenance proof.",
+                "Provide raw/uncropped images or original panel exports alongside the PDF-derived presentation images before treating image provenance as complete.",
+                ["raw or uncropped image files", "original PNG/JPG/TIFF panel exports"],
+            )
+        elif extension in OPAQUE_ASSEMBLY_CONTAINER_EXTS and category == "figure_assembly":
+            add(
+                "opaque_figure_assembly_project_requires_export",
+                file_item,
+                "Figure-assembly project containers may contain layered or presentation-level panels that are not fully parsed as provenance records by the automated audit.",
+                "Export final figure panels to PNG/JPG/TIFF, provide raw/uncropped images, and keep the original assembly project for manual review.",
+                ["PNG/JPG/TIFF panel exports", "raw or uncropped image files", "manual review of the original assembly project"],
             )
 
     result: list[dict[str, Any]] = []
@@ -741,7 +1338,90 @@ def build_coverage(
         "image_panels_screened": 0,
         "image_files_unreadable": 0,
         "unreadable_image_files": [],
+        "keypoint_pairs_screened": 0,
+        "keypoint_candidates": 0,
+        "keypoint_screening_limits": [],
         "source_tables_screened": 0,
+        "prism_pzfx_files_read": 0,
+        "prism_tables_indexed": 0,
+        "prism_graphs_indexed": 0,
+        "prism_possible_graph_table_links": 0,
+        "prism_project_errors": [],
+        "prism_project_error_count": 0,
+        "prism_project_review_items": [],
+        "xlsx_files_structurally_read": 0,
+        "xlsx_sheets_indexed": 0,
+        "xlsx_formula_cells_scanned": 0,
+        "xlsx_hidden_sheets": 0,
+        "xlsx_merged_cell_ranges": 0,
+        "xlsx_structure_errors": [],
+        "xlsx_structure_error_count": 0,
+        "xlsx_structure_review_items": [],
+        "fcs_files_read": 0,
+        "fcs_files_unreadable": 0,
+        "fcs_total_events_reported": 0,
+        "fcs_parameters_indexed": 0,
+        "fcs_files_with_compensation_keywords": 0,
+        "fcs_metadata_errors": [],
+        "fcs_metadata_error_count": 0,
+        "fcs_metadata_review_items": [],
+        "pdf_files_screened": 0,
+        "pdf_captions_extracted": 0,
+        "pdf_table_like_blocks_extracted": 0,
+        "pdf_structure_errors": [],
+        "pdf_structure_error_count": 0,
+        "docx_files_screened": 0,
+        "docx_paragraphs_extracted": 0,
+        "docx_captions_extracted": 0,
+        "docx_table_like_blocks_extracted": 0,
+        "docx_structure_errors": [],
+        "docx_structure_error_count": 0,
+        "docx_structure_warnings": [],
+        "docx_structure_warning_count": 0,
+        "pdf_embedded_images_extracted": 0,
+        "pdf_embedded_image_files": [],
+        "pdf_embedded_image_errors": [],
+        "pdf_embedded_image_error_count": 0,
+        "pptx_files_structurally_read": 0,
+        "pptx_slides_read": 0,
+        "pptx_text_paragraphs_extracted": 0,
+        "pptx_speaker_note_paragraphs_extracted": 0,
+        "pptx_alt_text_entries_extracted": 0,
+        "pptx_explicit_path_mentions": 0,
+        "pptx_explicit_path_pairs": 0,
+        "pptx_structure_errors": [],
+        "pptx_structure_error_count": 0,
+        "pptx_structure_warnings": [],
+        "pptx_structure_warning_count": 0,
+        "pptx_structure_review_items": [],
+        "pptx_embedded_images_extracted": 0,
+        "pptx_embedded_image_files": [],
+        "pptx_embedded_image_errors": [],
+        "pptx_embedded_image_error_count": 0,
+        "key_embedded_images_extracted": 0,
+        "key_embedded_image_files": [],
+        "key_embedded_image_errors": [],
+        "key_embedded_image_error_count": 0,
+        "psd_preview_images_extracted": 0,
+        "psd_preview_image_files": [],
+        "psd_preview_image_errors": [],
+        "psd_preview_image_error_count": 0,
+        "image_metadata_files_screened": 0,
+        "image_metadata_multiframe_files": 0,
+        "image_metadata_ome_files": 0,
+        "image_metadata_channel_files": 0,
+        "image_metadata_z_stack_files": 0,
+        "image_metadata_manual_review_files": 0,
+        "image_metadata_error_count": 0,
+        "image_metadata_review_items": [],
+        "channel_metadata_declarations_checked": 0,
+        "channel_metadata_supported_declarations": 0,
+        "channel_metadata_verification_gaps": 0,
+        "channel_metadata_review_items": [],
+        "splice_forensics_images_screened": 0,
+        "splice_forensics_candidates": 0,
+        "splice_forensics_limit_reached": False,
+        "splice_forensics_review_items": [],
         "detector_failures": [],
         "raw_detector_candidate_count": 0,
         "positive_provenance_count": 0,
@@ -756,6 +1436,10 @@ def build_coverage(
         "profile_parameters": (
             {
                 "global_image_hash_threshold": 8,
+                "keypoint_max_dimension": 1400,
+                "keypoint_min_inliers": 18,
+                "keypoint_min_inlier_ratio": 0.20,
+                "keypoint_max_pair_comparisons": 5000,
                 "local_patch_tile_size": 96,
                 "local_patch_stride": 48,
                 "local_patch_hash_threshold": 5,
@@ -778,13 +1462,73 @@ def build_coverage(
             coverage["modules_not_executed"].append(
                 "local patch / same-image copy-move deep image screening (skipped by quick scan profile)"
             )
+            coverage["modules_not_executed"].append(
+                "keypoint geometric image screening (skipped by quick scan profile)"
+            )
+            coverage["modules_not_executed"].append(
+                "ELA/JPEG residual, JPEG-ghost profile, noise-map, and CFA-like grid splice-forensics triage (skipped by quick scan profile)"
+            )
         else:
+            coverage["modules_executed"].append("image_splice_forensics_triage")
+            coverage["modules_executed"].append("image_keypoint_geometric_match")
             coverage["modules_executed"].append("image_local_patch_and_same_image_copy_move")
         global_payload = load_safe("global_image_candidates.json")
         if global_payload:
             coverage["image_panels_screened"] = int(global_payload.get("images_screened", 0) or 0)
             record_unreadable_image_errors(global_payload)
         if scan_profile != "quick":
+            splice_payload = load_safe("splice_forensics_candidates.json")
+            if splice_payload:
+                record_unreadable_image_errors(splice_payload)
+                coverage["splice_forensics_images_screened"] = int(
+                    splice_payload.get("images_screened", 0) or 0
+                )
+                coverage["splice_forensics_candidates"] = int(
+                    splice_payload.get("candidate_signal_count", 0) or 0
+                )
+                coverage["splice_forensics_limit_reached"] = bool(splice_payload.get("coverage_limit_reached"))
+                coverage["splice_forensics_scope_note"] = str(splice_payload.get("scope_note", ""))
+                review_items = []
+                for item in splice_payload.get("diagnostics", []) or []:
+                    if not isinstance(item, dict):
+                        continue
+                    if item.get("signals"):
+                        review_items.append({
+                            "path": str(item.get("path", "")),
+                            "signals": item.get("signals", []) or [],
+                            "ela_best_robust_z": item.get("ela_best_robust_z"),
+                            "jpeg_ghost_best_robust_z": item.get("jpeg_ghost_best_robust_z"),
+                            "jpeg_ghost_profile_range": item.get("jpeg_ghost_profile_range"),
+                            "jpeg_ghost_min_quality": item.get("jpeg_ghost_min_quality"),
+                            "noise_best_robust_z": item.get("noise_best_robust_z"),
+                            "cfa_best_robust_z": item.get("cfa_best_robust_z"),
+                            "cfa_best_mean": item.get("cfa_best_mean"),
+                        })
+                coverage["splice_forensics_review_items"] = review_items[:20]
+                if coverage["splice_forensics_limit_reached"]:
+                    coverage["modules_not_executed"].append(
+                        "some ELA/JPEG residual, JPEG-ghost profile, noise-map, and CFA-like grid splice-forensics triage "
+                        "(image budget reached; not a clean result)"
+                    )
+            keypoint_payload = load_safe("keypoint_image_candidates.json")
+            if keypoint_payload:
+                record_unreadable_image_errors(keypoint_payload)
+                coverage["keypoint_pairs_screened"] = int(
+                    keypoint_payload.get("pairwise_comparisons_attempted", 0) or 0
+                )
+                coverage["keypoint_candidates"] = int(keypoint_payload.get("candidate_pair_count", 0) or 0)
+                keypoint_limits = keypoint_payload.get("comparison_limit_records", []) or []
+                if keypoint_limits:
+                    coverage["keypoint_screening_limits"] = keypoint_limits
+                    coverage["keypoint_screening_limit_note"] = (
+                        "Keypoint geometric screening reached a pair-comparison budget. This records partial "
+                        "rotation/scale/perspective coverage and should be resolved with a focused deep scan "
+                        "before treating geometric image coverage as complete."
+                    )
+                    coverage["modules_not_executed"].append(
+                        "some keypoint geometric image pair comparisons "
+                        "(runtime budget reached; not a clean result)"
+                    )
             local_payload = load_safe("local_patch_candidates.json")
             if local_payload:
                 record_unreadable_image_errors(local_payload)
@@ -831,7 +1575,131 @@ def build_coverage(
         if stats_payload:
             coverage["source_tables_screened"] = len(stats_payload.get("files_screened", []) or [])
     else:
-        coverage["modules_not_executed"].append("statistics screening (no source_data CSV/TSV/XLSX supplied)")
+        coverage["modules_not_executed"].append("statistics screening (no source_data CSV/TSV/XLSX/PZFX supplied)")
+
+    xlsx_payload = load_safe("xlsx_structure.json")
+    if xlsx_payload:
+        coverage["modules_executed"].append("xlsx_workbook_structure_intake")
+        sheets = xlsx_payload.get("sheets", []) or []
+        coverage["xlsx_files_structurally_read"] = len(xlsx_payload.get("xlsx_files", []) or [])
+        coverage["xlsx_sheets_indexed"] = len(sheets)
+        coverage["xlsx_formula_cells_scanned"] = sum(
+            int(item.get("formula_cell_count_scanned", 0) or 0)
+            for item in sheets
+            if isinstance(item, dict)
+        )
+        coverage["xlsx_hidden_sheets"] = sum(
+            1
+            for item in sheets
+            if isinstance(item, dict) and str(item.get("sheet_state", "visible")) != "visible"
+        )
+        coverage["xlsx_merged_cell_ranges"] = sum(
+            int(item.get("merged_cell_range_count", 0) or 0)
+            for item in sheets
+            if isinstance(item, dict)
+        )
+        xlsx_errors = xlsx_payload.get("errors", []) or []
+        if xlsx_errors:
+            coverage["xlsx_structure_errors"] = xlsx_errors
+            coverage["xlsx_structure_error_count"] = len(xlsx_errors)
+            coverage["modules_not_executed"].append(
+                "some XLSX workbook structure intake (workbook parsing failed; not a clean result)"
+            )
+        coverage["xlsx_structure_scope_note"] = str(xlsx_payload.get("scope_note", ""))
+        review_items = []
+        for item in sheets:
+            if not isinstance(item, dict):
+                continue
+            review_items.append({
+                "source_xlsx": str(item.get("source_xlsx", "")),
+                "sheet_name": str(item.get("sheet_name", "")),
+                "suggested_label": str(item.get("suggested_label", "")),
+                "headers": item.get("headers", []) or [],
+                "data_rows_scanned": item.get("data_rows_scanned"),
+                "formula_cell_count_scanned": item.get("formula_cell_count_scanned"),
+                "sheet_state": str(item.get("sheet_state", "")),
+            })
+        coverage["xlsx_structure_review_items"] = review_items[:20]
+    elif has_files(package, XLSX_EXTS):
+        coverage["modules_not_executed"].append(
+            "XLSX workbook structure intake (no xlsx_structure.json artifact was produced)"
+        )
+
+    prism_payload = load_safe("prism_project_intake.json")
+    if prism_payload:
+        coverage["modules_executed"].append("prism_project_intake")
+        coverage["prism_pzfx_files_read"] = len(prism_payload.get("pzfx_files", []) or [])
+        coverage["prism_tables_indexed"] = len(prism_payload.get("tables", []) or [])
+        coverage["prism_graphs_indexed"] = len(prism_payload.get("graphs", []) or [])
+        coverage["prism_possible_graph_table_links"] = len(prism_payload.get("graph_table_links", []) or [])
+        prism_errors = prism_payload.get("errors", []) or []
+        if prism_errors:
+            coverage["prism_project_errors"] = prism_errors
+            coverage["prism_project_error_count"] = len(prism_errors)
+            coverage["modules_not_executed"].append(
+                "some GraphPad Prism project intake (PZFX metadata parse failed; not a clean result)"
+            )
+        coverage["prism_project_scope_note"] = str(prism_payload.get("scope_note", ""))
+        review_items = []
+        for item in prism_payload.get("graph_table_links", []) or []:
+            if not isinstance(item, dict):
+                continue
+            review_items.append({
+                "source_pzfx": str(item.get("source_pzfx", "")),
+                "graph_title": str(item.get("graph_title", "")),
+                "table_title": str(item.get("table_title", "")),
+                "table_id": str(item.get("table_id", "")),
+                "match_basis": str(item.get("match_basis", "")),
+            })
+        coverage["prism_project_review_items"] = review_items[:20]
+    elif has_files(package, PZFX_EXTS):
+        coverage["modules_not_executed"].append(
+            "GraphPad Prism project intake (no prism_project_intake.json artifact was produced)"
+        )
+
+    fcs_payload = load_safe("fcs_metadata_intake.json")
+    if fcs_payload:
+        coverage["modules_executed"].append("flow_fcs_metadata_intake")
+        totals = fcs_payload.get("totals", {}) or {}
+        coverage["fcs_files_read"] = int(totals.get("readable_fcs_files", 0) or 0)
+        coverage["fcs_files_unreadable"] = int(totals.get("unreadable_fcs_files", 0) or 0)
+        coverage["fcs_total_events_reported"] = int(totals.get("total_events_reported", 0) or 0)
+        coverage["fcs_parameters_indexed"] = int(totals.get("total_parameters_indexed", 0) or 0)
+        coverage["fcs_files_with_compensation_keywords"] = int(totals.get("files_with_compensation_keywords", 0) or 0)
+        fcs_errors = fcs_payload.get("errors", []) or []
+        if fcs_errors:
+            coverage["fcs_metadata_errors"] = fcs_errors
+            coverage["fcs_metadata_error_count"] = len(fcs_errors)
+            coverage["modules_not_executed"].append(
+                "some FCS metadata intake (FCS header/text parsing failed; not a clean result)"
+            )
+        coverage["fcs_metadata_scope_note"] = str(fcs_payload.get("scope_note", ""))
+        review_items = []
+        for item in fcs_payload.get("fcs_files", []) or []:
+            if not isinstance(item, dict) or item.get("parse_status") != "parsed":
+                continue
+            parameters = item.get("parameters", []) or []
+            marker_labels = []
+            for parameter in parameters:
+                if not isinstance(parameter, dict):
+                    continue
+                label = str(parameter.get("marker") or parameter.get("name") or "").strip()
+                if label:
+                    marker_labels.append(label)
+            review_items.append({
+                "path": str(item.get("path", "")),
+                "event_count": item.get("event_count"),
+                "parameter_count": item.get("parameter_count"),
+                "cytometer": str(item.get("cytometer", "")),
+                "date": str(item.get("date", "")),
+                "compensation_present": bool(item.get("compensation_present")),
+                "markers": marker_labels[:12],
+            })
+        coverage["fcs_metadata_review_items"] = review_items[:20]
+    elif has_files(package, FCS_EXTS):
+        coverage["modules_not_executed"].append(
+            "FCS metadata intake (no fcs_metadata_intake.json artifact was produced)"
+        )
 
     format_payload = load_safe("format_coverage_candidates.json")
     if format_payload:
@@ -859,6 +1727,299 @@ def build_coverage(
         coverage["modules_executed"].append("package_internal_text_overlap")
     else:
         coverage["modules_not_executed"].append("text-overlap screening (no manuscript/text supplied)")
+
+    docx_structure_payload = load_safe("docx_structure.json")
+    if docx_structure_payload:
+        coverage["modules_executed"].append("docx_caption_table_structure_extraction")
+        coverage["docx_files_screened"] = len(docx_structure_payload.get("docx_files", []) or [])
+        coverage["docx_paragraphs_extracted"] = len(docx_structure_payload.get("paragraphs", []) or [])
+        coverage["docx_captions_extracted"] = len(docx_structure_payload.get("captions", []) or [])
+        coverage["docx_table_like_blocks_extracted"] = len(docx_structure_payload.get("table_like_blocks", []) or [])
+        docx_warnings = docx_structure_payload.get("warnings", []) or []
+        if docx_warnings:
+            coverage["docx_structure_warnings"] = docx_warnings
+            coverage["docx_structure_warning_count"] = len(docx_warnings)
+            coverage["modules_not_executed"].append(
+                "some DOCX review layers (comments, tracked changes, or embedded objects were detected; not a clean result)"
+            )
+        docx_errors = docx_structure_payload.get("errors", []) or []
+        if docx_errors:
+            coverage["docx_structure_errors"] = docx_errors
+            coverage["docx_structure_error_count"] = len(docx_errors)
+            coverage["modules_not_executed"].append(
+                "some DOCX paragraph/caption/table structure extraction (DOCX parsing failed; not a clean result)"
+            )
+        coverage["docx_structure_scope_note"] = str(docx_structure_payload.get("scope_note", ""))
+    elif has_files(package, DOCX_EXTS):
+        coverage["modules_not_executed"].append(
+            "DOCX paragraph/caption/table structure extraction (no docx_structure.json artifact was produced)"
+        )
+
+    pdf_structure_payload = load_safe("pdf_structure.json")
+    if pdf_structure_payload:
+        coverage["modules_executed"].append("pdf_caption_table_structure_extraction")
+        coverage["pdf_files_screened"] = len(pdf_structure_payload.get("pdfs", []) or [])
+        coverage["pdf_captions_extracted"] = len(pdf_structure_payload.get("captions", []) or [])
+        coverage["pdf_table_like_blocks_extracted"] = len(pdf_structure_payload.get("table_like_blocks", []) or [])
+        pdf_errors = pdf_structure_payload.get("errors", []) or []
+        if pdf_errors:
+            coverage["pdf_structure_errors"] = pdf_errors
+            coverage["pdf_structure_error_count"] = len(pdf_errors)
+            coverage["modules_not_executed"].append(
+                "some PDF caption/table structure extraction (PDF text extraction failed; not a clean result)"
+            )
+        coverage["pdf_structure_scope_note"] = str(pdf_structure_payload.get("scope_note", ""))
+    elif has_files(package, PDF_EXTS):
+        coverage["modules_not_executed"].append(
+            "PDF caption/table structure extraction (no pdf_structure.json artifact was produced)"
+        )
+
+    pdf_image_payload = load_safe("pdf_embedded_images.json")
+    if pdf_image_payload:
+        coverage["modules_executed"].append("pdf_embedded_image_extraction")
+        pdf_images = pdf_image_payload.get("images", []) or []
+        coverage["pdf_embedded_images_extracted"] = len(pdf_images)
+        coverage["pdf_embedded_image_files"] = [
+            {
+                "source_pdf": str(item.get("source_pdf", "")),
+                "page": item.get("page"),
+                "output_path": str(item.get("output_path", "")),
+                "width": item.get("width"),
+                "height": item.get("height"),
+            }
+            for item in pdf_images
+            if isinstance(item, dict)
+        ]
+        pdf_image_errors = pdf_image_payload.get("errors", []) or []
+        if pdf_image_errors:
+            coverage["pdf_embedded_image_errors"] = pdf_image_errors
+            coverage["pdf_embedded_image_error_count"] = len(pdf_image_errors)
+            coverage["modules_not_executed"].append(
+                "some PDF embedded-image extraction (PDF image export failed; not a clean result)"
+            )
+        coverage["pdf_embedded_image_scope_note"] = str(pdf_image_payload.get("scope_note", ""))
+    elif has_files(package, PDF_EXTS):
+        coverage["modules_not_executed"].append(
+            "PDF embedded-image extraction (no pdf_embedded_images.json artifact was produced)"
+        )
+
+    pptx_structure_payload = load_safe("pptx_structure.json")
+    if pptx_structure_payload:
+        coverage["modules_executed"].append("pptx_slide_text_path_structure_extraction")
+        pptx_files = pptx_structure_payload.get("pptx_files", []) or []
+        coverage["pptx_files_structurally_read"] = len(pptx_files)
+        coverage["pptx_slides_read"] = len(pptx_structure_payload.get("slides", []) or [])
+        coverage["pptx_text_paragraphs_extracted"] = sum(
+            int(item.get("paragraph_count", 0) or 0)
+            for item in pptx_structure_payload.get("slides", []) or []
+            if isinstance(item, dict)
+        )
+        coverage["pptx_speaker_note_paragraphs_extracted"] = sum(
+            int(item.get("speaker_note_paragraph_count", 0) or 0)
+            for item in pptx_structure_payload.get("slides", []) or []
+            if isinstance(item, dict)
+        )
+        coverage["pptx_alt_text_entries_extracted"] = sum(
+            int(item.get("alt_text_count", 0) or 0)
+            for item in pptx_structure_payload.get("slides", []) or []
+            if isinstance(item, dict)
+        )
+        coverage["pptx_explicit_path_mentions"] = len(pptx_structure_payload.get("explicit_path_mentions", []) or [])
+        coverage["pptx_explicit_path_pairs"] = len(pptx_structure_payload.get("explicit_path_pairs", []) or [])
+        pptx_structure_errors = pptx_structure_payload.get("errors", []) or []
+        if pptx_structure_errors:
+            coverage["pptx_structure_errors"] = pptx_structure_errors
+            coverage["pptx_structure_error_count"] = len(pptx_structure_errors)
+            coverage["modules_not_executed"].append(
+                "some PPTX text/path structure extraction (PPTX parsing failed; not a clean result)"
+            )
+        pptx_structure_warnings = pptx_structure_payload.get("warnings", []) or []
+        if pptx_structure_warnings:
+            coverage["pptx_structure_warnings"] = pptx_structure_warnings
+            coverage["pptx_structure_warning_count"] = len(pptx_structure_warnings)
+        coverage["pptx_structure_scope_note"] = str(pptx_structure_payload.get("scope_note", ""))
+        review_items = []
+        for item in pptx_structure_payload.get("explicit_path_pairs", []) or []:
+            if not isinstance(item, dict):
+                continue
+            review_items.append({
+                "source_pptx": str(item.get("evidence_source", "")).split("#", 1)[0],
+                "slide": str(item.get("evidence_source", "")).split("#", 1)[-1],
+                "figure_panel": str(item.get("source_path", "")),
+                "source_record": str(item.get("target_path", "")),
+                "relation_type": str(item.get("relation_type", "")),
+            })
+        coverage["pptx_structure_review_items"] = review_items[:20]
+    elif has_files(package, PPTX_EXTS):
+        coverage["modules_not_executed"].append(
+            "PPTX text/path structure extraction (no pptx_structure.json artifact was produced)"
+        )
+
+    pptx_image_payload = load_safe("pptx_embedded_images.json")
+    if pptx_image_payload:
+        coverage["modules_executed"].append("pptx_embedded_image_extraction")
+        pptx_images = pptx_image_payload.get("images", []) or []
+        coverage["pptx_embedded_images_extracted"] = len(pptx_images)
+        coverage["pptx_embedded_image_files"] = [
+            {
+                "source_pptx": str(item.get("source_pptx", "")),
+                "referenced_slides": item.get("referenced_slides", []) or [],
+                "output_path": str(item.get("output_path", "")),
+                "width": item.get("width"),
+                "height": item.get("height"),
+            }
+            for item in pptx_images
+            if isinstance(item, dict)
+        ]
+        pptx_image_errors = pptx_image_payload.get("errors", []) or []
+        if pptx_image_errors:
+            coverage["pptx_embedded_image_errors"] = pptx_image_errors
+            coverage["pptx_embedded_image_error_count"] = len(pptx_image_errors)
+            coverage["modules_not_executed"].append(
+                "some PPTX embedded-image extraction (PPTX media export failed; not a clean result)"
+            )
+        coverage["pptx_embedded_image_scope_note"] = str(pptx_image_payload.get("scope_note", ""))
+    elif has_files(package, PPTX_EXTS):
+        coverage["modules_not_executed"].append(
+            "PPTX embedded-image extraction (no pptx_embedded_images.json artifact was produced)"
+        )
+
+    key_image_payload = load_safe("key_embedded_images.json")
+    if key_image_payload:
+        coverage["modules_executed"].append("key_embedded_image_extraction")
+        key_images = key_image_payload.get("images", []) or []
+        coverage["key_embedded_images_extracted"] = len(key_images)
+        coverage["key_embedded_image_files"] = [
+            {
+                "source_key": str(item.get("source_key", "")),
+                "internal_path": str(item.get("internal_path", "")),
+                "output_path": str(item.get("output_path", "")),
+                "width": item.get("width"),
+                "height": item.get("height"),
+            }
+            for item in key_images
+            if isinstance(item, dict)
+        ]
+        key_image_errors = key_image_payload.get("errors", []) or []
+        if key_image_errors:
+            coverage["key_embedded_image_errors"] = key_image_errors
+            coverage["key_embedded_image_error_count"] = len(key_image_errors)
+            coverage["modules_not_executed"].append(
+                "some Keynote embedded-image extraction (Keynote media export failed; not a clean result)"
+            )
+        coverage["key_embedded_image_scope_note"] = str(key_image_payload.get("scope_note", ""))
+    elif has_files(package, KEY_EXTS):
+        coverage["modules_not_executed"].append(
+            "Keynote embedded-image extraction (no key_embedded_images.json artifact was produced)"
+        )
+
+    psd_preview_payload = load_safe("psd_preview_images.json")
+    if psd_preview_payload:
+        coverage["modules_executed"].append("psd_flattened_preview_extraction")
+        psd_images = psd_preview_payload.get("images", []) or []
+        coverage["psd_preview_images_extracted"] = len(psd_images)
+        coverage["psd_preview_image_files"] = [
+            {
+                "source_psd": str(item.get("source_psd", "")),
+                "output_path": str(item.get("output_path", "")),
+                "width": item.get("width"),
+                "height": item.get("height"),
+                "source_mode": str(item.get("source_mode", "")),
+                "source_format": str(item.get("source_format", "")),
+            }
+            for item in psd_images
+            if isinstance(item, dict)
+        ]
+        psd_preview_errors = psd_preview_payload.get("errors", []) or []
+        if psd_preview_errors:
+            coverage["psd_preview_image_errors"] = psd_preview_errors
+            coverage["psd_preview_image_error_count"] = len(psd_preview_errors)
+            coverage["modules_not_executed"].append(
+                "some PSD flattened-preview extraction (PSD preview unavailable; not a clean result)"
+            )
+        coverage["psd_preview_image_scope_note"] = str(psd_preview_payload.get("scope_note", ""))
+    elif has_files(package, PSD_EXTS):
+        coverage["modules_not_executed"].append(
+            "PSD flattened-preview extraction (no psd_preview_images.json artifact was produced)"
+        )
+
+    image_metadata_payload = load_safe("image_metadata.json")
+    if image_metadata_payload:
+        coverage["modules_executed"].append("image_frame_channel_metadata_intake")
+        totals = image_metadata_payload.get("totals", {}) or {}
+        coverage["image_metadata_files_screened"] = int(totals.get("readable_images", 0) or 0)
+        coverage["image_metadata_multiframe_files"] = int(totals.get("multiframe_images", 0) or 0)
+        coverage["image_metadata_ome_files"] = int(totals.get("ome_metadata_files", 0) or 0)
+        coverage["image_metadata_channel_files"] = int(totals.get("channel_metadata_files", 0) or 0)
+        coverage["image_metadata_z_stack_files"] = int(totals.get("z_stack_metadata_files", 0) or 0)
+        coverage["image_metadata_manual_review_files"] = int(totals.get("manual_metadata_review_files", 0) or 0)
+        coverage["image_metadata_error_count"] = int(totals.get("unreadable_images", 0) or len(image_metadata_payload.get("errors", []) or []))
+        coverage["image_metadata_scope_note"] = str(image_metadata_payload.get("scope_note", ""))
+        review_items = []
+        for item in image_metadata_payload.get("images", []) or []:
+            if not isinstance(item, dict):
+                continue
+            hints = item.get("microscopy_hints") or {}
+            if (
+                item.get("is_multiframe")
+                or item.get("has_ome_xml")
+                or hints.get("possible_multichannel")
+                or hints.get("possible_z_stack")
+                or item.get("manual_review_note")
+            ):
+                review_items.append({
+                    "path": str(item.get("path", "")),
+                    "n_frames": item.get("n_frames"),
+                    "channel_count": item.get("channel_count"),
+                    "z_stack_count": item.get("z_stack_count"),
+                    "timepoint_count": item.get("timepoint_count"),
+                    "metadata_status": str(item.get("metadata_status", "")),
+                    "manual_review_note": str(item.get("manual_review_note", "")),
+                })
+        coverage["image_metadata_review_items"] = review_items[:20]
+        if coverage["image_metadata_error_count"]:
+            coverage["modules_not_executed"].append(
+                "image metadata intake for some files (metadata extraction failed; not a clean result)"
+            )
+        if coverage["image_metadata_manual_review_files"]:
+            coverage["modules_not_executed"].append(
+                "structured channel/Z/T interpretation for some multi-frame image files "
+                "(manual acquisition metadata review required; not a clean result)"
+            )
+    elif has_files(package, IMAGE_EXTS):
+        coverage["modules_not_executed"].append(
+            "image frame/channel/Z metadata intake (no image_metadata.json artifact was produced)"
+        )
+
+    channel_metadata_payload = load_safe("channel_metadata_candidates.json")
+    if channel_metadata_payload:
+        coverage["modules_executed"].append("image_channel_metadata_consistency")
+        coverage["channel_metadata_declarations_checked"] = int(
+            channel_metadata_payload.get("declarations_checked", 0) or 0
+        )
+        coverage["channel_metadata_supported_declarations"] = int(
+            channel_metadata_payload.get("supported_declarations", 0) or 0
+        )
+        coverage["channel_metadata_verification_gaps"] = int(
+            channel_metadata_payload.get("verification_gaps", 0) or 0
+        )
+        checked_relations = [
+            item
+            for item in channel_metadata_payload.get("checked_relations", []) or []
+            if isinstance(item, dict)
+        ]
+        coverage["channel_metadata_review_items"] = checked_relations[:20]
+        if coverage["channel_metadata_verification_gaps"]:
+            coverage["modules_not_executed"].append(
+                "machine-readable channel/acquisition metadata verification for "
+                f"{coverage['channel_metadata_verification_gaps']} same-field/different-channel declaration(s) "
+                "(metadata gap; not a clean result)"
+            )
+        coverage["channel_metadata_scope_note"] = str(channel_metadata_payload.get("scope_note", ""))
+    elif has_files(package, IMAGE_EXTS):
+        coverage["modules_not_executed"].append(
+            "same-field/different-channel metadata consistency check (no channel_metadata_candidates.json artifact was produced)"
+        )
 
     if scan_profile == "quick":
         coverage["modules_not_executed"].append("external literature phrase search (skipped by quick scan profile)")
@@ -1077,6 +2238,7 @@ def fallback_audit_summary(
                         "status": "unresolved",
                         "human_note": "",
                         "accepted_with_reason": "",
+                        "attachment_reference": "",
                         "source": "pipeline_fallback",
                     }
                 ],
@@ -1087,7 +2249,7 @@ def fallback_audit_summary(
                 "clarify_or_disclose": 0,
                 "low_priority_checks": 1,
             },
-            "tracker_fields": ["owner", "status", "human_note", "accepted_with_reason"],
+            "tracker_fields": ["owner", "status", "human_note", "accepted_with_reason", "attachment_reference"],
             "status_options": ["unresolved", "resolved", "accepted_with_reason", "false_positive"],
         },
         "pipeline_error": {
@@ -1175,6 +2337,17 @@ def run_report(
 
 def write_start_here(output_dir: Path, package: Path, qc_packet: dict[str, Any], summary: dict[str, Any]) -> Path:
     packet_dir = Path(str(qc_packet.get("packet_dir", output_dir / "submission_qc_packet")))
+    audience_exports = qc_packet.get("audience_exports") if isinstance(qc_packet, dict) else {}
+    audience_exports_dir = ""
+    if isinstance(audience_exports, dict) and audience_exports:
+        candidate = packet_dir / "audience_exports"
+        audience_exports_dir = str(candidate.relative_to(output_dir) if candidate.is_relative_to(output_dir) else candidate)
+    image_review_packet = qc_packet.get("image_review_packet") if isinstance(qc_packet, dict) else {}
+    image_review_dir = ""
+    if isinstance(image_review_packet, dict) and image_review_packet.get("packet_dir"):
+        candidate = Path(str(image_review_packet.get("packet_dir")))
+        image_review_dir = str(candidate.relative_to(output_dir) if candidate.is_relative_to(output_dir) else candidate)
+    has_re_audit_diff = (output_dir / "re_audit_diff.md").is_file()
     lines = [
         "# START HERE",
         "",
@@ -1188,6 +2361,17 @@ def write_start_here(output_dir: Path, package: Path, qc_packet: dict[str, Any],
         "3. `correction_plan.md` — concise correction-plan view.",
         f"4. `{packet_dir.relative_to(output_dir) if packet_dir.is_relative_to(output_dir) else packet_dir}` — leave-behind QC packet.",
         "5. `AUDIT_JSON_SUMMARY.json` — machine-readable summary for re-audit or webapp import.",
+    ]
+    next_index = 6
+    if audience_exports_dir:
+        lines.append(f"{next_index}. `{audience_exports_dir}` — editable PI, co-author, and journal/reviewer communication drafts.")
+        next_index += 1
+    if has_re_audit_diff:
+        lines.append(f"{next_index}. `re_audit_diff.md` — human-readable comparison with the previous audit run.")
+        next_index += 1
+    if image_review_dir:
+        lines.append(f"{next_index}. `{image_review_dir}` — image-review target list for external tools or manual figure review.")
+    lines += [
         "",
         "Boundary: no finding is a misconduct verdict, and no-finding output is not proof that the manuscript is correct.",
         "",
@@ -1247,6 +2431,17 @@ def run_pipeline(
     write_json(writing_readiness_path, writing_readiness)
     writing_readiness_csv = output_dir / "writing_readiness.csv"
     write_writing_readiness_csv(writing_readiness_csv, writing_readiness)
+    build_xlsx_structure(package, output_dir)
+    build_prism_project_intake(package, output_dir)
+    build_fcs_metadata_intake(package, output_dir)
+    build_docx_structure(package, output_dir)
+    build_pdf_structure(package, output_dir)
+    build_pdf_embedded_images(package, output_dir)
+    build_pptx_structure(package, output_dir)
+    build_pptx_embedded_images(package, output_dir)
+    build_key_embedded_images(package, output_dir)
+    build_psd_preview_images(package, output_dir)
+    build_image_metadata(package, output_dir)
 
     provenance_graph = build_provenance(package, manifest, output_dir)
     detector_outputs = []
@@ -1313,12 +2508,15 @@ def run_pipeline(
     re_audit_diff: dict[str, Any] | None = None
     re_audit_diff_path: Path | None = None
     re_audit_diff_csv: Path | None = None
+    re_audit_diff_md: Path | None = None
     if compare_to is not None:
         re_audit_diff = build_re_audit_diff(compare_to, output_dir)
         re_audit_diff_path = output_dir / "re_audit_diff.json"
         re_audit_diff_csv = output_dir / "re_audit_diff.csv"
+        re_audit_diff_md = output_dir / "re_audit_diff.md"
         write_qc_json(re_audit_diff_path, re_audit_diff)
         write_re_audit_diff_csv(re_audit_diff_csv, re_audit_diff)
+        write_re_audit_diff_markdown(re_audit_diff_md, re_audit_diff)
 
     qc_packet = export_submission_qc_packet(
         output_dir,
@@ -1371,6 +2569,7 @@ def run_pipeline(
     if re_audit_diff_path is not None:
         result["re_audit_diff"] = str(re_audit_diff_path)
         result["re_audit_diff_csv"] = str(re_audit_diff_csv)
+        result["re_audit_diff_md"] = str(re_audit_diff_md)
     positive_count = 0
     for path in detector_outputs:
         payload = read_json(path)

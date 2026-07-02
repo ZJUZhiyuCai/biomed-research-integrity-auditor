@@ -15,7 +15,7 @@ CATEGORY_RULES = [
     ("supplementary", ("supp", "supplement", "supplementary", "appendix"), None),
     ("source_data", ("source", "sourcedata", "source-data", "data"), {".csv", ".tsv", ".xlsx", ".xls"}),
     ("figures", ("fig", "figure", "panel"), {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".pdf", ".svg"}),
-    ("figure_assembly", ("assembly", "figure", "fig"), {".pptx", ".ppt", ".ai", ".psd", ".indd", ".svg"}),
+    ("figure_assembly", ("assembly", "figure", "fig", "keynote"), {".pptx", ".ppt", ".key", ".ai", ".psd", ".indd", ".svg"}),
     ("raw_images", ("raw", "original", "uncropped", "unprocessed", "czi", "nd2", "lif"), {
         ".tif", ".tiff", ".czi", ".nd2", ".lif", ".oib", ".oir", ".svs", ".vsi", ".png", ".jpg", ".jpeg"
     }),

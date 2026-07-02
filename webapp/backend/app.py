@@ -37,7 +37,20 @@ if str(ROOT) not in sys.path:
 
 from provenance.panel_modality import CANONICAL_MODALITIES, normalize_modality  # noqa: E402
 from scripts.csv_safety import csv_safe_row  # noqa: E402
-from scripts.submission_qc import ACTION_FIELDNAMES  # noqa: E402
+from scripts.docx_structure_extract import scan as scan_docx_structure  # noqa: E402
+from scripts.pdf_structure_extract import scan as scan_pdf_structure  # noqa: E402
+from scripts.pptx_structure_extract import scan as scan_pptx_structure  # noqa: E402
+from scripts.prism_project_intake import scan as scan_prism_project_intake  # noqa: E402
+from scripts.xlsx_structure_extract import scan as scan_xlsx_structure  # noqa: E402
+from scripts.submission_qc import (  # noqa: E402
+    ACTION_FIELDNAMES,
+    CLAIM_COLUMNS,
+    IMAGE_REVIEW_TRACKER_FIELDS,
+    IMAGE_TOOL_HANDOFF_FIELDS,
+    correction_plan_rows,
+    write_correction_plan_csv,
+    write_correction_plan_markdown,
+)
 
 DEFAULT_RUNS_ROOT = ROOT / "audit_outputs" / "webapp"
 MODES = {"internal_presubmission", "external_public_material", "response_to_concern"}
@@ -59,6 +72,7 @@ RECOMMENDED_PACKAGE_DIRS = [
     "ethics_irb",
 ]
 ASSEMBLY_MANIFEST_COLUMNS = ["figure_panel", "source_record", "relation_type", "modality", "notes"]
+CLAIM_STATUS_OPTIONS = ["draft", "ready", "complete", "resolved", "needs_review"]
 ALLOWED_MANIFEST_RELATIONS = {
     "declared_derived_from",
     "same_field_different_channel",
@@ -70,8 +84,48 @@ RELATION_ALLOWED_SOURCE_ROLES = {
     "same_membrane_reprobe": {"figures", "raw_images"},
 }
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp"}
-SOURCE_DATA_SUFFIXES = {".csv", ".tsv", ".xlsx"}
+SOURCE_DATA_SUFFIXES = {".csv", ".tsv", ".xlsx", ".pzfx"}
+PDF_SUFFIXES = {".pdf"}
+DOCX_SUFFIXES = {".docx"}
+PPTX_SUFFIXES = {".pptx"}
+XLSX_SUFFIXES = {".xlsx"}
+MAX_XLSX_ROWS_SCANNED = 500
+CLAIM_FIELD_ALLOWED_ROLES = {
+    "source_data": {"source_data"},
+    "raw_record": {"figures", "raw_images"},
+    "analysis_code": {"statistics_code"},
+    "protocol": {"protocols"},
+}
 AUDIT_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,120}$")
+FILENAME_TOKEN_RE = re.compile(r"[A-Za-z]+|\d+")
+FILENAME_STOP_TOKENS = {
+    "acq",
+    "acquisition",
+    "analysis",
+    "chart",
+    "data",
+    "export",
+    "fig",
+    "figure",
+    "final",
+    "graph",
+    "image",
+    "img",
+    "panel",
+    "plot",
+    "processed",
+    "raw",
+    "result",
+    "results",
+    "source",
+    "stat",
+    "stats",
+    "summary",
+    "table",
+    "value",
+    "values",
+}
+MAX_PREP_SUGGESTIONS = 25
 
 
 class AuditCreateRequest(BaseModel):
@@ -104,11 +158,38 @@ class AssemblyManifestRequest(BaseModel):
     rows: list[ManifestRowInput] = Field(default_factory=list)
 
 
+class ClaimManifestRowInput(BaseModel):
+    claim_id: str
+    claim_text: str
+    manuscript_location: str = ""
+    figure_or_table: str = ""
+    source_data: str = ""
+    raw_record: str = ""
+    analysis_code: str = ""
+    protocol: str = ""
+    owner: str = ""
+    status: str = "draft"
+
+
+class ClaimManifestRequest(BaseModel):
+    package_path: str
+    rows: list[ClaimManifestRowInput] = Field(default_factory=list)
+
+
 class ActionUpdateRequest(BaseModel):
     owner: Optional[str] = None
     status: Optional[str] = None
     human_note: Optional[str] = None
     accepted_with_reason: Optional[str] = None
+    attachment_reference: Optional[str] = None
+
+
+class ImageReviewUpdateRequest(BaseModel):
+    review_owner: Optional[str] = None
+    review_status: Optional[str] = None
+    external_tool_or_method: Optional[str] = None
+    review_result_note: Optional[str] = None
+    attachment_reference: Optional[str] = None
 
 
 @dataclass
@@ -276,7 +357,9 @@ def create_app(output_root: Optional[Path] = None) -> FastAPI:
                     "Add exported figure panels under figures/, raw/source images under raw_images/,\n"
                     "source tables under source_data/, and declare figure-source relationships in\n"
                     "figure_assembly/assembly_manifest.csv. Manifest declarations are audit material\n"
-                    "only; the audit pipeline cross-checks them against supplied files.\n"
+                    "only; the audit pipeline cross-checks them against supplied files.\n\n"
+                    "For submission QC, add claim_manifest.csv at the package root to link each\n"
+                    "major manuscript claim to source data, raw records, analysis code, and protocols.\n"
                 ),
                 encoding="utf-8",
             )
@@ -293,6 +376,21 @@ def create_app(output_root: Optional[Path] = None) -> FastAPI:
             writer = csv.DictWriter(handle, fieldnames=ASSEMBLY_MANIFEST_COLUMNS)
             writer.writeheader()
             writer.writerows(csv_safe_row(row, ASSEMBLY_MANIFEST_COLUMNS) for row in rows)
+        return {
+            "manifest_path": str(manifest_path),
+            "rows_written": len(rows),
+            "inventory": package_inventory(package),
+        }
+
+    @app.post("/api/packages/claim-manifest")
+    def save_claim_manifest(request: ClaimManifestRequest) -> dict[str, Any]:
+        package = require_package_dir(request.package_path)
+        rows = [validated_claim_manifest_row(package, row) for row in request.rows]
+        manifest_path = package / "claim_manifest.csv"
+        with manifest_path.open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.DictWriter(handle, fieldnames=CLAIM_COLUMNS)
+            writer.writeheader()
+            writer.writerows(csv_safe_row(row, CLAIM_COLUMNS) for row in rows)
         return {
             "manifest_path": str(manifest_path),
             "rows_written": len(rows),
@@ -351,6 +449,18 @@ def create_app(output_root: Optional[Path] = None) -> FastAPI:
         output_dir = Path(job.output_dir).resolve()
         trackers = update_action_trackers(output_dir, action_id, request)
         return {"action_trackers": trackers}
+
+    @app.patch("/api/audits/{audit_id}/image-review/{review_item_id}")
+    def update_image_review(audit_id: str, review_item_id: str, request: ImageReviewUpdateRequest) -> dict[str, Any]:
+        job = require_job(settings, audit_id)
+        if job.status not in {"completed", "failed", "canceled"}:
+            raise HTTPException(status_code=409, detail="Image review trackers are editable after an audit writes outputs")
+        output_dir = Path(job.output_dir).resolve()
+        tracker_rows = update_image_review_tracker(output_dir, review_item_id, request)
+        return {
+            "image_review_packet": image_review_packet_summary(output_dir / "submission_qc_packet", output_dir),
+            "image_review_tracker": tracker_rows,
+        }
 
     @app.get("/api/audits/{audit_id}/report.md")
     def get_report(audit_id: str) -> PlainTextResponse:
@@ -444,6 +554,22 @@ def package_inventory(package: Path) -> dict[str, Any]:
         role = inventory_role(path.relative_to(package))
         files_by_role.setdefault(role, []).append(rel)
     manifest = read_assembly_manifest(package)
+    claim_manifest = read_claim_manifest(package)
+    prism_hints = build_prism_material_prep_hints(package, files_by_role)
+    pdf_hints = build_pdf_material_prep_hints(package, files_by_role)
+    docx_hints = build_docx_material_prep_hints(package, files_by_role)
+    pptx_hints = build_pptx_material_prep_hints(package, files_by_role)
+    xlsx_hints = build_xlsx_material_prep_hints(package, files_by_role)
+    material_prep_suggestions = build_material_prep_suggestions(
+        files_by_role,
+        manifest,
+        claim_manifest,
+        prism_hints,
+        pdf_hints,
+        docx_hints,
+        pptx_hints,
+        xlsx_hints,
+    )
     return {
         "package_path": str(package),
         "exists": True,
@@ -451,11 +577,15 @@ def package_inventory(package: Path) -> dict[str, Any]:
         "files_by_role": files_by_role,
         "file_counts": {key: len(value) for key, value in files_by_role.items()},
         "assembly_manifest": manifest,
+        "claim_manifest": claim_manifest,
         "relation_types": sorted(ALLOWED_MANIFEST_RELATIONS),
         "relation_allowed_source_roles": {
             key: sorted(value) for key, value in RELATION_ALLOWED_SOURCE_ROLES.items()
         },
         "modality_options": list(CANONICAL_MODALITIES),
+        "claim_manifest_columns": CLAIM_COLUMNS,
+        "claim_status_options": CLAIM_STATUS_OPTIONS,
+        "material_prep_suggestions": material_prep_suggestions,
         "inventory_warnings": inventory_warnings,
         "scan_limit_reached": limit_reached,
         "scan_limits": {
@@ -464,7 +594,8 @@ def package_inventory(package: Path) -> dict[str, Any]:
         },
         "scope_note": (
             "Assembly-manifest rows are declarations for audit context only; "
-            "the pipeline cross-checks them against supplied files."
+            "the pipeline cross-checks them against supplied files. Claim-manifest rows "
+            "record claim-to-evidence completeness and do not prove claim correctness."
         ),
     }
 
@@ -552,6 +683,638 @@ def inventory_role(relative_path: Path) -> str:
     return "other"
 
 
+def build_material_prep_suggestions(
+    files_by_role: dict[str, list[str]],
+    manifest: dict[str, Any],
+    claim_manifest: dict[str, Any],
+    prism_hints: dict[str, Any] | None = None,
+    pdf_hints: dict[str, Any] | None = None,
+    docx_hints: dict[str, Any] | None = None,
+    pptx_hints: dict[str, Any] | None = None,
+    xlsx_hints: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Draft manifest rows from filename similarity only.
+
+    These are typing aids for the local webapp. They are deliberately not
+    written to disk and not treated as evidence by the audit pipeline.
+    """
+    figures = sorted(files_by_role.get("figures", []))
+    raw_images = sorted(files_by_role.get("raw_images", []))
+    source_tables = sorted(files_by_role.get("source_data", []))
+    analysis_files = sorted(files_by_role.get("statistics_code", []))
+    protocol_files = sorted(files_by_role.get("protocols", []))
+    existing_pairs = {
+        (str(row.get("figure_panel", "")), str(row.get("source_record", "")))
+        for row in manifest.get("rows", []) or []
+    }
+    suggested_pairs: set[tuple[str, str]] = set()
+    per_figure_links: dict[str, dict[str, str]] = {}
+    for row in manifest.get("rows", []) or []:
+        figure = str(row.get("figure_panel", "") or "")
+        source = str(row.get("source_record", "") or "")
+        source_role = inventory_role(Path(source))
+        if figure in figures and source in files_by_role.get(source_role, []) and source_role in {"raw_images", "source_data"}:
+            per_figure_links.setdefault(figure, {})[source_role] = source
+
+    assembly_rows: list[dict[str, str]] = []
+    filename_match_warnings: list[str] = []
+    for figure in figures:
+        raw_match, ambiguous_raw_matches = filename_match_result(figure, raw_images)
+        source_match, ambiguous_source_matches = filename_match_result(figure, source_tables)
+        if ambiguous_raw_matches and "raw_images" not in per_figure_links.get(figure, {}):
+            filename_match_warnings.append(filename_ambiguity_warning(figure, "raw_images", ambiguous_raw_matches))
+        if ambiguous_source_matches and "source_data" not in per_figure_links.get(figure, {}):
+            filename_match_warnings.append(filename_ambiguity_warning(figure, "source_data", ambiguous_source_matches))
+        for match_path, role in ((raw_match, "raw_images"), (source_match, "source_data")):
+            if not match_path or (figure, match_path) in existing_pairs:
+                continue
+            shared = ", ".join(sorted(filename_tokens(figure) & filename_tokens(match_path))) or "filename"
+            row = {
+                "figure_panel": figure,
+                "source_record": match_path,
+                "relation_type": "declared_derived_from",
+                "modality": infer_manifest_modality(figure, match_path, role),
+                "notes": (
+                    f"Filename-based starter suggestion using shared token(s): {shared}. "
+                    "Review before saving; declaration only, not verified provenance."
+                ),
+                "suggestion_reason": f"shared filename token(s): {shared}",
+            }
+            assembly_rows.append(row)
+            suggested_pairs.add((figure, match_path))
+            per_figure_links.setdefault(figure, {})[role] = match_path
+            if len(assembly_rows) >= MAX_PREP_SUGGESTIONS:
+                break
+        if len(assembly_rows) >= MAX_PREP_SUGGESTIONS:
+            break
+
+    prism_graph_table_links = (prism_hints or {}).get("graph_table_links", []) or []
+    prism_matched_claim_keys: set[tuple[str, str]] = set()
+    for link in prism_graph_table_links:
+        if len(assembly_rows) >= MAX_PREP_SUGGESTIONS:
+            break
+        source_pzfx = str(link.get("source_pzfx", "") or "")
+        graph_title = str(link.get("graph_title", "") or "")
+        table_title = str(link.get("table_title", "") or "")
+        if source_pzfx not in source_tables or not graph_title:
+            continue
+        figure_match = best_token_match(graph_title, figures)
+        if not figure_match:
+            continue
+        pair = (figure_match, source_pzfx)
+        prism_matched_claim_keys.add((graph_title, source_pzfx))
+        per_figure_links.setdefault(figure_match, {})["source_data"] = source_pzfx
+        if pair in existing_pairs or pair in suggested_pairs:
+            continue
+        row = {
+            "figure_panel": figure_match,
+            "source_record": source_pzfx,
+            "relation_type": "declared_derived_from",
+            "modality": "chart",
+            "notes": (
+                f"Prism graph-title starter suggestion: graph `{graph_title}` points to table "
+                f"`{table_title or link.get('table_id', '')}` in this PZFX file. Review before saving; "
+                "declaration only, not verified provenance."
+            ),
+            "suggestion_reason": f"Prism graph `{graph_title}` has a possible source table hint",
+        }
+        assembly_rows.append(row)
+        suggested_pairs.add(pair)
+
+    pptx_links = (pptx_hints or {}).get("links", []) or []
+    for link in pptx_links:
+        if len(assembly_rows) >= MAX_PREP_SUGGESTIONS:
+            break
+        figure = str(link.get("figure_panel", "") or "")
+        source = str(link.get("source_record", "") or "")
+        if figure not in figures or source not in [*raw_images, *source_tables]:
+            continue
+        pair = (figure, source)
+        source_role = inventory_role(Path(source))
+        if pair in existing_pairs or pair in suggested_pairs or source_role not in {"raw_images", "source_data"}:
+            continue
+        evidence_source = str(link.get("evidence_source", "") or "")
+        row = {
+            "figure_panel": figure,
+            "source_record": source,
+            "relation_type": "declared_derived_from",
+            "modality": infer_manifest_modality(figure, source, source_role),
+            "notes": (
+                f"PPTX text/notes/alt-text starter suggestion from {evidence_source}. Review before saving; "
+                "PPTX text is a declaration aid, not verified provenance."
+            ),
+            "suggestion_reason": f"PPTX text/notes/alt text explicitly names {figure} and {source}",
+        }
+        assembly_rows.append(row)
+        suggested_pairs.add(pair)
+        per_figure_links.setdefault(figure, {})[source_role] = source
+
+    existing_claim_figures = {
+        str(row.get("figure_or_table", ""))
+        for row in claim_manifest.get("rows", []) or []
+        if str(row.get("figure_or_table", "")).strip()
+    }
+    existing_claim_ids = {
+        str(row.get("claim_id", ""))
+        for row in claim_manifest.get("rows", []) or []
+        if str(row.get("claim_id", "")).strip()
+    }
+    claim_rows: list[dict[str, str]] = []
+    next_claim_index = next_available_claim_index(existing_claim_ids)
+    for figure in figures:
+        if figure in existing_claim_figures:
+            continue
+        links = per_figure_links.get(figure, {})
+        if not links:
+            continue
+        source_ref = links.get("source_data", "")
+        suggestion_reason = "starter row from filename-linked figure evidence; paste exact claim text before adding"
+        if source_ref.lower().endswith(".pzfx"):
+            suggestion_reason = (
+                "starter row from Prism graph/PZFX-linked figure evidence; paste exact claim text and review "
+                "exported graph/table/source records before adding"
+            )
+        claim_id = f"C-{next_claim_index:03d}"
+        next_claim_index += 1
+        claim_rows.append({
+            "claim_id": claim_id,
+            "claim_text": "",
+            "manuscript_location": "",
+            "figure_or_table": figure,
+            "source_data": source_ref,
+            "raw_record": links.get("raw_images", ""),
+            "analysis_code": best_filename_match(figure, analysis_files) or "",
+            "protocol": best_filename_match(figure, protocol_files) or "",
+            "owner": "",
+            "status": "draft",
+            "suggestion_reason": suggestion_reason,
+        })
+        if len(claim_rows) >= MAX_PREP_SUGGESTIONS:
+            break
+
+    claim_keys = {
+        (str(row.get("figure_or_table", "")), str(row.get("source_data", "")))
+        for row in claim_rows
+    }
+    for link in prism_graph_table_links:
+        if len(claim_rows) >= MAX_PREP_SUGGESTIONS:
+            break
+        source_pzfx = str(link.get("source_pzfx", "") or "")
+        graph_title = str(link.get("graph_title", "") or "")
+        if not source_pzfx or not graph_title or source_pzfx not in source_tables:
+            continue
+        if (graph_title, source_pzfx) in prism_matched_claim_keys or (graph_title, source_pzfx) in claim_keys:
+            continue
+        claim_id = f"C-{next_claim_index:03d}"
+        next_claim_index += 1
+        claim_rows.append({
+            "claim_id": claim_id,
+            "claim_text": "",
+            "manuscript_location": "",
+            "figure_or_table": graph_title,
+            "source_data": source_pzfx,
+            "raw_record": "",
+            "analysis_code": best_filename_match(source_pzfx, analysis_files) or "",
+            "protocol": best_filename_match(source_pzfx, protocol_files) or "",
+            "owner": "",
+            "status": "draft",
+            "suggestion_reason": (
+                f"Prism graph `{graph_title}` has a possible table link in {source_pzfx}; "
+                "paste exact claim text and review exported graph/source files before saving"
+            ),
+        })
+        claim_keys.add((graph_title, source_pzfx))
+
+    xlsx_sheet_hints = (xlsx_hints or {}).get("sheets", []) or []
+    for sheet in xlsx_sheet_hints:
+        if len(claim_rows) >= MAX_PREP_SUGGESTIONS:
+            break
+        source_xlsx = str(sheet.get("source_xlsx", "") or "")
+        label = str(sheet.get("suggested_label", "") or "")
+        if not source_xlsx or not label or source_xlsx not in source_tables:
+            continue
+        if not xlsx_label_looks_claim_like(label):
+            continue
+        key = (label, source_xlsx)
+        if key in claim_keys:
+            continue
+        claim_id = f"C-{next_claim_index:03d}"
+        next_claim_index += 1
+        claim_rows.append({
+            "claim_id": claim_id,
+            "claim_text": "",
+            "manuscript_location": "",
+            "figure_or_table": label,
+            "source_data": source_xlsx,
+            "raw_record": "",
+            "analysis_code": best_filename_match(source_xlsx, analysis_files) or "",
+            "protocol": best_filename_match(source_xlsx, protocol_files) or "",
+            "owner": "",
+            "status": "draft",
+            "suggestion_reason": (
+                f"XLSX sheet/header detected for `{label}` in {source_xlsx}; paste exact claim text "
+                "and verify the workbook sheet before saving"
+            ),
+        })
+        claim_keys.add(key)
+
+    pdf_caption_hints = (pdf_hints or {}).get("captions", []) or []
+    docx_caption_hints = (docx_hints or {}).get("captions", []) or []
+    existing_claim_labels = {
+        str(row.get("figure_or_table", "")).strip().lower()
+        for row in claim_manifest.get("rows", []) or []
+        if str(row.get("figure_or_table", "")).strip()
+    }
+    existing_claim_labels.update(
+        str(row.get("figure_or_table", "")).strip().lower()
+        for row in claim_rows
+        if str(row.get("figure_or_table", "")).strip()
+    )
+    for caption in [*pdf_caption_hints, *docx_caption_hints]:
+        if len(claim_rows) >= MAX_PREP_SUGGESTIONS:
+            break
+        label = str(caption.get("label", "") or "").strip()
+        if not label or label.lower() in existing_claim_labels:
+            continue
+        claim_id = f"C-{next_claim_index:03d}"
+        next_claim_index += 1
+        document_path = str(caption.get("path", "") or "")
+        page = str(caption.get("page", "") or "")
+        source_type = str(caption.get("source_type", "") or ("PDF" if page else "DOCX"))
+        caption_text = str(caption.get("text", "") or "")
+        snippet = caption_text[:180] + ("..." if len(caption_text) > 180 else "")
+        location = f"{document_path} p. {page}".strip() if page else document_path
+        claim_rows.append({
+            "claim_id": claim_id,
+            "claim_text": "",
+            "manuscript_location": location,
+            "figure_or_table": label,
+            "source_data": "",
+            "raw_record": "",
+            "analysis_code": "",
+            "protocol": "",
+            "owner": "",
+            "status": "draft",
+            "suggestion_reason": (
+                f"{source_type} caption detected for `{label}`; paste the exact claim text and link "
+                f"source/raw evidence before saving. Caption snippet: {snippet}"
+            ),
+        })
+        existing_claim_labels.add(label.lower())
+
+    return {
+        "assembly_rows": assembly_rows,
+        "claim_rows": claim_rows,
+        "prism_graph_table_links": prism_graph_table_links,
+        "prism_errors": (prism_hints or {}).get("errors", []) or [],
+        "pdf_captions": pdf_caption_hints,
+        "pdf_table_like_blocks": (pdf_hints or {}).get("table_like_blocks", []) or [],
+        "pdf_errors": (pdf_hints or {}).get("errors", []) or [],
+        "docx_captions": docx_caption_hints,
+        "docx_table_like_blocks": (docx_hints or {}).get("table_like_blocks", []) or [],
+        "docx_warnings": (docx_hints or {}).get("warnings", []) or [],
+        "docx_errors": (docx_hints or {}).get("errors", []) or [],
+        "pptx_links": pptx_links,
+        "pptx_warnings": (pptx_hints or {}).get("warnings", []) or [],
+        "xlsx_sheets": xlsx_sheet_hints,
+        "xlsx_errors": (xlsx_hints or {}).get("errors", []) or [],
+        "filename_match_warnings": filename_match_warnings[:MAX_PREP_SUGGESTIONS],
+        "scope_note": (
+            "Suggestions are filename-based starter rows for human review. "
+            "PPTX slide text, speaker notes, alt text, Prism graph/table hints, PDF/DOCX captions, and XLSX sheet/header hints may also seed drafts when available. "
+            "They are not written until the user saves them, and saved manifests remain "
+            "declarations that the audit pipeline cross-checks."
+        ),
+    }
+
+
+def build_prism_material_prep_hints(package: Path, files_by_role: dict[str, list[str]]) -> dict[str, Any]:
+    if not any(path.lower().endswith(".pzfx") for path in files_by_role.get("source_data", [])):
+        return {"graph_table_links": [], "errors": []}
+    try:
+        payload = scan_prism_project_intake(package)
+    except Exception as exc:  # noqa: BLE001 - keep inspect lightweight and non-fatal.
+        return {
+            "graph_table_links": [],
+            "errors": [f"Prism material-prep hint scan failed: {exc.__class__.__name__}"],
+        }
+    links: list[dict[str, str]] = []
+    for item in payload.get("graph_table_links", []) or []:
+        source_pzfx = str(item.get("source_pzfx", "") or "")
+        if source_pzfx not in files_by_role.get("source_data", []):
+            continue
+        links.append({
+            "source_pzfx": source_pzfx,
+            "graph_id": str(item.get("graph_id", "") or ""),
+            "graph_title": str(item.get("graph_title", "") or ""),
+            "table_id": str(item.get("table_id", "") or ""),
+            "table_title": str(item.get("table_title", "") or ""),
+            "match_basis": str(item.get("match_basis", "") or ""),
+            "interpretation": str(item.get("interpretation", "") or "possible Prism graph-to-table linkage; not verified provenance"),
+        })
+        if len(links) >= MAX_PREP_SUGGESTIONS:
+            break
+    errors = [
+        f"{item.get('path', 'PZFX')}: {item.get('error', 'Prism parse error')}"
+        for item in payload.get("errors", []) or []
+    ]
+    return {"graph_table_links": links, "errors": errors}
+
+
+def build_pdf_material_prep_hints(package: Path, files_by_role: dict[str, list[str]]) -> dict[str, Any]:
+    all_paths = [path for paths in files_by_role.values() for path in paths]
+    if not any(Path(path).suffix.lower() in PDF_SUFFIXES for path in all_paths):
+        return {"captions": [], "table_like_blocks": [], "errors": []}
+    try:
+        payload = scan_pdf_structure(package)
+    except Exception as exc:  # noqa: BLE001 - inspect should remain lightweight and non-fatal.
+        return {
+            "captions": [],
+            "table_like_blocks": [],
+            "errors": [f"PDF material-prep hint scan failed: {exc.__class__.__name__}"],
+        }
+    captions: list[dict[str, str]] = []
+    for item in payload.get("captions", []) or []:
+        captions.append({
+            "caption_id": str(item.get("caption_id", "") or ""),
+            "path": str(item.get("path", "") or ""),
+            "page": str(item.get("page", "") or ""),
+            "kind": str(item.get("kind", "") or ""),
+            "label": str(item.get("label", "") or ""),
+            "text": str(item.get("text", "") or ""),
+        })
+        if len(captions) >= MAX_PREP_SUGGESTIONS:
+            break
+    table_like_blocks: list[dict[str, str]] = []
+    for item in payload.get("table_like_blocks", []) or []:
+        table_like_blocks.append({
+            "block_id": str(item.get("block_id", "") or ""),
+            "path": str(item.get("path", "") or ""),
+            "page": str(item.get("page", "") or ""),
+            "row_count": str(item.get("row_count", "") or ""),
+            "column_count_estimate": str(item.get("column_count_estimate", "") or ""),
+        })
+        if len(table_like_blocks) >= MAX_PREP_SUGGESTIONS:
+            break
+    errors = [
+        f"{item.get('path', 'PDF')}: {item.get('error', 'PDF structure extraction error')}"
+        for item in payload.get("errors", []) or []
+    ]
+    return {"captions": captions, "table_like_blocks": table_like_blocks, "errors": errors}
+
+
+def build_docx_material_prep_hints(package: Path, files_by_role: dict[str, list[str]]) -> dict[str, Any]:
+    all_paths = [path for paths in files_by_role.values() for path in paths]
+    docx_paths = [path for path in all_paths if Path(path).suffix.lower() in DOCX_SUFFIXES]
+    if not docx_paths:
+        return {"captions": [], "table_like_blocks": [], "warnings": [], "errors": []}
+    try:
+        payload = scan_docx_structure(package)
+    except Exception as exc:  # noqa: BLE001 - surface as prep warning, not hard failure.
+        return {
+            "captions": [],
+            "table_like_blocks": [],
+            "warnings": [],
+            "errors": [f"DOCX material-prep hint scan failed: {exc.__class__.__name__}"],
+        }
+    captions: list[dict[str, str]] = []
+    table_like_blocks: list[dict[str, str]] = []
+    docx_path_set = set(docx_paths)
+    for item in payload.get("captions", []) or []:
+        rel = str(item.get("path", "") or "")
+        if rel not in docx_path_set:
+            continue
+        captions.append({
+            "caption_id": str(item.get("caption_id", "") or ""),
+            "path": rel,
+            "page": "",
+            "kind": str(item.get("kind", "") or ""),
+            "label": str(item.get("label", "") or ""),
+            "text": str(item.get("text", "") or ""),
+            "source_type": "DOCX",
+        })
+        if len(captions) >= MAX_PREP_SUGGESTIONS:
+            break
+    for item in payload.get("table_like_blocks", []) or []:
+        rel = str(item.get("path", "") or "")
+        if rel not in docx_path_set:
+            continue
+        table_like_blocks.append({
+            "block_id": str(item.get("block_id", "") or ""),
+            "path": rel,
+            "page": "",
+            "row_count": str(item.get("row_count", "") or ""),
+            "column_count_estimate": str(item.get("column_count_estimate", "") or ""),
+        })
+        if len(table_like_blocks) >= MAX_PREP_SUGGESTIONS:
+            break
+    errors = [
+        f"{item.get('path', 'DOCX')}: {item.get('error', 'DOCX structure extraction error')}"
+        for item in payload.get("errors", []) or []
+    ]
+    warnings = [
+        f"{item.get('path', 'DOCX')}: {item.get('message', 'DOCX review-layer material is outside structure extraction')}"
+        for item in payload.get("warnings", []) or []
+    ]
+    return {"captions": captions, "table_like_blocks": table_like_blocks, "warnings": warnings, "errors": errors}
+
+
+def build_pptx_material_prep_hints(package: Path, files_by_role: dict[str, list[str]]) -> dict[str, Any]:
+    pptx_paths = [
+        path
+        for path in files_by_role.get("figure_assembly", [])
+        if Path(path).suffix.lower() in PPTX_SUFFIXES
+    ]
+    if not pptx_paths:
+        return {"links": [], "warnings": []}
+    try:
+        payload = scan_pptx_structure(package)
+    except Exception as exc:  # noqa: BLE001 - surface as prep warning, not hard failure.
+        return {"links": [], "warnings": [f"PPTX material-prep hint scan failed: {exc.__class__.__name__}"]}
+    links: list[dict[str, str]] = []
+    for item in payload.get("explicit_path_pairs", []) or []:
+        extraction_method = str(item.get("extraction_method", "") or "")
+        if extraction_method not in {
+            "pptx_slide_explicit_paths",
+            "pptx_notes_explicit_paths",
+            "pptx_alt_text_explicit_paths",
+        }:
+            continue
+        figure = str(item.get("source_path", "") or "")
+        source = str(item.get("target_path", "") or "")
+        if not figure.startswith("figures/") or not (source.startswith("raw_images/") or source.startswith("source_data/")):
+            continue
+        links.append({
+            "figure_panel": figure,
+            "source_record": source,
+            "evidence_source": str(item.get("evidence_source", "") or ""),
+            "relation_type": str(item.get("relation_type", "") or "declared_derived_from"),
+            "interpretation": "PPTX text/notes/alt text names a figure/source pair for manifest preparation; not verified provenance",
+        })
+        if len(links) >= MAX_PREP_SUGGESTIONS:
+            break
+    warnings: list[str] = []
+    for item in payload.get("warnings", []) or []:
+        text = str(item.get("warning") or item.get("error") or item) if isinstance(item, dict) else str(item)
+        if "pptx" in text.lower() or "figure_assembly" in text.lower():
+            warnings.append(text)
+    for item in payload.get("errors", []) or []:
+        text = str(item.get("error") or item) if isinstance(item, dict) else str(item)
+        if "pptx" in text.lower() or "figure_assembly" in text.lower():
+            warnings.append(text)
+    return {"links": links, "warnings": warnings[:MAX_PREP_SUGGESTIONS]}
+
+
+def build_xlsx_material_prep_hints(package: Path, files_by_role: dict[str, list[str]]) -> dict[str, Any]:
+    xlsx_paths = [
+        path
+        for path in files_by_role.get("source_data", [])
+        if Path(path).suffix.lower() in XLSX_SUFFIXES
+    ]
+    if not xlsx_paths:
+        return {"sheets": [], "errors": []}
+    try:
+        payload = scan_xlsx_structure(package)
+    except Exception as exc:  # noqa: BLE001 - inspect should remain lightweight and non-fatal.
+        return {"sheets": [], "errors": [f"XLSX material-prep hint scan failed: {exc.__class__.__name__}"]}
+    sheets: list[dict[str, Any]] = []
+    xlsx_path_set = set(xlsx_paths)
+    for item in payload.get("sheets", []) or []:
+        rel = str(item.get("source_xlsx", "") or "")
+        if rel not in xlsx_path_set:
+            continue
+        sheets.append({
+            "source_xlsx": rel,
+            "sheet_name": str(item.get("sheet_name", "") or ""),
+            "suggested_label": str(item.get("suggested_label", "") or ""),
+            "header_row": str(item.get("header_row", "") or ""),
+            "headers": item.get("headers", []) or [],
+            "data_rows_scanned": str(item.get("data_rows_scanned", "") or ""),
+            "row_scan_capped": bool(item.get("row_scan_capped")),
+            "formula_cell_count_scanned": int(item.get("formula_cell_count_scanned", 0) or 0),
+            "sheet_state": str(item.get("sheet_state", "") or "visible"),
+            "interpretation": str(
+                item.get("interpretation")
+                or "XLSX sheet/header metadata for claim-manifest preparation; not a statistical validation result"
+            ),
+        })
+        if len(sheets) >= MAX_PREP_SUGGESTIONS:
+            break
+    errors = [
+        f"{item.get('path', 'XLSX')}: {item.get('error', 'XLSX structure extraction error')}"
+        for item in payload.get("errors", []) or []
+    ]
+    return {"sheets": sheets, "errors": errors[:MAX_PREP_SUGGESTIONS]}
+
+
+def cell_to_display_text(value: Any) -> str:
+    if value is None:
+        return ""
+    return str(value).strip()
+
+
+def suggested_xlsx_label(path: str, sheet_name: str) -> str:
+    if xlsx_label_looks_claim_like(sheet_name):
+        return sheet_name
+    stem = Path(path).stem.replace("_", " ").replace("-", " ").strip()
+    if xlsx_label_looks_claim_like(stem):
+        return stem
+    return f"{Path(path).name}#{sheet_name}"
+
+
+def xlsx_label_looks_claim_like(label: str) -> bool:
+    lowered = label.lower()
+    return bool(re.search(r"\b(fig(?:ure)?|table|supp(?:lementary)?|extended\s+data)\b", lowered))
+
+
+def text_tokens(value: str) -> set[str]:
+    tokens = {normalize_filename_token(token) for token in FILENAME_TOKEN_RE.findall(value.lower())}
+    return {token for token in tokens if token not in FILENAME_STOP_TOKENS and len(token) > 0}
+
+
+def normalize_filename_token(token: str) -> str:
+    token = token.lower().strip()
+    if token.isdigit():
+        return str(int(token)) if token else token
+    return token
+
+
+def filename_tokens(path: str) -> set[str]:
+    return text_tokens(Path(path).stem)
+
+
+def best_filename_match(target: str, candidates: list[str]) -> str:
+    return best_token_match(Path(target).stem, candidates)
+
+
+def best_token_match(target_text: str, candidates: list[str]) -> str:
+    best_match, _ambiguous_matches = token_match_result(target_text, candidates)
+    return best_match
+
+
+def filename_match_result(target: str, candidates: list[str]) -> tuple[str, list[str]]:
+    return token_match_result(Path(target).stem, candidates)
+
+
+def token_match_result(target_text: str, candidates: list[str]) -> tuple[str, list[str]]:
+    target_tokens = text_tokens(target_text)
+    if not target_tokens:
+        return "", []
+    scored: list[tuple[float, int, str]] = []
+    for candidate in candidates:
+        candidate_tokens = filename_tokens(candidate)
+        shared = target_tokens & candidate_tokens
+        if not shared:
+            continue
+        numeric_shared = any(token.isdigit() for token in shared)
+        if not numeric_shared and len(shared) < 2:
+            continue
+        union = target_tokens | candidate_tokens
+        score = len(shared) / max(len(union), 1)
+        scored.append((score, len(shared), candidate))
+    if not scored:
+        return "", []
+    scored.sort(key=lambda item: (-item[0], -item[1], item[2].lower()))
+    top_score, top_shared, top_candidate = scored[0]
+    ambiguous_matches = [
+        candidate
+        for score, shared_count, candidate in scored
+        if score == top_score and shared_count == top_shared
+    ]
+    if len(ambiguous_matches) > 1:
+        return "", sorted(ambiguous_matches, key=str.lower)
+    return top_candidate, []
+
+
+def filename_ambiguity_warning(figure: str, role: str, candidates: list[str]) -> str:
+    candidate_text = "; ".join(candidates[:5])
+    extra = "" if len(candidates) <= 5 else f"; +{len(candidates) - 5} more"
+    return (
+        f"Ambiguous filename starter suggestion for {figure} against {role}: "
+        f"{candidate_text}{extra}. No row was suggested; choose the correct record manually before saving."
+    )
+
+
+def infer_manifest_modality(figure: str, source: str, role: str) -> str:
+    if role == "source_data":
+        return "chart"
+    combined = f"{figure} {source}".lower()
+    if any(token in combined for token in ("blot", "gel", "wb", "western")):
+        return "western_blot"
+    if any(token in combined for token in ("dapi", "fitc", "if", "ihc", "micro", "confocal", "histology")):
+        return "microscopy"
+    return "other"
+
+
+def next_available_claim_index(existing_ids: set[str]) -> int:
+    numbers = []
+    for claim_id in existing_ids:
+        match = re.search(r"(\d+)$", claim_id)
+        if match:
+            numbers.append(int(match.group(1)))
+    return (max(numbers) + 1) if numbers else 1
+
+
 def read_assembly_manifest(package: Path) -> dict[str, Any]:
     manifest_path = package / "figure_assembly" / "assembly_manifest.csv"
     if not manifest_path.is_file():
@@ -565,6 +1328,30 @@ def read_assembly_manifest(package: Path) -> dict[str, Any]:
             warnings.append(f"Missing columns: {', '.join(missing)}")
         for row in reader:
             rows.append({col: str(row.get(col, "") or "") for col in ASSEMBLY_MANIFEST_COLUMNS})
+    return {
+        "path": manifest_path.relative_to(package).as_posix(),
+        "rows": rows,
+        "row_count": len(rows),
+        "warnings": warnings,
+    }
+
+
+def read_claim_manifest(package: Path) -> dict[str, Any]:
+    manifest_path = package / "claim_manifest.csv"
+    if not manifest_path.is_file():
+        alternate = package / "submission_readiness" / "claim_manifest.csv"
+        manifest_path = alternate if alternate.is_file() else manifest_path
+    if not manifest_path.is_file():
+        return {"path": None, "rows": [], "row_count": 0, "warnings": []}
+    warnings: list[str] = []
+    rows: list[dict[str, str]] = []
+    with manifest_path.open(newline="", encoding="utf-8", errors="ignore") as handle:
+        reader = csv.DictReader(handle)
+        missing = [col for col in CLAIM_COLUMNS if col not in (reader.fieldnames or [])]
+        if missing:
+            warnings.append(f"Missing columns: {', '.join(missing)}")
+        for row in reader:
+            rows.append({col: str(row.get(col, "") or "") for col in CLAIM_COLUMNS})
     return {
         "path": manifest_path.relative_to(package).as_posix(),
         "rows": rows,
@@ -601,6 +1388,67 @@ def validated_manifest_row(package: Path, row: ManifestRowInput) -> dict[str, st
         "modality": normalize_modality(row.modality),
         "notes": row.notes.strip(),
     }
+
+
+def validated_claim_manifest_row(package: Path, row: ClaimManifestRowInput) -> dict[str, str]:
+    claim_id = row.claim_id.strip()
+    claim_text = row.claim_text.strip()
+    if not claim_id:
+        raise HTTPException(status_code=400, detail="claim_id is required")
+    if not claim_text:
+        raise HTTPException(status_code=400, detail="claim_text is required")
+    status = row.status.strip().lower() or "draft"
+    if status not in CLAIM_STATUS_OPTIONS:
+        raise HTTPException(status_code=400, detail=f"Unsupported claim status: {status}")
+    return {
+        "claim_id": claim_id,
+        "claim_text": claim_text,
+        "manuscript_location": row.manuscript_location.strip(),
+        "figure_or_table": row.figure_or_table.strip(),
+        "source_data": validate_optional_package_refs(
+            package,
+            row.source_data,
+            "source_data",
+            CLAIM_FIELD_ALLOWED_ROLES["source_data"],
+        ),
+        "raw_record": validate_optional_package_refs(
+            package,
+            row.raw_record,
+            "raw_record",
+            CLAIM_FIELD_ALLOWED_ROLES["raw_record"],
+        ),
+        "analysis_code": validate_optional_package_refs(
+            package,
+            row.analysis_code,
+            "analysis_code",
+            CLAIM_FIELD_ALLOWED_ROLES["analysis_code"],
+        ),
+        "protocol": validate_optional_package_refs(
+            package,
+            row.protocol,
+            "protocol",
+            CLAIM_FIELD_ALLOWED_ROLES["protocol"],
+        ),
+        "owner": row.owner.strip(),
+        "status": status,
+    }
+
+
+def validate_optional_package_refs(package: Path, value: str, field: str, allowed_roles: set[str]) -> str:
+    refs: list[str] = []
+    for item in str(value or "").replace("|", ";").split(";"):
+        item = item.strip()
+        if not item:
+            continue
+        rel = validate_package_relative_file(package, item, field)
+        role = inventory_role(Path(rel))
+        if role not in allowed_roles:
+            raise HTTPException(
+                status_code=400,
+                detail=f"{field} must point to one of: {', '.join(sorted(allowed_roles))}",
+            )
+        refs.append(rel)
+    return ";".join(refs)
 
 
 def validate_package_relative_file(package: Path, value: str, field: str) -> str:
@@ -965,6 +1813,29 @@ def write_action_csv(path: Path, rows: list[dict[str, str]]) -> None:
             writer.writerow(csv_safe_row(row, ACTION_FIELDNAMES))
 
 
+def image_review_tracker_csv(path: Path) -> list[dict[str, str]]:
+    rows = read_csv_artifact(path)
+    return [{field: str(row.get(field, "") or "") for field in IMAGE_REVIEW_TRACKER_FIELDS} for row in rows]
+
+
+def write_image_review_tracker_csv(path: Path, rows: list[dict[str, str]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=IMAGE_REVIEW_TRACKER_FIELDS)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow(csv_safe_row(row, IMAGE_REVIEW_TRACKER_FIELDS))
+
+
+def write_image_handoff_csv(path: Path, rows: list[dict[str, str]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=IMAGE_TOOL_HANDOFF_FIELDS)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow(csv_safe_row(row, IMAGE_TOOL_HANDOFF_FIELDS))
+
+
 RESOLVED_STATUSES = {"resolved", "done", "complete", "completed"}
 ACCEPTED_STATUSES = {"accepted", "accepted_with_reason", "accepted-with-reason"}
 NON_ACTIONABLE_STATUSES = {"false_positive", "false-positive", "non_actionable", "not_applicable"}
@@ -991,7 +1862,7 @@ def update_action_trackers(output_dir: Path, action_id: str, request: ActionUpda
         raise HTTPException(status_code=404, detail=f"Action not found: {action_id}")
 
     updated = dict(found)
-    for field in ("owner", "status", "human_note", "accepted_with_reason"):
+    for field in ("owner", "status", "human_note", "accepted_with_reason", "attachment_reference"):
         value = getattr(request, field)
         if value is not None:
             updated[field] = value.strip()
@@ -1019,23 +1890,221 @@ def update_action_trackers(output_dir: Path, action_id: str, request: ActionUpda
     for name, path in tracker_files.items():
         write_action_csv(path, trackers[name])
 
+    plan_rows = correction_plan_rows([
+        *trackers["unresolved"],
+        *trackers["resolved"],
+        *trackers["accepted_with_reason"],
+    ])
+    write_correction_plan_csv(output_dir / "correction_plan.csv", plan_rows)
+    write_correction_plan_markdown(output_dir / "correction_plan.md", plan_rows)
+
     packet_dir = output_dir / "submission_qc_packet"
     if packet_dir.is_dir():
         for name, rows in trackers.items():
             write_action_csv(packet_dir / tracker_files[name].name, rows)
+        write_correction_plan_csv(packet_dir / "correction_plan.csv", plan_rows)
+        write_correction_plan_markdown(packet_dir / "correction_plan.md", plan_rows)
 
     return trackers
+
+
+def update_image_review_tracker(
+    output_dir: Path,
+    review_item_id: str,
+    request: ImageReviewUpdateRequest,
+) -> list[dict[str, str]]:
+    review_dir = output_dir / "submission_qc_packet" / "image_review_packet"
+    tracker_path = review_dir / "image_review_tracker.csv"
+    if not tracker_path.is_file():
+        raise HTTPException(status_code=404, detail="Image review tracker has not been generated")
+    rows = image_review_tracker_csv(tracker_path)
+    target: dict[str, str] | None = None
+    for row in rows:
+        if row.get("review_item_id") == review_item_id:
+            target = row
+            break
+    if target is None:
+        raise HTTPException(status_code=404, detail=f"Image review item not found: {review_item_id}")
+
+    for field in (
+        "review_owner",
+        "review_status",
+        "external_tool_or_method",
+        "review_result_note",
+        "attachment_reference",
+    ):
+        value = getattr(request, field)
+        if value is not None:
+            target[field] = value.strip()
+
+    if not target.get("review_status"):
+        target["review_status"] = "unresolved"
+
+    write_image_review_tracker_csv(tracker_path, rows)
+    sync_image_handoff_with_tracker(review_dir, target)
+    return rows
+
+
+def sync_image_handoff_with_tracker(review_dir: Path, tracker_row: dict[str, str]) -> None:
+    handoff_path = review_dir / "external_tool_handoff.csv"
+    if not handoff_path.is_file():
+        return
+    handoff_rows = [
+        {field: str(row.get(field, "") or "") for field in IMAGE_TOOL_HANDOFF_FIELDS}
+        for row in read_csv_artifact(handoff_path)
+    ]
+    source_finding_id = str(tracker_row.get("source_finding_id", "") or "")
+    review_item_id = str(tracker_row.get("review_item_id", "") or "")
+    ordinal = review_item_id.rsplit("-", 1)[-1] if "-" in review_item_id else ""
+    updated = False
+    for row in handoff_rows:
+        same_finding = source_finding_id and row.get("source_finding_id") == source_finding_id
+        same_ordinal = ordinal and row.get("handoff_item_id", "").endswith(ordinal)
+        if not (same_finding or same_ordinal):
+            continue
+        row["review_status"] = tracker_row.get("review_status", "")
+        row["reviewer"] = tracker_row.get("review_owner", "")
+        row["external_result_reference"] = tracker_row.get("attachment_reference", "")
+        updated = True
+    if updated:
+        write_image_handoff_csv(handoff_path, handoff_rows)
 
 
 def submission_qc_packet_summary(output_dir: Path) -> dict[str, Any]:
     packet_dir = output_dir / "submission_qc_packet"
     if not packet_dir.is_dir():
-        return {"available": False, "files": [], "download_url": None}
+        return {
+            "available": False,
+            "files": [],
+            "audience_exports": {},
+            "image_review_packet": {"available": False, "handoff_rows": []},
+            "download_url": None,
+        }
     files = sorted(path.name for path in packet_dir.iterdir() if path.is_file())
+    audience_dir = packet_dir / "audience_exports"
+    audience_exports = {}
+    if audience_dir.is_dir():
+        for path in sorted(audience_dir.iterdir(), key=lambda item: item.name.lower()):
+            if path.is_file() and path.suffix.lower() == ".md":
+                audience_exports[path.stem.lower()] = f"audience_exports/{path.name}"
+    image_review_packet = image_review_packet_summary(packet_dir, output_dir)
     return {
         "available": True,
         "files": files,
+        "audience_exports": audience_exports,
+        "image_review_packet": image_review_packet,
         "download_url": "submission-qc-packet.zip",
+    }
+
+
+def image_review_packet_summary(packet_dir: Path, output_dir: Path) -> dict[str, Any]:
+    review_dir = packet_dir / "image_review_packet"
+    if not review_dir.is_dir():
+        return {"available": False, "handoff_rows": []}
+    manifest = read_optional_json_artifact(review_dir / "image_review_manifest.json") or {}
+    action_index = image_review_action_index(output_dir)
+    review_index = image_review_tracker_index(review_dir)
+    handoff_rows = read_csv_artifact(review_dir / "external_tool_handoff.csv")
+    handoff_rows = [
+        enrich_handoff_row(
+            {field: str(row.get(field, "") or "") for field in IMAGE_TOOL_HANDOFF_FIELDS},
+            action_index,
+            review_index,
+        )
+        for row in handoff_rows
+    ]
+    files = sorted(path.name for path in review_dir.iterdir() if path.is_file())
+    return {
+        "available": True,
+        "files": files,
+        "candidate_count": int(manifest.get("candidate_count", len(handoff_rows)) or 0),
+        "external_handoff_count": len(handoff_rows),
+        "handoff_rows": handoff_rows[:12],
+        "external_tool_handoff_csv": "image_review_packet/external_tool_handoff.csv"
+        if (review_dir / "external_tool_handoff.csv").is_file()
+        else "",
+        "external_tool_handoff_guide": "image_review_packet/EXTERNAL_TOOL_HANDOFF.md"
+        if (review_dir / "EXTERNAL_TOOL_HANDOFF.md").is_file()
+        else "",
+        "tracker_csv": "image_review_packet/image_review_tracker.csv"
+        if (review_dir / "image_review_tracker.csv").is_file()
+        else "",
+    }
+
+
+def image_review_tracker_index(review_dir: Path) -> dict[str, dict[str, str]]:
+    indexed: dict[str, dict[str, str]] = {}
+    tracker_rows = image_review_tracker_csv(review_dir / "image_review_tracker.csv")
+    for row in tracker_rows:
+        finding_id = str(row.get("source_finding_id", "") or "").strip()
+        review_id = str(row.get("review_item_id", "") or "").strip()
+        if finding_id:
+            indexed[f"finding:{finding_id}"] = row
+        if review_id:
+            indexed[f"review:{review_id}"] = row
+            ordinal = review_id.rsplit("-", 1)[-1] if "-" in review_id else ""
+            if ordinal:
+                indexed[f"ordinal:{ordinal}"] = row
+    return indexed
+
+
+def image_review_action_index(output_dir: Path) -> dict[str, dict[str, str]]:
+    indexed: dict[str, dict[str, str]] = {}
+    tracker_files = {
+        "unresolved": output_dir / "unresolved_actions.csv",
+        "resolved": output_dir / "resolved_actions.csv",
+        "accepted_with_reason": output_dir / "accepted_with_reason.csv",
+    }
+    for bucket, path in tracker_files.items():
+        for row in action_csv(path):
+            finding_id = str(row.get("source_finding_id", "") or "").strip()
+            if not finding_id:
+                continue
+            indexed[finding_id] = {**row, "bucket": bucket}
+    return indexed
+
+
+def enrich_handoff_row(
+    row: dict[str, str],
+    action_index: dict[str, dict[str, str]],
+    review_index: dict[str, dict[str, str]],
+) -> dict[str, str]:
+    source_finding_id = str(row.get("source_finding_id", "") or "").strip()
+    ordinal = str(row.get("handoff_item_id", "") or "").rsplit("-", 1)[-1]
+    review = (
+        review_index.get(f"finding:{source_finding_id}")
+        or review_index.get(f"ordinal:{ordinal}")
+        or {}
+    )
+    if review:
+        row = {
+            **row,
+            "review_item_id": str(review.get("review_item_id", "")),
+            "review_status": str(review.get("review_status", "")) or str(row.get("review_status", "")),
+            "reviewer": str(review.get("review_owner", "")) or str(row.get("reviewer", "")),
+            "external_tool_or_method": str(review.get("external_tool_or_method", "")),
+            "review_result_note": str(review.get("review_result_note", "")),
+            "attachment_reference": str(review.get("attachment_reference", "")),
+            "external_result_reference": str(review.get("attachment_reference", ""))
+            or str(row.get("external_result_reference", "")),
+        }
+    action = action_index.get(source_finding_id)
+    if not action:
+        return {
+            **row,
+            "linked_action_id": "",
+            "linked_action_status": "",
+            "linked_action_owner": "",
+            "linked_action_attachment_reference": "",
+            "linked_action_bucket": "",
+        }
+    return {
+        **row,
+        "linked_action_id": str(action.get("action_id", "")),
+        "linked_action_status": str(action.get("status", "")),
+        "linked_action_owner": str(action.get("owner", "")),
+        "linked_action_attachment_reference": str(action.get("attachment_reference", "")),
+        "linked_action_bucket": str(action.get("bucket", "")),
     }
 
 
@@ -1051,6 +2120,12 @@ EXPOSED_ARTIFACTS = {
     "methodology_checklist.csv",
     "writing_readiness.json",
     "writing_readiness.csv",
+    "prism_project_intake.json",
+    "fcs_metadata_intake.json",
+    "image_metadata.json",
+    "channel_metadata_candidates.json",
+    "splice_forensics_candidates.json",
+    "psd_preview_images.json",
     "unresolved_actions.csv",
     "correction_plan.csv",
     "correction_plan.md",
@@ -1060,6 +2135,7 @@ EXPOSED_ARTIFACTS = {
     "verified_traceability.csv",
     "re_audit_diff.json",
     "re_audit_diff.csv",
+    "re_audit_diff.md",
 }
 
 
@@ -1072,14 +2148,26 @@ def artifact_download_allowed(relpath: str) -> bool:
         return True
     if as_posix.startswith("submission_qc_packet/") and len(relative.parts) == 2:
         return True
+    if as_posix.startswith("submission_qc_packet/image_review_packet/") and len(relative.parts) == 3:
+        return relative.name in {
+            "README.md",
+            "image_review_manifest.json",
+            "image_review_candidates.csv",
+            "image_review_tracker.csv",
+            "external_tool_handoff.csv",
+            "EXTERNAL_TOOL_HANDOFF.md",
+            "image_files.csv",
+        }
+    if as_posix.startswith("submission_qc_packet/audience_exports/") and len(relative.parts) == 3:
+        return relative.name in {"README.md", "PI_BRIEF.md", "COAUTHOR_ACTIONS.md", "JOURNAL_RESPONSE_DRAFT.md"}
     return False
 
 
 def write_packet_zip(packet_dir: Path, zip_path: Path) -> None:
     with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-        for path in sorted(packet_dir.iterdir(), key=lambda item: item.name.lower()):
+        for path in sorted(packet_dir.rglob("*"), key=lambda item: item.relative_to(packet_dir).as_posix().lower()):
             if path.is_file():
-                archive.write(path, arcname=path.name)
+                archive.write(path, arcname=path.relative_to(packet_dir).as_posix())
 
 
 def safe_artifact(output_dir: Path, relpath: str) -> Path:

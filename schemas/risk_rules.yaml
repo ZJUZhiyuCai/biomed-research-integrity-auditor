@@ -34,15 +34,27 @@ detector_caps:
   image_reuse_cluster:
     max: R3
     unless_r4_requirement: true
+  keypoint_geometric_match:
+    max: R3
+    unless_r4_requirement: true
+  geometric_image_similarity:
+    max: R3
+    unless_r4_requirement: true
   local_patch_reuse:
     max: R3
     unless_r4_requirement: true
   same_image_copy_move:
     max: R3
     unless_r4_requirement: true
+  splice_forensics_triage_signal:
+    max: R2
   local_patch_cross_context:
     max: R3
   declared_local_patch_requires_verification:
+    max: R1
+  declared_geometric_match_requires_verification:
+    max: R1
+  channel_metadata_verification_gap:
     max: R1
 
   unresolved_fig_raw_similarity:

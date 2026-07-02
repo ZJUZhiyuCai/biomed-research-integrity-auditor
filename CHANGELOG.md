@@ -3,10 +3,146 @@
 ## Unreleased
 
 ### Added
+- Human reports now use a PI/co-author first-page order: Quick Read, Scope, Must Resolve,
+  and Materials Needed appear before workflow status, the full action queue, coverage,
+  finding cards, and technical appendices.
+- Weak splice-forensics triage now includes a conservative CFA-like chroma-grid prompt
+  alongside ELA/JPEG residual and noise-map prompts. The new signal remains capped as
+  weak R2 triage and is explicitly not sensor-pattern authentication.
+- Weak splice-forensics triage now also includes a multi-quality JPEG-ghost recompression
+  profile prompt for exported JPEG panels. It remains an R2-capped review prompt and is
+  explicitly not robust JPEG-ghost analysis.
+- Webapp package-prep filename suggestions now normalize simple zero-padding and separator
+  differences, so messy names such as `Fig 02-A` and `F2A` can seed draft manifest rows when
+  the match is unique. Suggestions remain unsaved typing aids until reviewed.
+- Webapp package prep now surfaces ambiguous filename matches as material-prep warnings instead
+  of silently skipping them or choosing one candidate. Ambiguous figure/source matches still do
+  not create draft manifest rows until a user selects the correct record.
+- DOCX structure intake now records review-layer warnings when Word comments, tracked revisions,
+  or embedded objects/media are present. These warnings are surfaced in audit coverage, reports,
+  and the webapp Package Prep panel without copying comment text or embedded object contents.
+- PPTX structure intake now reads speaker notes and shape alt text in addition to visible slide
+  text. Explicit figure/source paths found in those layers can seed assembly-manifest drafts and
+  provenance context, while remaining declarations that require pipeline cross-checks.
+- DOCX manuscript/protocol intake for package-internal text screening and writing-readiness checks.
+  The extractor reads WordprocessingML body paragraphs, caption-styled paragraphs, and table cell
+  text without adding a runtime dependency. Unreadable DOCX files now emit an R1 text-extraction
+  coverage gap instead of being silently treated as unsupported or clean.
+- Best-effort DOCX structure intake via `docx_structure.json`. The audit pipeline now records
+  body paragraphs, caption-like paragraphs, and Word tables as a stable material-prep artifact
+  for claim-manifest drafting; comments, track changes, embedded objects, and provenance remain
+  outside this artifact's scope.
+- PPTX figure-assembly text intake for explicit traceability links. When `figure_assembly/*.pptx`
+  slide text contains both a figure-panel path and a raw/source-data path, the provenance parser
+  records a lower-confidence expected-traceability edge and preserves the slide as evidence.
+- Best-effort PPTX slide text/path structure intake via `pptx_structure.json`. The audit pipeline
+  now records slide text paragraphs, package-relative path mentions, and explicit figure/source
+  path pairs as a stable material-prep artifact for assembly-manifest drafting; this does not
+  inspect slide geometry or prove provenance.
+- Best-effort PPTX embedded-image intake via `pptx_embedded_images.json` and
+  `pptx_embedded_images/`. Raster images embedded in supplied PPTX assembly files are exported as
+  presentation-layer artifacts for review; they are not raw/source records or provenance proof.
+- Best-effort zip-based Keynote `.key` embedded-image intake via `key_embedded_images.json` and
+  `key_embedded_images/`. Opaque assembly project containers such as `.ai`, `.indd`, and
+  legacy `.ppt` now emit explicit R1 coverage gaps requiring panel exports and manual review.
+- Best-effort PSD flattened-preview intake via `psd_preview_images.json` and
+  `psd_preview_images/`. Decodable PSD files can now export presentation-layer previews for
+  human intake review while layer/mask/history provenance remains an explicit coverage gap.
+- Basic GraphPad Prism `.pzfx` source-table intake for statistical screening. Plain XML PZFX tables
+  with parseable columns can now feed the existing SD/SEM/n and weak-statistics checks; complex or
+  unparseable Prism projects emit an R1 source-table extraction gap and still need CSV/XLSX exports.
+- GraphPad Prism project intake now writes `prism_project_intake.json`, indexing parseable PZFX
+  table/graph metadata and possible graph-to-table hints for manifest preparation. These hints are
+  surfaced in coverage and reports as non-verified source-linkage aids, not provenance evidence.
+- Flow cytometry FCS intake now writes `fcs_metadata_intake.json`, indexing event counts,
+  channel/marker labels, cytometer fields, dates, and compensation-keyword presence for
+  MIFlowCyt-oriented material review without validating gates, compensation, or population
+  percentages.
+- Best-effort PDF structure intake via `pdf_structure.json`. Machine-readable PDFs now contribute
+  caption-like and table-like text blocks to audit coverage.
+- Best-effort PDF embedded-image intake via `pdf_embedded_images.json` and `pdf_embedded_images/`.
+  Raster images embedded in supplied PDFs are exported as presentation-layer artifacts for review;
+  they are not raw/source records or provenance proof.
+- Webapp package prep can now write package-root `claim_manifest.csv` rows, linking manuscript
+  claims to source data, raw records, analysis code, and protocols while preserving the boundary
+  that claim coverage is completeness tracking, not correctness proof.
+- Webapp package prep now returns filename-based starter suggestions for `assembly_manifest.csv`
+  rows and claim-manifest drafts, and can use Prism PZFX graph/table hints to seed editable
+  graph-to-source drafts. Suggestions are typing aids only: they are not written until the user
+  saves them, and saved rows remain declarations requiring pipeline cross-checks.
+- Webapp package prep can use explicit figure/source paths found in PPTX slide text to seed
+  editable `assembly_manifest.csv` and claim-manifest draft rows. PPTX slide text remains a
+  declaration aid, not verified provenance.
+- Webapp package prep can also use machine-readable PDF captions to seed editable claim-manifest
+  draft rows with figure/table labels and manuscript page locations, while leaving source/raw
+  evidence fields empty until the user links actual evidence files.
+- Webapp package prep can use DOCX caption-styled figure/table text and Word table-like blocks
+  to seed editable claim-manifest draft rows, again leaving source/raw evidence fields empty
+  until the user links actual evidence files.
+- Webapp package prep can summarize XLSX workbook sheet/header metadata and use
+  figure/table-like sheet labels to seed editable claim-manifest drafts. These are
+  material-prep hints only, not statistical validation or verified provenance.
+- Best-effort XLSX workbook structure intake via `xlsx_structure.json`. The audit pipeline now
+  records sheet names, headers, formula-cell counts, merged-cell ranges, hidden sheets, and
+  figure/table-like labels for source-data and claim-manifest preparation; this is not
+  statistical validation.
 - Local patch / same-image copy-move screening now uses a NumPy-backed normalized
   cross-correlation path and records explicit tile/comparison budget limits. If
   a local image run is capped before all tile pairs are examined, the detector emits
   an R1 `audit_coverage_gap` rather than letting partial screening look complete.
+- OpenCV ORB keypoint plus RANSAC homography screening for rotated, rescaled, cropped,
+  or perspective-shifted image similarity candidates. Standard/deep scans run the new
+  detector, reports summarize good matches/inliers/geometric estimates, and declared
+  same-field/same-membrane matches are retained as R1 verification items instead of
+  automatic clearance.
+- Finding-derived action rows now include copy-ready neutral inquiry and material-request
+  templates in the human report, `AUDIT_JSON_SUMMARY.json`, and action tracker CSVs so
+  teams can request clarification or source records without implying intent or misconduct.
+- Submission QC packets now include `audience_exports/` with editable PI, co-author, and
+  journal/reviewer Markdown drafts generated from the neutral action queue.
+- Re-audit comparison now writes `re_audit_diff.md`, tracks resolved/new/persisted missing
+  materials, includes the Markdown diff in QC packets, and renders fixed/new/persisted lists
+  in the web app.
+- Action trackers now include an `attachment_reference` field so teams can record the local
+  file path, folder, or link that supports a resolved or accepted action. This is a team
+  follow-up reference, not uploaded evidence or an audit verdict. Correction-plan CSV/Markdown
+  exports mirror the same reference for PI/co-author remediation tracking.
+- The webapp Action Tracker now displays copy-ready neutral inquiry and material-request
+  templates for each action row, making the finding-to-follow-up loop visible without opening
+  raw CSV files.
+- Image review packets now include an editable `image_review_tracker.csv` so teams can record
+  reviewer, status, ImageTwin/Proofig/manual-review method, result notes, and attachment
+  references for each image candidate without treating the tracker as automated clearance.
+- Image review packets now include `external_tool_handoff.csv` and `EXTERNAL_TOOL_HANDOFF.md`,
+  turning calibrated image candidates into a practical ImageTwin/Proofig/manual-review handoff
+  with recommended review route, review question, evidence references, and data-governance notes.
+- The webapp Submission Workspace now surfaces the image-review handoff queue with links to the
+  handoff CSV/guide, recommended external-review route, review question, and data-governance note.
+- Image-review handoff rows are now linked back to action-tracker rows through `source_finding_id`,
+  so the webapp can show the linked action status, owner, and attachment reference beside each
+  external-review item.
+- Image-review tracker rows can now be edited in the webapp. Updates to reviewer, review status,
+  external tool/method, result note, and attachment reference are written back to
+  `image_review_tracker.csv` and mirrored into the handoff CSV for packet downloads.
+- The webapp re-audit diff now visualizes missing-material movement as resolved, newly missing,
+  and still missing, matching the JSON/Markdown diff instead of showing only persisted gaps.
+- Image metadata intake now writes `image_metadata.json` with frame/channel/Z/T and OME/TIFF
+  hints for supplied images, surfaces multi-frame/channel/Z-stack coverage in reports, and
+  carries the artifact into the submission QC packet.
+- Same-field/different-channel manifest declarations are now checked against available
+  frame/channel/OME metadata. Missing multichannel acquisition metadata emits an R1
+  `channel_metadata_verification_gap`; present metadata is recorded as supporting context
+  only, not as image-integrity clearance.
+- Weak splice-forensics triage now writes `splice_forensics_candidates.json` for standard/deep
+  image runs. The detector screens exported panels for localized ELA/JPEG residual and
+  noise-map outlier prompts, caps them as weak R2 forensic signals, includes them in
+  human reports and image-review packets, and keeps sensor-pattern authentication beyond
+  weak CFA-like triage, robust JPEG ghost, and lighting/shadow analysis as explicit
+  external/specialist-review boundaries.
+- Submission QC packets now include `image_review_packet/` when image files are present.
+  It organizes image candidate rows, image-file hashes, copied local-patch crop evidence,
+  detector payloads, positive provenance, and data-governance notes for ImageTwin/Proofig
+  or manual figure review without presenting the packet as an external-search result or verdict.
 - Human reports and `AUDIT_JSON_SUMMARY.audit_coverage` now include an explicit image-screening
   boundary: automated checks performed, manipulation classes not covered by current image
   detectors, and the reminder that no image finding is not complete image-forensics clearance.

@@ -6,10 +6,13 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import posixpath
 import re
 import sys
+import zipfile
 from pathlib import Path
 from typing import Any
+import xml.etree.ElementTree as ET
 
 import yaml
 
@@ -26,6 +29,11 @@ IMAGE_OR_DATA_RE = re.compile(
 )
 STRUCTURED_SUFFIXES = {".csv", ".tsv", ".yaml", ".yml"}
 TEXT_SUFFIXES = {".txt", ".md"}
+PPTX_SUFFIXES = {".pptx"}
+A_TEXT = "{http://schemas.openxmlformats.org/drawingml/2006/main}t"
+A_PARAGRAPH = "{http://schemas.openxmlformats.org/drawingml/2006/main}p"
+P_CNVPR = "{http://schemas.openxmlformats.org/presentationml/2006/main}cNvPr"
+REL_NS = "{http://schemas.openxmlformats.org/package/2006/relationships}"
 SOURCE_ROLES = {"raw_image", "source_data"}
 PACKAGE_FILE_SCAN_LIMIT = 10000
 PACKAGE_FILE_MAX_DEPTH = 12
@@ -238,7 +246,13 @@ def parse_structured_manifest(path: Path, package: Path, files: dict[str, list[s
     return parse_structured_yaml(path, package, files)
 
 
-def extract_line_links(line: str, files: dict[str, list[str]], evidence_source: str) -> list[dict[str, Any]]:
+def extract_line_links(
+    line: str,
+    files: dict[str, list[str]],
+    evidence_source: str,
+    extraction_method: str = "same_line_explicit_paths",
+    confidence: float = 0.95,
+) -> list[dict[str, Any]]:
     tokens = [resolve_token(match.group(0), files) for match in IMAGE_OR_DATA_RE.finditer(line)]
     paths = [token for token in tokens if token]
     figures = [path for path in paths if role(path) == "figure_panel"]
@@ -251,11 +265,163 @@ def extract_line_links(line: str, files: dict[str, list[str]], evidence_source: 
                 "target_path": source,
                 "relation_type": "declared_derived_from",
                 "evidence_source": evidence_source,
-                "confidence": 0.95,
+                "confidence": confidence,
                 "risk_effect": "expected_traceability",
-                "extraction_method": "same_line_explicit_paths",
+                "extraction_method": extraction_method,
             })
     return links
+
+
+def pptx_slide_sort_key(name: str) -> tuple[int, str]:
+    match = re.search(r"slide(\d+)\.xml$", name)
+    return (int(match.group(1)) if match else 0, name)
+
+
+def pptx_slide_paragraphs(xml_bytes: bytes) -> list[str]:
+    try:
+        root = ET.fromstring(xml_bytes)
+    except ET.ParseError:
+        return []
+    paragraphs: list[str] = []
+    for paragraph in root.iter(A_PARAGRAPH):
+        text = " ".join(
+            node.text.strip()
+            for node in paragraph.iter(A_TEXT)
+            if node.text and node.text.strip()
+        ).strip()
+        if text:
+            paragraphs.append(text)
+    return paragraphs
+
+
+def pptx_alt_texts(xml_bytes: bytes) -> list[str]:
+    try:
+        root = ET.fromstring(xml_bytes)
+    except ET.ParseError:
+        return []
+    texts: list[str] = []
+    seen: set[str] = set()
+    for node in root.iter(P_CNVPR):
+        for attr in ("descr", "title"):
+            text = str(node.attrib.get(attr, "") or "").strip()
+            if text and text not in seen:
+                seen.add(text)
+                texts.append(text)
+    return texts
+
+
+def pptx_notes_for_slide(archive: zipfile.ZipFile, slide_name: str) -> str | None:
+    rels_name = posixpath.join(
+        posixpath.dirname(slide_name),
+        "_rels",
+        posixpath.basename(slide_name) + ".rels",
+    )
+    names = set(archive.namelist())
+    if rels_name in names:
+        try:
+            root = ET.fromstring(archive.read(rels_name))
+            for rel in root.iter(f"{REL_NS}Relationship"):
+                rel_type = str(rel.attrib.get("Type", "") or "")
+                if rel_type.endswith("/notesSlide"):
+                    target = str(rel.attrib.get("Target", "") or "")
+                    if target:
+                        notes_name = posixpath.normpath(posixpath.join(posixpath.dirname(slide_name), target))
+                        if notes_name in names:
+                            return notes_name
+        except ET.ParseError:
+            return None
+    match = re.search(r"slide(\d+)\.xml$", slide_name)
+    if match:
+        fallback = f"ppt/notesSlides/notesSlide{match.group(1)}.xml"
+        if fallback in names:
+            return fallback
+    return None
+
+
+def pptx_text_sources_for_slide(
+    archive: zipfile.ZipFile,
+    slide_name: str,
+    rel: str,
+    index: int,
+) -> list[tuple[str, list[str], str, float]]:
+    slide_xml = archive.read(slide_name)
+    sources: list[tuple[str, list[str], str, float]] = [
+        (
+            f"{rel}#slide{index}",
+            pptx_slide_paragraphs(slide_xml),
+            "pptx_slide_explicit_paths",
+            0.85,
+        )
+    ]
+    alt_texts = pptx_alt_texts(slide_xml)
+    if alt_texts:
+        sources.append((
+            f"{rel}#slide{index}:alt_text",
+            alt_texts,
+            "pptx_alt_text_explicit_paths",
+            0.75,
+        ))
+    notes_name = pptx_notes_for_slide(archive, slide_name)
+    if notes_name:
+        notes_paragraphs = pptx_slide_paragraphs(archive.read(notes_name))
+        if notes_paragraphs:
+            sources.append((
+                f"{rel}#slide{index}:speaker_notes",
+                notes_paragraphs,
+                "pptx_notes_explicit_paths",
+                0.80,
+            ))
+    return sources
+
+
+def parse_pptx_manifest(path: Path, package: Path, files: dict[str, list[str]]) -> tuple[list[dict[str, Any]], list[str]]:
+    rel = str(path.relative_to(package))
+    warnings: list[str] = []
+    links: list[dict[str, Any]] = []
+    try:
+        with zipfile.ZipFile(path) as archive:
+            slide_names = sorted(
+                [
+                    name for name in archive.namelist()
+                    if re.match(r"ppt/slides/slide\d+\.xml$", name)
+                ],
+                key=pptx_slide_sort_key,
+            )
+            for index, slide_name in enumerate(slide_names, start=1):
+                for evidence_source, paragraphs, extraction_method, confidence in pptx_text_sources_for_slide(
+                    archive,
+                    slide_name,
+                    rel,
+                    index,
+                ):
+                    if not paragraphs:
+                        continue
+                    for paragraph in paragraphs:
+                        links.extend(
+                            extract_line_links(
+                                paragraph,
+                                files,
+                                evidence_source,
+                                extraction_method=extraction_method,
+                                confidence=confidence,
+                            )
+                        )
+                    combined_text = "\n".join(paragraphs)
+                    links.extend(
+                        extract_line_links(
+                            combined_text,
+                            files,
+                            evidence_source,
+                            extraction_method=extraction_method,
+                            confidence=confidence,
+                        )
+                    )
+    except Exception as exc:  # noqa: BLE001 - parser warnings should not abort the audit.
+        warnings.append(f"{rel} could not be parsed as PPTX assembly text: {exc.__class__.__name__}")
+        return [], warnings
+    if not links:
+        warnings.append(f"{rel} did not contain explicit figure-to-source path pairs in slide text, alt text, or speaker notes.")
+    return links, warnings
 
 
 def ordered_mapping_warning(text: str, evidence_source: str) -> str | None:
@@ -276,6 +442,7 @@ def parse_package(package: Path) -> dict[str, Any]:
     warnings = list(file_index_warnings)
     structured_files = manifest_files(package, STRUCTURED_SUFFIXES, files)
     text_files = [] if structured_files else manifest_files(package, TEXT_SUFFIXES, files)
+    pptx_files = [] if structured_files else manifest_files(package, PPTX_SUFFIXES, files)
 
     for manifest in structured_files:
         rel = str(manifest.relative_to(package))
@@ -294,6 +461,13 @@ def parse_package(package: Path) -> dict[str, Any]:
         if warning:
             warnings.append(warning)
 
+    for manifest in pptx_files:
+        rel = str(manifest.relative_to(package))
+        parsed_files.append(rel)
+        extracted, pptx_warnings = parse_pptx_manifest(manifest, package, files)
+        links.extend(extracted)
+        warnings.extend(pptx_warnings)
+
     seen = set()
     unique_links = []
     for link in links:
@@ -306,7 +480,7 @@ def parse_package(package: Path) -> dict[str, Any]:
         warnings.append("No figure_assembly manifest files were supplied.")
     return {
         "parser": "provenance.parse_assembly_manifest",
-        "parser_version": "0.3.3",
+        "parser_version": "0.5.0",
         "package": str(package),
         "parsed_files": parsed_files,
         "links": unique_links,

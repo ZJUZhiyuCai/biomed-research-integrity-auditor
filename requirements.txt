@@ -1,5 +1,6 @@
 Pillow>=10.0
 numpy>=2.0
+opencv-python-headless>=4.10,<6
 PyYAML>=6.0
 jsonschema>=4.0
 openpyxl>=3.1

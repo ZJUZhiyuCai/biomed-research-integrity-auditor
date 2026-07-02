@@ -28,7 +28,7 @@ from scripts.csv_safety import csv_safe_row  # noqa: E402
 from detectors.text.text_overlap_screen import read_text  # noqa: E402
 
 
-TEXT_EXTS = {".txt", ".md", ".pdf"}
+TEXT_EXTS = {".txt", ".md", ".pdf", ".docx"}
 DOI_RE = re.compile(r"\b10\.\d{4,9}/[-._;()/:A-Z0-9]+", re.I)
 PLACEHOLDER_RE = re.compile(r"\b(TODO|TBD|XXX|INSERT|PLACEHOLDER|AUTHOR QUERY)\b", re.I)
 FIGURE_REF_RE = re.compile(r"\b(?:Fig\.?|Figure)\s+([A-Za-z0-9]+)", re.I)

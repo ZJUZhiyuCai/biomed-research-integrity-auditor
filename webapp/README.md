@@ -66,12 +66,52 @@ Included:
   explicitly marked as narrower-scope runs when expensive deep image screening is skipped.
 - Package prep tools: inspect a local package, create the recommended folder scaffold, and write
   `figure_assembly/assembly_manifest.csv` rows for declared figure-to-source relationships.
+- Claim-manifest prep tools: write package-root `claim_manifest.csv` rows that link manuscript
+  claims to source data, raw records, analysis code, and protocols. These rows support claim
+  coverage only and do not prove that claims are true.
+- Filename-based starter suggestions for package-prep manifests. These suggestions reduce typing
+  for likely figure/source links and claim drafts, including simple zero-padding and separator
+  differences such as `Fig 02-A` versus `F2A`, but they are not saved automatically and remain
+  declarations requiring audit cross-checks when saved. When filename matching finds multiple
+  equally plausible records, the app shows a material-prep warning and does not draft a row.
+- PPTX slide text, speaker notes, and shape alt text with explicit figure/source paths are surfaced
+  in Package Prep and may seed editable `assembly_manifest.csv` and claim drafts through the same
+  structure intake that writes `pptx_structure.json`; they remain declaration aids, not verified
+  provenance.
+- Prism PZFX graph/table hints are surfaced in Package Prep and may seed editable graph-to-source
+  drafts; they remain manifest-preparation hints, not verified provenance.
+- Machine-readable PDF captions are surfaced in Package Prep and may seed editable claim drafts
+  with figure/table labels and page locations; they do not create source/raw links by themselves.
+- DOCX caption-styled figure/table text and Word table-like blocks are surfaced in Package Prep
+  through the same structure intake that writes `docx_structure.json`, and may seed editable
+  claim drafts; they do not create source/raw links by themselves. If a DOCX contains comments,
+  tracked revisions, or embedded objects/media, Package Prep shows a warning because those layers
+  are not read as body/caption/table evidence.
+- XLSX workbook sheet/header metadata is surfaced in Package Prep through the same structure
+  intake that writes `xlsx_structure.json`; figure/table-like sheet labels may seed editable
+  claim drafts. This is material-prep metadata, not statistical validation or verified provenance.
 - Package-prep guardrails: bounded directory inventory, visible scan warnings, package-relative
-  path checks, and relation/source-role validation before manifest rows are written.
+  path checks, relation/source-role validation, and CSV formula-injection escaping before manifest
+  rows are written.
 - CLI-generated submission-QC artifacts are available in each audit output directory, including
   `audit_snapshot.json`, `claim_coverage.*`, `unresolved_actions.csv`, and `submission_qc_packet/`.
 - The report view surfaces claim coverage, unresolved action trackers, re-audit diffs, QC-packet
-  download links, correction-plan trackers, and a separate Writing & Submission Readiness panel.
+  download links, correction-plan trackers, external image-review handoff rows, and a separate
+  Writing & Submission Readiness panel.
+- Re-audit diff cards show fixed/new/persisted findings plus resolved, newly missing, and still
+  missing materials; these are remediation-tracking views, not pass/fail status.
+- Action tracker rows can be edited locally with owner, status, note, accepted-reason, and
+  attachment-reference fields. The attachment reference is a local follow-up pointer such as a
+  file path or link and is mirrored in correction-plan exports; it is not an upload, external
+  verification, or pass/fail signal.
+- Each action row surfaces copy-ready neutral inquiry and material-request templates when the
+  CLI generated them, so teams can ask for clarification or source records without changing the
+  calibrated audit result.
+- Image-review handoff rows are linked to action-tracker rows when `source_finding_id` is available,
+  so teams can see the current owner/status/attachment reference next to the external-review route.
+- Image-review tracker rows can be edited locally with reviewer, review status, tool/method,
+  result note, and attachment reference. The update is written back to the QC packet CSVs; it is
+  still a team follow-up record, not external validation by itself.
 
 Not included yet:
 

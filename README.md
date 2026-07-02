@@ -71,7 +71,7 @@ The default mode is `--mode internal_presubmission`. Also available: `external_p
 
 **The report** (human-facing):
 
-- `audit-report.md` — bilingual Markdown report: Quick Read, submission-readiness status, action queue, coverage, materials needed, finding cards, technical appendix.
+- `audit-report.md` — bilingual Markdown report. The first page leads with Quick Read, Scope, Must Resolve, and Materials Needed; workflow status, action queue, coverage, finding cards, and technical appendix follow.
 
 **Structured evidence** (machine-readable):
 
@@ -81,12 +81,26 @@ The default mode is `--mode internal_presubmission`. Also available: `external_p
 - `claim_coverage.json` / `.csv` — claim-to-evidence coverage (when `claim_manifest.csv` is supplied).
 - `methodology_checklist.json` / `.csv` — readiness prompts for ARRIVE, CONSORT, ICMJE, MIFlowCyt, omics.
 - `writing_readiness.json` / `.csv` — language/submission prep prompts (does not affect R0–R4).
+- `docx_structure.json` — best-effort DOCX body paragraph, caption-like paragraph, and Word-table extraction for intake review and claim-manifest preparation, with warnings when comments, tracked revisions, or embedded objects/media are present; this is not provenance proof.
+- `pdf_structure.json`, `pdf_embedded_images.json`, `pdf_embedded_images/` — best-effort PDF caption/table-like text extraction plus embedded raster-image export for intake review; PDF-derived images are presentation-layer artifacts, not raw records.
+- `xlsx_structure.json` — best-effort XLSX workbook/sheet metadata, headers, formula counts, merged cells, and hidden-sheet indexing for source-data preparation; this is not statistical validation.
+- `prism_project_intake.json` — best-effort GraphPad Prism PZFX table/graph metadata and possible graph-to-table hints for manifest preparation; these hints are not verified provenance.
+- `fcs_metadata_intake.json` — best-effort FCS event/channel/instrument metadata for flow material review; this is not gating, compensation, or population-frequency validation.
+- `pptx_structure.json` — best-effort PPTX slide text, speaker-note text, shape alt text, package-relative path mentions, and explicit figure/source path-pair extraction for assembly-manifest preparation; this is not provenance proof.
+- `pptx_embedded_images.json`, `pptx_embedded_images/` — best-effort export of raster images embedded in PPTX assembly files; PPTX-derived images are presentation-layer artifacts, not raw records.
+- `key_embedded_images.json`, `key_embedded_images/` — best-effort export of raster images embedded in zip-based Keynote `.key` files; Keynote-derived images are presentation-layer artifacts, not raw records.
+- `psd_preview_images.json`, `psd_preview_images/` — best-effort export of flattened PSD previews when the file can be decoded; PSD previews are presentation-layer artifacts, not raw records or layer provenance.
+- `image_metadata.json` — best-effort frame/channel/Z/T and OME/TIFF metadata intake for supplied image files; this supports manual review of multi-channel/Z-stack context but is not an authenticity check.
+- `channel_metadata_candidates.json` — checks declared same-field/different-channel relationships against available image metadata; missing acquisition/channel metadata is reported as an R1 verification gap, not as an image-integrity verdict.
+- `splice_forensics_candidates.json` — weak ELA/JPEG residual, JPEG-ghost profile, noise-map, and CFA-like grid triage prompts for exported image panels; these are R2-capped review prompts, not splice/manipulation conclusions, robust JPEG-ghost analysis, or sensor-pattern authentication.
+- `submission_qc_packet/image_review_packet/` — image-candidate target list, `external_tool_handoff.csv`/`.md`, and editable `image_review_tracker.csv` for ImageTwin/Proofig or manual figure review, with hashes, candidate metrics, review questions, data-governance notes, and copied crop evidence when available; it is not an external-search result or verdict.
 
 **Team workflow**:
 
-- `unresolved_actions.csv`, `resolved_actions.csv`, `accepted_with_reason.csv` — action trackers.
+- `unresolved_actions.csv`, `resolved_actions.csv`, `accepted_with_reason.csv` — action trackers with owner/status fields and copy-ready neutral inquiry/material-request templates for each finding-derived action.
 - `correction_plan.md` / `.csv` — pre-submission correction-plan tracker.
-- `submission_qc_packet/` — a leave-behind packet containing the report, coverage, trackers, verified traceability, file hashes, and an author sign-off template.
+- `submission_qc_packet/` — a leave-behind packet containing the report, coverage, trackers, verified traceability, file hashes, audience-specific editable drafts, an image-review packet when image files are present, and an author sign-off template.
+- `submission_qc_packet/audience_exports/` — editable `PI_BRIEF.md`, `COAUTHOR_ACTIONS.md`, and `JOURNAL_RESPONSE_DRAFT.md` generated from the neutral action queue.
 
 ---
 
@@ -133,9 +147,9 @@ Use `--scan-profile` to control speed and depth:
 
 | Profile | Use case | What changes |
 | --- | --- | --- |
-| `quick` | First-pass drag-and-check | Fast source/text/global-image screens; skips local-patch deep image screening and external phrase search. |
-| `standard` | Default pre-submission QC | Balanced detector set; exports submission QC packet. |
-| `deep` | Focused recheck or response-to-concern | Stricter image similarity thresholds; records deep-profile parameters in coverage. |
+| `quick` | First-pass drag-and-check | Fast source/text/global-image screens; skips keypoint/local-patch deep image screening and external phrase search. |
+| `standard` | Default pre-submission QC | Balanced detector set, including keypoint geometric image screening; exports submission QC packet. |
+| `deep` | Focused recheck or response-to-concern | More sensitive image similarity settings; records deep-profile parameters in coverage. |
 
 ### Claim-to-evidence manifest
 
@@ -155,10 +169,11 @@ After fixing gaps, compare two audit outputs:
 ```bash
 biomed-audit-diff audit_outputs/v1 audit_outputs/v2 \
   --output audit_outputs/v2/re_audit_diff.json \
-  --csv audit_outputs/v2/re_audit_diff.csv
+  --csv audit_outputs/v2/re_audit_diff.csv \
+  --markdown audit_outputs/v2/re_audit_diff.md
 ```
 
-Or pass `--compare-to audit_outputs/v1` during the second run. The diff reports changes in risk counts, missing materials, traceability, unresolved actions, and claim-evidence gaps.
+Or pass `--compare-to audit_outputs/v1` during the second run. The diff reports changes in risk counts, missing materials, traceability, unresolved actions, claim-evidence gaps, and finding movement (`no longer listed`, `new`, `still present`). `re_audit_diff.md` is the human-readable version; the web app also surfaces the fixed/new/persisted lists.
 
 ### Local web app
 
@@ -177,7 +192,9 @@ cd webapp/frontend && npm install && npm run build && cd ../..
 biomed-audit-web
 ```
 
-The web app wraps the same pipeline as the CLI, keeps Audit Coverage visible, and provides local package-prep tools for folder layout and `assembly_manifest.csv` creation. See [`webapp/README.md`](webapp/README.md).
+The web app wraps the same pipeline as the CLI, keeps Audit Coverage visible, and provides local package-prep tools for folder layout, filename-based manifest starter suggestions, `assembly_manifest.csv`, and `claim_manifest.csv` creation. Filename suggestions normalize simple zero-padding and separator differences such as `Fig 02-A` versus `F2A`, but remain typing aids only; ambiguous matches are shown as warnings instead of being auto-linked. See [`webapp/README.md`](webapp/README.md).
+
+PPTX figure-assembly files are also useful when slide text, speaker notes, or shape alt text explicitly name figure panels and raw/source records. The pipeline writes `pptx_structure.json` with those text layers, path mentions, and explicit path pairs for manifest preparation; those text-level links can become traceability evidence only after the provenance parser and calibrator handle them. Embedded PPTX and zip-based Keynote images are exported for intake review under `pptx_embedded_images/` or `key_embedded_images/`, and decodable PSD files can export flattened previews under `psd_preview_images/`. These preview/export artifacts are not automatically treated as exported figure panels, raw records, layer provenance, or provenance proof. PSD layers/masks/history and opaque assembly containers such as `.ai`, `.indd`, and legacy `.ppt` are inventoried as R1 coverage gaps requiring panel exports and manual review.
 
 Source-checkout fallback: `python -m webapp`.
 
@@ -197,17 +214,25 @@ Source-checkout fallback: `python -m webapp`.
 
 ### Image screening
 
-Image, local-patch, and same-image copy-move detection work within a single package only — they do not search across papers or external corpora. The detectors do not cover arbitrary-angle rotation, perspective warps, elastic deformation, substantial rescaling, splice forensics (JPEG ghost, CFA/noise inconsistency), or lighting/shadow inconsistency. Reports explicitly state this boundary.
+Image, keypoint-geometric, local-patch, same-image copy-move, and weak splice-forensics triage work within a single package only — they do not search across papers or external corpora. Standard/deep scans include OpenCV ORB keypoint matching with RANSAC homography for rotated, rescaled, cropped, or perspective-shifted similarity candidates, plus weak ELA/JPEG residual, JPEG-ghost profile, noise-map, and CFA-like grid prompts for localized export/residual anomalies. The detectors still do not cover elastic/nonrigid deformation, severe perspective distortion, very low-feature images beyond ORB/RANSAC limits, specialist sensor-pattern authentication beyond weak CFA-like grid triage, robust JPEG ghost analysis beyond weak recompression-profile prompts, or lighting/shadow inconsistency. Reports explicitly state this boundary, and the QC packet creates an external-tool handoff sheet for ImageTwin/Proofig/manual specialist review when image candidates are present.
 
-For large packages, local-patch screening uses runtime tile/comparison budgets. If a budget is reached, the report records an R1 coverage gap and recommends a focused deep scan.
+Declared same-field/different-channel relationships are cross-checked against available frame/channel/OME metadata. If the package only contains exported single-channel panels with no acquisition metadata, the report records an R1 material-verification gap and asks for the raw multichannel file, channel map, or assembly record.
+
+For large packages, keypoint and local-patch screening use runtime pair/tile/comparison budgets. If a budget is reached, the report records an R1 coverage gap and recommends a focused deep scan.
 
 ### Statistical screening
 
 Covers SD/SEM/n consistency, p-value range, integer-count feasibility, and sample-gated weak distributional prompts (Benford-style first-digit ≥ 30 values, p-value clustering ≥ 20 values, digit/rounding ≥ 8 values, integer-count n ≥ 6). These weak screens use minimum sample-size gates and are automated triage only when those gates are met — they are not standalone evidence.
 
-### Text, reference, and PDF
+Source-data intake supports CSV/TSV/XLSX and basic GraphPad Prism `.pzfx` XML column tables. The pipeline also writes `xlsx_structure.json` to index workbook/sheet metadata, headers, formulas, merged cells, hidden sheets, and figure/table-like sheet labels for material preparation. This workbook index is not statistical validation and does not prove source-to-figure provenance. The pipeline also writes `prism_project_intake.json` to index parseable PZFX table/graph metadata and possible graph-to-table hints for manifest preparation. Those hints are not verified figure provenance; complex or unparseable Prism projects are reported as R1 extraction gaps and should be exported to CSV/XLSX before relying on statistical coverage.
 
-Text overlap screening is package-internal; optional external phrase search is triage, not exhaustive plagiarism coverage. Reference checking is opt-in and limited to DOI/reference metadata prompts via Crossref-style lookups. True-PDF intake handles machine-readable text and OCR-capable scanned PDFs; figure/caption extraction is limited. Public-material review is capped by missing source records and must never be read as a misconduct verdict.
+Flow cytometry intake writes `fcs_metadata_intake.json` when FCS files are supplied. It indexes event counts, channel/marker labels, cytometer fields, dates, and compensation-keyword presence for MIFlowCyt-oriented material review. It does not reconstruct gates, validate compensation, or verify reported population percentages; supply workspace/gating files, controls, source tables, and analysis exports for a complete flow review.
+
+### Text, reference, DOCX, and PDF
+
+Text overlap screening is package-internal; optional external phrase search is triage, not exhaustive plagiarism coverage. Reference checking is opt-in and limited to DOI/reference metadata prompts via Crossref-style lookups. True-PDF intake handles machine-readable text and OCR-capable scanned PDFs. The pipeline also writes `docx_structure.json` for DOCX body/caption/table structure, `pdf_structure.json` with best-effort caption-like/table-like text blocks, `pdf_embedded_images.json` plus `pdf_embedded_images/` exports for embedded raster images, and `psd_preview_images.json` plus `psd_preview_images/` when PSD flattened previews can be decoded. DOCX/PDF/PSD-derived structure or preview artifacts are intake aids, not raw records, layer provenance, or provenance proof; public-material review is capped by missing source records and must never be read as a misconduct verdict.
+
+DOCX manuscript/protocol intake reads body paragraphs, caption-styled paragraphs, and table cell text for text-overlap, writing-readiness, and material-prep/claim-manifest suggestions. It records warnings when Word comments, tracked revisions, or embedded objects/media are present, but it does not copy comment text, resolve track changes, extract embedded object contents, or prove figure-source provenance. Legacy `.doc` files still require export to DOCX, machine-text PDF, TXT, or MD.
 
 ---
 

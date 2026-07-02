@@ -3,7 +3,17 @@
 // FastAPI app mounts the built dist/). No contract changes here — we only
 // consume existing endpoints, including the previously-unused zip upload.
 
-import type { ActionTrackerRow, AuditJob, HealthResponse, ManifestRow, PackageInventory, SummaryPayload } from "./types";
+import type {
+  ActionTrackerRow,
+  AuditJob,
+  ClaimManifestRow,
+  HealthResponse,
+  ImageReviewHandoffRow,
+  ImageReviewPacketSummary,
+  ManifestRow,
+  PackageInventory,
+  SummaryPayload
+} from "./types";
 
 async function api<T>(path: string, options?: RequestInit): Promise<T> {
   const response = await fetch(path, {
@@ -48,11 +58,30 @@ export const cancelAudit = (id: string) =>
 export const updateAction = (
   auditId: string,
   actionId: string,
-  patch: Pick<ActionTrackerRow, "owner" | "status" | "human_note" | "accepted_with_reason">
+  patch: Pick<ActionTrackerRow, "owner" | "status" | "human_note" | "accepted_with_reason" | "attachment_reference">
 ) =>
   api<{ action_trackers: { unresolved: ActionTrackerRow[]; resolved: ActionTrackerRow[]; accepted_with_reason: ActionTrackerRow[] } }>(
     `/api/audits/${auditId}/actions/${encodeURIComponent(actionId)}`,
     { method: "PATCH", body: JSON.stringify(patch) }
+  );
+
+export const updateImageReview = (
+  auditId: string,
+  reviewItemId: string,
+  patch: Pick<ImageReviewHandoffRow, "reviewer" | "review_status" | "external_tool_or_method" | "review_result_note" | "attachment_reference">
+) =>
+  api<{ image_review_packet: ImageReviewPacketSummary }>(
+    `/api/audits/${auditId}/image-review/${encodeURIComponent(reviewItemId)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({
+        review_owner: patch.reviewer,
+        review_status: patch.review_status,
+        external_tool_or_method: patch.external_tool_or_method,
+        review_result_note: patch.review_result_note,
+        attachment_reference: patch.attachment_reference
+      })
+    }
   );
 
 export const inspectPackage = (packagePath: string) =>
@@ -70,6 +99,15 @@ export const scaffoldPackage = (packagePath: string) =>
 export const saveAssemblyManifest = (packagePath: string, rows: ManifestRow[]) =>
   api<{ manifest_path: string; rows_written: number; inventory: PackageInventory }>(
     "/api/packages/assembly-manifest",
+    {
+      method: "POST",
+      body: JSON.stringify({ package_path: packagePath, rows })
+    }
+  );
+
+export const saveClaimManifest = (packagePath: string, rows: ClaimManifestRow[]) =>
+  api<{ manifest_path: string; rows_written: number; inventory: PackageInventory }>(
+    "/api/packages/claim-manifest",
     {
       method: "POST",
       body: JSON.stringify({ package_path: packagePath, rows })

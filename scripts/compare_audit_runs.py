@@ -13,7 +13,12 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from scripts.submission_qc import build_re_audit_diff, write_json, write_re_audit_diff_csv  # noqa: E402
+from scripts.submission_qc import (  # noqa: E402
+    build_re_audit_diff,
+    write_json,
+    write_re_audit_diff_csv,
+    write_re_audit_diff_markdown,
+)
 
 
 def main() -> int:
@@ -22,6 +27,7 @@ def main() -> int:
     parser.add_argument("current_output_dir", type=Path)
     parser.add_argument("--output", type=Path, default=Path("re_audit_diff.json"))
     parser.add_argument("--csv", type=Path, default=Path("re_audit_diff.csv"))
+    parser.add_argument("--markdown", type=Path, default=Path("re_audit_diff.md"))
     args = parser.parse_args()
 
     previous = args.previous_output_dir.expanduser().resolve()
@@ -34,9 +40,11 @@ def main() -> int:
     diff = build_re_audit_diff(previous, current)
     write_json(args.output, diff)
     write_re_audit_diff_csv(args.csv, diff)
+    write_re_audit_diff_markdown(args.markdown, diff)
     print(json.dumps({
         "output": str(args.output),
         "csv": str(args.csv),
+        "markdown": str(args.markdown),
         "previous_overall_risk": diff["overall_risk"]["previous"],
         "current_overall_risk": diff["overall_risk"]["current"],
     }, indent=2))

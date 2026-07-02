@@ -31,11 +31,106 @@ export interface ManifestRow {
   notes?: string;
 }
 
+export interface ClaimManifestRow {
+  claim_id: string;
+  claim_text: string;
+  manuscript_location?: string;
+  figure_or_table?: string;
+  source_data?: string;
+  raw_record?: string;
+  analysis_code?: string;
+  protocol?: string;
+  owner?: string;
+  status?: string;
+}
+
 export interface AssemblyManifestInventory {
   path: string | null;
   rows: ManifestRow[];
   row_count: number;
   warnings?: string[];
+}
+
+export interface ClaimManifestInventory {
+  path: string | null;
+  rows: ClaimManifestRow[];
+  row_count: number;
+  warnings?: string[];
+}
+
+export interface ManifestSuggestionRow extends ManifestRow {
+  suggestion_reason?: string;
+}
+
+export interface ClaimManifestSuggestionRow extends ClaimManifestRow {
+  suggestion_reason?: string;
+}
+
+export interface PrismGraphTableSuggestion {
+  source_pzfx: string;
+  graph_id?: string;
+  graph_title?: string;
+  table_id?: string;
+  table_title?: string;
+  match_basis?: string;
+  interpretation?: string;
+}
+
+export interface PdfCaptionSuggestion {
+  caption_id?: string;
+  path: string;
+  page?: string;
+  kind?: string;
+  label?: string;
+  text?: string;
+  source_type?: string;
+}
+
+export interface PdfTableBlockSuggestion {
+  block_id?: string;
+  path: string;
+  page?: string;
+  row_count?: string;
+  column_count_estimate?: string;
+}
+
+export interface PptxLinkSuggestion {
+  figure_panel: string;
+  source_record: string;
+  evidence_source?: string;
+  relation_type?: string;
+  interpretation?: string;
+}
+
+export interface XlsxSheetSuggestion {
+  source_xlsx: string;
+  sheet_name: string;
+  suggested_label?: string;
+  header_row?: string;
+  headers?: string[];
+  data_rows_scanned?: string;
+  row_scan_capped?: boolean;
+  interpretation?: string;
+}
+
+export interface MaterialPrepSuggestions {
+  assembly_rows: ManifestSuggestionRow[];
+  claim_rows: ClaimManifestSuggestionRow[];
+  prism_graph_table_links?: PrismGraphTableSuggestion[];
+  prism_errors?: string[];
+  pdf_captions?: PdfCaptionSuggestion[];
+  pdf_table_like_blocks?: PdfTableBlockSuggestion[];
+  pdf_errors?: string[];
+  docx_captions?: PdfCaptionSuggestion[];
+  docx_table_like_blocks?: PdfTableBlockSuggestion[];
+  docx_warnings?: string[];
+  docx_errors?: string[];
+  pptx_links?: PptxLinkSuggestion[];
+  pptx_warnings?: string[];
+  xlsx_sheets?: XlsxSheetSuggestion[];
+  xlsx_errors?: string[];
+  filename_match_warnings?: string[];
+  scope_note?: string;
 }
 
 export interface PackageInventory {
@@ -45,9 +140,13 @@ export interface PackageInventory {
   files_by_role: Record<string, string[]>;
   file_counts: Record<string, number>;
   assembly_manifest: AssemblyManifestInventory;
+  claim_manifest?: ClaimManifestInventory;
   relation_types: string[];
   relation_allowed_source_roles?: Record<string, string[]>;
   modality_options?: string[];
+  claim_manifest_columns?: string[];
+  claim_status_options?: string[];
+  material_prep_suggestions?: MaterialPrepSuggestions;
   inventory_warnings?: string[];
   scan_limit_reached?: boolean;
   scan_limits?: {
@@ -93,6 +192,9 @@ export interface ActionTrackerRow {
   status?: string;
   human_note?: string;
   accepted_with_reason?: string;
+  attachment_reference?: string;
+  neutral_inquiry_template?: string;
+  material_request_template?: string;
   source?: string;
   [key: string]: string | undefined;
 }
@@ -109,6 +211,7 @@ export interface CorrectionPlanRow {
   required_correction?: string;
   owner?: string;
   evidence_after_correction?: string;
+  attachment_reference?: string;
   status?: string;
   source_action_id?: string;
   [key: string]: string | undefined;
@@ -133,12 +236,60 @@ export interface ReAuditDiff {
     new?: Array<Record<string, unknown>>;
     persisted?: Array<Record<string, unknown>>;
   };
+  material_changes?: {
+    resolved_count?: number;
+    new_count?: number;
+    persisted_count?: number;
+    resolved?: string[];
+    new?: string[];
+    persisted?: string[];
+  };
   [key: string]: unknown;
+}
+
+export interface ImageReviewHandoffRow {
+  handoff_item_id?: string;
+  review_item_id?: string;
+  source_finding_id?: string;
+  priority?: string;
+  finding_type?: string;
+  risk_level?: string;
+  candidate_files?: string;
+  evidence_files?: string;
+  recommended_tool_route?: string;
+  review_question?: string;
+  supporting_context?: string;
+  data_governance_note?: string;
+  review_status?: string;
+  reviewer?: string;
+  external_tool_or_method?: string;
+  review_result_note?: string;
+  attachment_reference?: string;
+  external_result_reference?: string;
+  linked_action_id?: string;
+  linked_action_status?: string;
+  linked_action_owner?: string;
+  linked_action_attachment_reference?: string;
+  linked_action_bucket?: string;
+  [key: string]: string | undefined;
+}
+
+export interface ImageReviewPacketSummary {
+  available?: boolean;
+  files?: string[];
+  candidate_count?: number;
+  external_handoff_count?: number;
+  handoff_rows?: ImageReviewHandoffRow[];
+  external_tool_handoff_csv?: string;
+  external_tool_handoff_guide?: string;
+  tracker_csv?: string;
 }
 
 export interface SubmissionQCPacket {
   available?: boolean;
   files?: string[];
+  audience_exports?: Record<string, string>;
+  image_review_packet?: ImageReviewPacketSummary;
   download_url?: string | null;
 }
 
@@ -178,6 +329,19 @@ export interface Coverage {
   image_panels_screened?: number;
   image_files_unreadable?: number;
   source_tables_screened?: number;
+  prism_tables_indexed?: number;
+  prism_graphs_indexed?: number;
+  prism_possible_graph_table_links?: number;
+  fcs_files_read?: number;
+  fcs_files_unreadable?: number;
+  fcs_total_events_reported?: number;
+  fcs_parameters_indexed?: number;
+  splice_forensics_images_screened?: number;
+  splice_forensics_candidates?: number;
+  channel_metadata_declarations_checked?: number;
+  channel_metadata_verification_gaps?: number;
+  psd_preview_images_extracted?: number;
+  psd_preview_image_error_count?: number;
   detector_failures?: string[];
   audit_coverage_gap?: boolean;
   external_literature_provider?: string | null;

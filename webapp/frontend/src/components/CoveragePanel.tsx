@@ -34,6 +34,13 @@ export function CoveragePanel({
         <Metric label={t.coverageImages} value={coverage.image_panels_screened ?? 0} />
         <Metric label={t.coverageUnreadable} value={coverage.image_files_unreadable ?? 0} />
         <Metric label={t.coverageTables} value={coverage.source_tables_screened ?? 0} accent />
+        <Metric label={t.coveragePrismLinks} value={coverage.prism_possible_graph_table_links ?? 0} />
+        <Metric label={t.coverageFcsFiles} value={coverage.fcs_files_read ?? 0} />
+        <Metric label={t.coverageSpliceChecks} value={coverage.splice_forensics_images_screened ?? 0} />
+        <Metric label={t.coverageSpliceSignals} value={coverage.splice_forensics_candidates ?? 0} />
+        <Metric label={t.coverageChannelChecks} value={coverage.channel_metadata_declarations_checked ?? 0} />
+        <Metric label={t.coverageChannelGaps} value={coverage.channel_metadata_verification_gaps ?? 0} />
+        <Metric label={t.coveragePsdPreviews} value={coverage.psd_preview_images_extracted ?? 0} />
       </div>
       <div className="coverage-columns">
         <ListBlock title={t.executed} rows={executed} />

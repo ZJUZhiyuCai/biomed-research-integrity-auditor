@@ -3,7 +3,16 @@
 // neutral counts only — never a score or verdict.
 
 import { CircleStop, RefreshCw, Trash2 } from "lucide-react";
-import type { ActionTrackerRow, AuditJob, ExamplePackage, ManifestRow, PackageInventory, SummaryPayload } from "../types";
+import type {
+  ActionTrackerRow,
+  AuditJob,
+  ClaimManifestRow,
+  ExamplePackage,
+  ImageReviewHandoffRow,
+  ManifestRow,
+  PackageInventory,
+  SummaryPayload
+} from "../types";
 import type { Labels } from "../i18n";
 import { CoveragePanel } from "./CoveragePanel";
 import { FindingsPanel } from "./FindingsPanel";
@@ -30,13 +39,18 @@ interface WorkspaceProps {
   onInspectPackage: () => void;
   onScaffoldPackage: () => void;
   onSaveManifest: (rows: ManifestRow[]) => Promise<void>;
+  onSaveClaimManifest: (rows: ClaimManifestRow[]) => Promise<void>;
   onRunExample: (example: ExamplePackage) => Promise<void>;
   onRefresh: () => void;
   onDelete: () => void;
   onCancel: () => void;
   onActionUpdate: (
     actionId: string,
-    patch: Pick<ActionTrackerRow, "owner" | "status" | "human_note" | "accepted_with_reason">
+    patch: Pick<ActionTrackerRow, "owner" | "status" | "human_note" | "accepted_with_reason" | "attachment_reference">
+  ) => Promise<void>;
+  onImageReviewUpdate: (
+    reviewItemId: string,
+    patch: Pick<ImageReviewHandoffRow, "reviewer" | "review_status" | "external_tool_or_method" | "review_result_note" | "attachment_reference">
   ) => Promise<void>;
   onEvidence: (images: string[], index: number) => void;
 }
@@ -60,6 +74,7 @@ export function Workspace(props: WorkspaceProps) {
           onInspect={props.onInspectPackage}
           onScaffold={props.onScaffoldPackage}
           onSaveManifest={props.onSaveManifest}
+          onSaveClaimManifest={props.onSaveClaimManifest}
         />
         {error && <div className="error-box">{error}</div>}
         <EmptyState text={t.noSelection} />
@@ -105,6 +120,7 @@ export function Workspace(props: WorkspaceProps) {
         onInspect={props.onInspectPackage}
         onScaffold={props.onScaffoldPackage}
         onSaveManifest={props.onSaveManifest}
+        onSaveClaimManifest={props.onSaveClaimManifest}
       />
 
       <header className="audit-header">
@@ -207,6 +223,7 @@ export function Workspace(props: WorkspaceProps) {
             qcPacket={detail.submission_qc_packet}
             writingReadiness={detail.writing_readiness}
             onActionUpdate={props.onActionUpdate}
+            onImageReviewUpdate={props.onImageReviewUpdate}
             t={t}
           />
           <MethodologyPanel checklist={detail.audit_summary?.methodology_checklist} t={t} />

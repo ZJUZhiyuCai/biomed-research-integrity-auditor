@@ -68,10 +68,24 @@ MODULE_LABELS = {
     "text.external_literature_search": ("External phrase-search triage", "外部短语检索初筛"),
     "audit.coverage": ("Audit coverage check", "审计覆盖检查"),
     "image_global_near_duplicate": ("Global near-duplicate image screen", "整图近重复图像筛查"),
+    "image_keypoint_geometric_match": ("Keypoint geometric image screen", "Keypoint 几何图像筛查"),
+    "image_splice_forensics_triage": ("Weak splice-forensics triage", "弱拼接取证提示筛查"),
     "image_local_patch_and_same_image_copy_move": ("Local patch and copy-move image screen", "局部 patch 与同图复制移动筛查"),
     "statistics_consistency": ("Statistical consistency screen", "统计一致性筛查"),
     "pseudoreplication": ("Unit-of-analysis screen", "分析单位/伪重复筛查"),
+    "xlsx_workbook_structure_intake": ("XLSX workbook structure intake", "XLSX workbook 结构读取"),
+    "prism_project_intake": ("GraphPad Prism project intake", "GraphPad Prism 项目读取"),
+    "flow_fcs_metadata_intake": ("Flow/FCS metadata intake", "Flow/FCS metadata 读取"),
     "package_internal_text_overlap": ("Package-internal text-overlap screen", "包内文本重叠筛查"),
+    "docx_caption_table_structure_extraction": ("DOCX paragraph/caption/table structure extraction", "DOCX 段落/图注/表格结构抽取"),
+    "pdf_caption_table_structure_extraction": ("PDF caption/table structure extraction", "PDF 图注/表格结构抽取"),
+    "pdf_embedded_image_extraction": ("PDF embedded-image extraction", "PDF 内嵌图片导出"),
+    "pptx_slide_text_path_structure_extraction": ("PPTX text/path structure extraction", "PPTX 文本/路径结构抽取"),
+    "pptx_embedded_image_extraction": ("PPTX embedded-image extraction", "PPTX 内嵌图片导出"),
+    "key_embedded_image_extraction": ("Keynote embedded-image extraction", "Keynote 内嵌图片导出"),
+    "psd_flattened_preview_extraction": ("PSD flattened-preview extraction", "PSD 扁平预览导出"),
+    "image_frame_channel_metadata_intake": ("Image frame/channel metadata intake", "图像帧/通道 metadata 读取"),
+    "image_channel_metadata_consistency": ("Same-field channel metadata consistency check", "同视野通道 metadata 一致性核验"),
     "methodology_readiness_checklist": ("Methodology readiness checklist", "方法学准备度清单"),
 }
 MODULE_EXPLANATIONS = {
@@ -83,6 +97,14 @@ MODULE_EXPLANATIONS = {
         "Looks for repeated local regions across panels or within the same image.",
         "检查不同面板之间或同一图内是否有重复局部区域。",
     ),
+    "image_keypoint_geometric_match": (
+        "Looks for rotated, rescaled, cropped, or perspective-shifted image similarities using keypoints.",
+        "用 keypoint 检查旋转、缩放、裁剪或透视变化后的图像相似候选。",
+    ),
+    "image_splice_forensics_triage": (
+        "Looks for localized ELA/JPEG residual, JPEG-ghost profile, noise-map, or CFA-like grid outliers as weak prompts for raw-file or external image-forensics review.",
+        "用 ELA/JPEG residual、JPEG-ghost profile、noise-map 或 CFA-like grid 的局部异常作为弱提示，提醒补 raw file 或外部图像取证复核。",
+    ),
     "statistics_consistency": (
         "Checks reported numerical summaries against supplied source-data tables.",
         "把报告的数值摘要与已提供 source-data 表做一致性检查。",
@@ -91,9 +113,57 @@ MODULE_EXPLANATIONS = {
         "Looks for unit-of-analysis patterns such as technical replicates counted as independent samples.",
         "检查是否存在技术重复被当作独立样本等分析单位问题。",
     ),
+    "xlsx_workbook_structure_intake": (
+        "Indexes XLSX workbook sheet names, headers, formulas, merged cells, and hidden sheets for material preparation.",
+        "索引 XLSX workbook 的 sheet 名、表头、公式、合并单元格和隐藏 sheet，供材料准备复核。",
+    ),
+    "prism_project_intake": (
+        "Indexes PZFX table/graph metadata and possible graph-to-table hints for source-manifest preparation.",
+        "索引 PZFX 中的 table/graph metadata 和可能的 graph-to-table 线索，帮助准备 source manifest。",
+    ),
+    "flow_fcs_metadata_intake": (
+        "Indexes FCS event counts, channel/marker labels, instrument metadata, and compensation-keyword presence for flow material review.",
+        "索引 FCS 事件数、通道/marker 标签、仪器 metadata 和补偿关键词，供 flow 材料复核。",
+    ),
     "package_internal_text_overlap": (
         "Checks text supplied inside this package for repeated or recycled passages.",
         "检查本材料包内部文本是否存在重复或复用段落。",
+    ),
+    "docx_caption_table_structure_extraction": (
+        "Extracts body paragraphs, caption-like paragraphs, and Word tables from DOCX files for intake review.",
+        "从 DOCX 中抽取正文段落、类似图注的段落和 Word 表格，供材料准备复核。",
+    ),
+    "pdf_caption_table_structure_extraction": (
+        "Extracts caption-like and table-like text blocks from machine-readable PDFs for intake review.",
+        "从可机器读取的 PDF 中抽取类似图注和表格的文本块，供材料准备复核。",
+    ),
+    "pdf_embedded_image_extraction": (
+        "Exports raster images embedded inside PDFs as presentation-layer intake artifacts.",
+        "把 PDF 内嵌栅格图片导出为展示层材料，便于人工复核和后续整理。",
+    ),
+    "pptx_slide_text_path_structure_extraction": (
+        "Extracts PPTX slide text, speaker notes, alt text, and explicit figure/source path pairs for assembly-manifest preparation.",
+        "抽取 PPTX slide 文本、备注、替代文本和显式 figure/source 路径对，帮助准备 assembly manifest。",
+    ),
+    "pptx_embedded_image_extraction": (
+        "Exports raster images embedded inside PPTX assembly files as presentation-layer intake artifacts.",
+        "把 PPTX 组图文件中的内嵌栅格图片导出为展示层材料，便于人工复核和后续整理。",
+    ),
+    "key_embedded_image_extraction": (
+        "Exports raster images embedded inside zip-based Keynote files as presentation-layer intake artifacts.",
+        "把 zip 格式 Keynote 文件中的内嵌栅格图片导出为展示层材料，便于人工复核和后续整理。",
+    ),
+    "psd_flattened_preview_extraction": (
+        "Exports decodable flattened PSD previews as presentation-layer intake artifacts.",
+        "导出可读取 PSD 文件的扁平预览，作为展示层材料帮助人工复核。",
+    ),
+    "image_frame_channel_metadata_intake": (
+        "Reads available frame, channel, Z-stack, and OME metadata so multi-channel image explanations can be checked against acquisition context.",
+        "读取可用的帧、通道、Z-stack 和 OME metadata，便于把多通道图像解释与采集背景核对。",
+    ),
+    "image_channel_metadata_consistency": (
+        "Checks whether declared same-field/different-channel relationships have machine-readable acquisition/channel metadata support.",
+        "核对已声明的同视野/不同通道关系是否有可机器读取的采集或通道 metadata 支撑。",
     ),
     "methodology_readiness_checklist": (
         "Records whether supporting files exist for later manual methods review.",
@@ -127,16 +197,20 @@ MATERIAL_LABELS = {
 }
 FINDING_LABELS = {
     "image_reuse_cluster": ("Image similarity cluster", "图像相似性簇"),
+    "keypoint_geometric_match": ("Keypoint geometric image similarity candidate", "Keypoint 几何图像相似候选"),
     "local_patch_reuse": ("Local patch similarity candidate", "局部 patch 相似候选"),
     "same_image_copy_move": ("Same-image copy-move candidate", "同图复制移动候选"),
+    "splice_forensics_triage_signal": ("Weak splice-forensics triage signal", "弱拼接取证提示信号"),
     "unresolved_fig_raw_similarity": ("Unresolved figure-to-raw similarity", "未解析的图像到原始图相似性"),
+    "channel_metadata_verification_gap": ("Same-field channel metadata verification gap", "同视野通道 metadata 核验缺口"),
     "audit_coverage_gap": ("Audit coverage gap", "审计覆盖缺口"),
     "external_literature_search_gap": ("External-search coverage gap", "外部检索覆盖缺口"),
     "external_text_match_candidate": ("External text-match candidate", "外部文本匹配候选"),
     "document_text_container_not_screened": ("Document text container not screened", "文档容器未自动文本筛查"),
     "legacy_excel_source_not_screened": ("Legacy Excel source-data file not screened", "旧版 Excel 源数据未自动筛查"),
     "graphpad_prism_project_not_screened": ("GraphPad Prism project not screened", "GraphPad Prism 项目未自动筛查"),
-    "pdf_embedded_figures_not_image_screened": ("PDF embedded figures not image-screened", "PDF 内嵌图像未做像素筛查"),
+    "pdf_embedded_figures_not_image_screened": ("PDF embedded figures require raw/source follow-up", "PDF 内嵌图像需补 raw/source 跟进"),
+    "opaque_figure_assembly_project_requires_export": ("Opaque assembly project requires exports", "不透明组图工程文件需导出"),
 }
 JSON_BLOCK_MARKER = "```json AUDIT_JSON_SUMMARY"
 
@@ -354,6 +428,12 @@ def evidence_metric_lines(evidence: Any) -> list[str]:
             ("hash_distance", "Tile hash distance"),
             ("score", "Local similarity score"),
             ("tile_hit_count", "Matching tile count"),
+            ("good_matches", "Keypoint good matches"),
+            ("inlier_count", "RANSAC inliers"),
+            ("inlier_ratio", "RANSAC inlier ratio"),
+            ("rotation_degrees", "Estimated rotation (degrees)"),
+            ("scale_estimate", "Estimated scale"),
+            ("perspective_score", "Perspective term"),
         ):
             if key in representative:
                 lines.append(f"{label}: {representative[key]}.")
@@ -397,6 +477,19 @@ def evidence_metric_lines(evidence: Any) -> list[str]:
         "calculation",
         "query",
         "provider",
+        "relation_type",
+        "metadata_support",
+        "declared_relation_unverified",
+        "analysis_type",
+        "metric",
+        "robust_z",
+        "tile_count",
+        "image_width",
+        "image_height",
+        "profile_range",
+        "profile_min_quality",
+        "profile_min_mean",
+        "profile_max_mean",
     ]
     for key in scalar_keys:
         value = evidence.get(key)
@@ -430,14 +523,29 @@ def observation_text(item: dict[str, Any]) -> str:
             f"The image screen found a near-duplicate image cluster at `{location}`. "
             "The observation should be checked against raw images, acquisition metadata, and the figure assembly history."
         )
+    if finding_type == "keypoint_geometric_match":
+        return (
+            f"The image screen found a keypoint-supported geometric similarity candidate at `{location}`. "
+            "This can indicate rotation, rescaling, cropping, or perspective-shifted reuse, but it still requires raw-image and assembly-context review."
+        )
     if finding_type in {"local_patch_reuse", "same_image_copy_move"}:
         return (
             f"The image screen found a repeated local region candidate at `{location}`. "
             "This is coordinate-level evidence requiring raw-image and processing-history review."
         )
+    if finding_type == "splice_forensics_triage_signal":
+        return (
+            f"The image screen found a localized ELA/JPEG residual, JPEG-ghost profile, noise-map, or CFA-like grid triage signal at `{location}`. "
+            "This is a weak prompt for raw-file and specialist image-forensics review, not proof of splicing or robust JPEG-ghost analysis."
+        )
     if finding_type == "unresolved_fig_raw_similarity":
         return (
             f"A figure panel appears similar to a raw/source image at `{location}`, but no machine-readable provenance link resolves it."
+        )
+    if finding_type == "channel_metadata_verification_gap":
+        return (
+            f"A same-field/different-channel relationship was declared at `{location}`, but the supplied files do not include "
+            "machine-readable multichannel acquisition metadata sufficient to verify that explanation."
         )
     if "text" in module or "text" in finding_type:
         return (
@@ -497,6 +605,7 @@ def zh_explanation_stub(kind: str) -> str:
 
 
 def summary_finding(item: dict[str, Any]) -> dict[str, Any]:
+    templates = finding_response_templates(item)
     return {
         "finding_id": item.get("finding_id", ""),
         "risk_level": item.get("risk_level", "R0"),
@@ -506,6 +615,8 @@ def summary_finding(item: dict[str, Any]) -> dict[str, Any]:
         "benign_explanations_considered": item.get("benign_explanations_considered", []),
         "required_materials_to_resolve": item.get("required_materials_to_resolve", []),
         "recommended_action": item.get("recommended_action", ""),
+        "neutral_inquiry_template": templates["neutral_inquiry_template"],
+        "material_request_template": templates["material_request_template"],
     }
 
 
@@ -564,6 +675,88 @@ def summary_traceability_gaps(findings: list[dict[str, Any]]) -> list[dict[str, 
     return gaps
 
 
+def finding_response_templates(item: dict[str, Any]) -> dict[str, str]:
+    finding_type = str(item.get("finding_type", ""))
+    module = str(item.get("module", ""))
+    evidence_type = str(item.get("evidence_type", ""))
+    location = str(item.get("location", "") or "the listed item")
+    required = [str(value) for value in item.get("required_materials_to_resolve", []) or [] if str(value).strip()]
+    materials = "; ".join(required) if required else "the relevant source/raw records and supporting documentation"
+    text = " ".join([finding_type, module, evidence_type]).lower()
+
+    if "image" in text or "fig" in text or "raw" in text or finding_type in IMAGE_FINDING_TYPES:
+        inquiry = (
+            f"Could the figure/data owner clarify the source and assembly history for `{location}`, "
+            "including whether the observed image similarity is expected from the same field, channel, lane, membrane, crop, or registration workflow?"
+            f" 中文：请图像/数据负责人说明 `{location}` 的来源和组图记录，并确认观察到的图像相似性是否来自同一视野、通道、泳道、膜、裁剪或配准流程。"
+        )
+        request = (
+            f"Please add or link the materials needed to resolve `{location}`: {materials}. "
+            "If any record is unavailable, add a short note explaining why and who reviewed the limitation."
+            f" 中文：请补充或链接用于解决 `{location}` 的材料：{materials}。如记录无法提供，请简要说明原因以及由谁复核了这一限制。"
+        )
+    elif "stat" in text or "numeric" in text or "digit" in text:
+        inquiry = (
+            f"Could the data/statistics owner verify how the values at `{location}` were calculated from the supplied source data, "
+            "including n, experimental unit, rounding, and any exclusions or transformations?"
+            f" 中文：请数据/统计负责人核对 `{location}` 的数值如何由 source data 计算得到，包括 n、实验单位、舍入规则、排除项或转换。"
+        )
+        request = (
+            f"Please add or link the source table, analysis code, and calculation notes needed to resolve `{location}`: {materials}. "
+            "If the reported values were rounded or transformed, document the rule used."
+            f" 中文：请补充或链接用于解决 `{location}` 的 source table、分析代码和计算说明：{materials}。如报告值经过舍入或转换，请记录所用规则。"
+        )
+    elif "text" in text or "overlap" in text:
+        inquiry = (
+            f"Could the manuscript owner clarify the origin and disclosure/citation status of the overlapping text at `{location}`?"
+            f" 中文：请稿件负责人说明 `{location}` 重叠文本的来源，以及是否已做引用、披露或政策核对。"
+        )
+        request = (
+            f"Please add prior drafts, thesis/preprint/protocol source text, citation/disclosure notes, or policy context needed to resolve `{location}`: {materials}."
+            f" 中文：请补充用于解决 `{location}` 的既往稿件、学位论文/预印本/方案原文、引用/披露说明或期刊政策背景：{materials}。"
+        )
+    elif "coverage" in text or "missing" in text:
+        inquiry = (
+            f"Could the responsible owner confirm whether the missing or unsupported material for `{location}` exists and can be supplied for review?"
+            f" 中文：请责任人确认 `{location}` 对应的缺失或暂不支持材料是否存在，并能否提供用于复核。"
+        )
+        request = (
+            f"Please add the missing/converted materials needed to complete this audit scope for `{location}`: {materials}. "
+            "If unavailable, document the reason and the reviewer who accepted the limitation."
+            f" 中文：请补充用于完成 `{location}` 审计范围的缺失材料或格式转换文件：{materials}。如无法提供，请记录原因和接受该限制的复核人。"
+        )
+    else:
+        inquiry = (
+            f"Could the responsible owner review `{location}` and clarify the source records or context needed to interpret this audit finding?"
+            f" 中文：请责任人复核 `{location}`，并说明解释该审计发现所需的 source records 或背景。"
+        )
+        request = (
+            f"Please add or link the materials needed to resolve `{location}`: {materials}. "
+            "If unavailable, document the limitation before relying on the audit as complete."
+            f" 中文：请补充或链接用于解决 `{location}` 的材料：{materials}。如无法提供，请先记录该限制，再将本次审计视为完整。"
+        )
+
+    return {
+        "neutral_inquiry_template": (
+            inquiry
+            + " This is a documentation request, not a conclusion about intent or responsibility."
+            + " 中文：这是资料核对请求，不是对意图或责任的结论。"
+        ),
+        "material_request_template": request,
+    }
+
+
+IMAGE_FINDING_TYPES = {
+    "image_reuse_cluster",
+    "keypoint_geometric_match",
+    "local_patch_reuse",
+    "same_image_copy_move",
+    "splice_forensics_triage_signal",
+    "unresolved_fig_raw_similarity",
+    "channel_metadata_verification_gap",
+}
+
+
 def action_owner(action_type: str, location: str, action: str) -> str:
     text = " ".join([action_type, location, action]).lower()
     if any(token in text for token in ("stat", "p-value", "sem", "sd", "mean", "n consistency")):
@@ -598,12 +791,16 @@ def empty_action_queue() -> dict[str, Any]:
             "action_category",
             "risk_level",
             "action_type",
+            "source_finding_id",
             "location",
             "required_action",
             "owner",
             "status",
             "human_note",
             "accepted_with_reason",
+            "attachment_reference",
+            "neutral_inquiry_template",
+            "material_request_template",
             "source",
         ],
         "status_options": ["unresolved", "resolved", "accepted_with_reason", "false_positive"],
@@ -627,6 +824,9 @@ def build_action_queue(
         required_action: str,
         source: str,
         item_label: str = "",
+        neutral_inquiry_template: str = "",
+        material_request_template: str = "",
+        source_finding_id: str = "",
     ) -> None:
         category = category if category in ACTION_CATEGORY_LABELS else "low_priority_checks"
         action_id = f"ACT-{sum(queue['counts'].values()) + 1:04d}"
@@ -635,6 +835,7 @@ def build_action_queue(
             "action_category": category,
             "risk_level": risk_level or "R1",
             "action_type": action_type,
+            "source_finding_id": source_finding_id,
             "item": item_label or action_type,
             "location": location,
             "required_action": required_action,
@@ -642,6 +843,9 @@ def build_action_queue(
             "status": "unresolved",
             "human_note": "",
             "accepted_with_reason": "",
+            "attachment_reference": "",
+            "neutral_inquiry_template": neutral_inquiry_template,
+            "material_request_template": material_request_template,
             "source": source,
         }
         queue["categories"][category].append(row)
@@ -649,6 +853,7 @@ def build_action_queue(
 
     for item in findings:
         action = item.get("recommended_action") or "Resolve or document this finding before relying on the audit."
+        templates = finding_response_templates(item)
         append(
             action_category_for_finding(item),
             item.get("risk_level", "R1"),
@@ -657,6 +862,9 @@ def build_action_queue(
             action,
             "AUDIT_JSON_SUMMARY.findings",
             item.get("finding_id", ""),
+            templates["neutral_inquiry_template"],
+            templates["material_request_template"],
+            str(item.get("finding_id", "")),
         )
 
     for item in manifest.get("missing_materials", []) or []:
@@ -813,10 +1021,589 @@ def render_coverage(coverage: dict[str, Any] | None) -> list[str]:
         ["Coverage item / 覆盖项", "Value / 数值"],
         ["Image panels screened / 已筛图像面板", str(coverage.get("image_panels_screened", 0))],
         ["Unreadable image files / 不可读取图像", str(coverage.get("image_files_unreadable", 0))],
+        ["Splice-forensics triage images / 弱拼接取证已筛图像", str(coverage.get("splice_forensics_images_screened", 0))],
+        ["Splice-forensics triage signals / 弱拼接取证提示", str(coverage.get("splice_forensics_candidates", 0))],
+        ["Keypoint image pairs screened / 已筛 keypoint 图像对", str(coverage.get("keypoint_pairs_screened", 0))],
+        ["Keypoint geometric candidates / Keypoint 几何候选", str(coverage.get("keypoint_candidates", 0))],
         ["Source-data tables screened / 已筛 source-data 表", str(coverage.get("source_tables_screened", 0))],
+        ["XLSX workbooks structurally read / 已结构读取 XLSX", str(coverage.get("xlsx_files_structurally_read", 0))],
+        ["XLSX sheets indexed / 已索引 XLSX sheet", str(coverage.get("xlsx_sheets_indexed", 0))],
+        ["XLSX formula cells scanned / 已扫描 XLSX 公式单元格", str(coverage.get("xlsx_formula_cells_scanned", 0))],
+        ["XLSX hidden sheets / XLSX 隐藏 sheet", str(coverage.get("xlsx_hidden_sheets", 0))],
+        ["Prism PZFX files read / 已读取 Prism PZFX 文件", str(coverage.get("prism_pzfx_files_read", 0))],
+        ["Prism tables indexed / 已索引 Prism table", str(coverage.get("prism_tables_indexed", 0))],
+        ["Prism graphs indexed / 已索引 Prism graph", str(coverage.get("prism_graphs_indexed", 0))],
+        ["Possible Prism graph-table links / 可能的 Prism graph-table 线索", str(coverage.get("prism_possible_graph_table_links", 0))],
+        ["FCS files read / 已读取 FCS 文件", str(coverage.get("fcs_files_read", 0))],
+        ["FCS parameters indexed / 已索引 FCS 参数", str(coverage.get("fcs_parameters_indexed", 0))],
+        ["FCS reported events / FCS 报告事件数", str(coverage.get("fcs_total_events_reported", 0))],
+        ["FCS files with compensation keywords / 含补偿关键词的 FCS 文件", str(coverage.get("fcs_files_with_compensation_keywords", 0))],
+        ["DOCX files structurally read / 已结构读取 DOCX", str(coverage.get("docx_files_screened", 0))],
+        ["DOCX paragraphs extracted / 已抽取 DOCX 段落", str(coverage.get("docx_paragraphs_extracted", 0))],
+        ["DOCX captions extracted / 已抽取 DOCX 图注", str(coverage.get("docx_captions_extracted", 0))],
+        ["DOCX table-like blocks extracted / 已抽取 DOCX 类表格块", str(coverage.get("docx_table_like_blocks_extracted", 0))],
+        ["PDF files structurally read / 已结构读取 PDF", str(coverage.get("pdf_files_screened", 0))],
+        ["PDF captions extracted / 已抽取 PDF 图注", str(coverage.get("pdf_captions_extracted", 0))],
+        ["PDF table-like blocks extracted / 已抽取 PDF 类表格块", str(coverage.get("pdf_table_like_blocks_extracted", 0))],
+        ["PDF embedded images exported / 已导出 PDF 内嵌图片", str(coverage.get("pdf_embedded_images_extracted", 0))],
+        ["PPTX files structurally read / 已结构读取 PPTX", str(coverage.get("pptx_files_structurally_read", 0))],
+        ["PPTX slides read / 已读取 PPTX slide", str(coverage.get("pptx_slides_read", 0))],
+        ["PPTX text paragraphs extracted / 已抽取 PPTX 文本段", str(coverage.get("pptx_text_paragraphs_extracted", 0))],
+        ["PPTX speaker-note paragraphs extracted / 已抽取 PPTX 备注文本段", str(coverage.get("pptx_speaker_note_paragraphs_extracted", 0))],
+        ["PPTX alt-text entries extracted / 已抽取 PPTX 替代文本", str(coverage.get("pptx_alt_text_entries_extracted", 0))],
+        ["PPTX explicit path pairs / PPTX 显式路径对", str(coverage.get("pptx_explicit_path_pairs", 0))],
+        ["PPTX embedded images exported / 已导出 PPTX 内嵌图片", str(coverage.get("pptx_embedded_images_extracted", 0))],
+        ["Keynote embedded images exported / 已导出 Keynote 内嵌图片", str(coverage.get("key_embedded_images_extracted", 0))],
+        ["PSD flattened previews exported / 已导出 PSD 扁平预览", str(coverage.get("psd_preview_images_extracted", 0))],
+        ["Image metadata files read / 已读取图像 metadata 文件", str(coverage.get("image_metadata_files_screened", 0))],
+        ["Multi-frame images / 多帧图像", str(coverage.get("image_metadata_multiframe_files", 0))],
+        ["OME/channel metadata files / OME 或通道 metadata 文件", str(coverage.get("image_metadata_channel_files", 0))],
+        ["Z-stack metadata files / Z-stack metadata 文件", str(coverage.get("image_metadata_z_stack_files", 0))],
+        ["Same-field channel declarations checked / 已核验同视野通道声明", str(coverage.get("channel_metadata_declarations_checked", 0))],
+        ["Same-field declarations needing metadata / 需补 metadata 的同视野声明", str(coverage.get("channel_metadata_verification_gaps", 0))],
         ["Raw detector candidates / 原始检测候选", str(coverage.get("raw_detector_candidate_count", 0))],
         ["Positive provenance records / 正向可追溯记录", str(coverage.get("positive_provenance_count", 0))],
     ])]
+    xlsx_note = str(coverage.get("xlsx_structure_scope_note", "")).strip()
+    xlsx_items = coverage.get("xlsx_structure_review_items") or []
+    if xlsx_note or coverage.get("xlsx_files_structurally_read"):
+        lines += [
+            "",
+            "**XLSX workbook structure intake note / XLSX workbook 结构读取说明**",
+            "",
+            f"> {xlsx_note}" if xlsx_note else "> XLSX workbook and sheet metadata was indexed for source-data and claim-manifest preparation.",
+            "> 中文提示：这里记录的是 workbook/sheet metadata、表头、公式和合并单元格等线索；它不能替代统计复算、CSV 导出、raw record 或已验证 provenance。",
+        ]
+        if xlsx_items:
+            rows = [["XLSX / 文件", "Sheet / 工作表", "Label / 标签", "Rows / 行", "Formulas / 公式", "State / 状态", "Headers / 表头"]]
+            for item in xlsx_items[:12]:
+                if not isinstance(item, dict):
+                    continue
+                headers = item.get("headers") or []
+                header_text = ", ".join(str(header) for header in headers[:6]) if isinstance(headers, list) else str(headers)
+                if isinstance(headers, list) and len(headers) > 6:
+                    header_text += f", +{len(headers) - 6}"
+                rows.append([
+                    str(item.get("source_xlsx", "")),
+                    str(item.get("sheet_name", "")),
+                    str(item.get("suggested_label", "")),
+                    str(item.get("data_rows_scanned", "")),
+                    str(item.get("formula_cell_count_scanned", "")),
+                    str(item.get("sheet_state", "")),
+                    header_text,
+                ])
+            if len(rows) > 1:
+                lines += ["", table(rows)]
+            if len(xlsx_items) > 12:
+                lines.append(f"- Additional XLSX sheets omitted from this table: {len(xlsx_items) - 12}.")
+    if coverage.get("xlsx_structure_error_count"):
+        lines += [
+            "",
+            "**XLSX structure extraction errors / XLSX 结构抽取错误**",
+            "",
+        ]
+        for item in (coverage.get("xlsx_structure_errors") or [])[:10]:
+            if isinstance(item, dict):
+                path = str(item.get("path", "XLSX"))
+                message = str(item.get("error", "could not extract XLSX structure"))
+                lines.append(f"- `{path}`: {message}")
+        lines += [
+            "- Export relevant workbook sheets to CSV/TSV or provide a readable XLSX before treating source-data intake as complete.",
+            "- 请将相关 workbook sheet 导出为 CSV/TSV，或补充可读取 XLSX；否则不能把 source-data intake 视为完整。",
+        ]
+    prism_note = str(coverage.get("prism_project_scope_note", "")).strip()
+    prism_items = coverage.get("prism_project_review_items") or []
+    if prism_note or coverage.get("prism_pzfx_files_read"):
+        lines += [
+            "",
+            "**GraphPad Prism project intake note / GraphPad Prism 项目读取说明**",
+            "",
+            f"> {prism_note}" if prism_note else "> GraphPad Prism PZFX table/graph metadata was indexed for source-manifest preparation.",
+            "> 中文提示：这里记录的是 Prism 项目里的 table/graph metadata 和可能的 graph-to-table 线索；这些线索帮助整理 manifest，但不能替代 CSV/XLSX source export、Prism graph export、raw record 或已验证 provenance。",
+        ]
+        if prism_items:
+            rows = [["PZFX / 文件", "Graph / 图", "Possible table / 可能表格", "Basis / 依据"]]
+            for item in prism_items[:12]:
+                if not isinstance(item, dict):
+                    continue
+                table_label = str(item.get("table_title", "")) or str(item.get("table_id", ""))
+                rows.append([
+                    str(item.get("source_pzfx", "")),
+                    str(item.get("graph_title", "")),
+                    table_label,
+                    str(item.get("match_basis", "")),
+                ])
+            if len(rows) > 1:
+                lines += ["", table(rows)]
+            if len(prism_items) > 12:
+                lines.append(f"- Additional possible Prism graph-table links omitted from this table: {len(prism_items) - 12}.")
+    if coverage.get("prism_project_error_count"):
+        lines += [
+            "",
+            "**GraphPad Prism project intake errors / GraphPad Prism 项目读取错误**",
+            "",
+        ]
+        for item in (coverage.get("prism_project_errors") or [])[:10]:
+            if isinstance(item, dict):
+                path = str(item.get("path", "PZFX"))
+                message = str(item.get("error", "could not read Prism project metadata"))
+                lines.append(f"- `{path}`: {message}")
+        lines += [
+            "- Export Prism source tables and graph/plotted values as CSV/XLSX or image/PDF records before treating Prism intake as complete.",
+            "- 请将 Prism source table 与 graph/plotted values 导出为 CSV/XLSX 或图像/PDF 记录；否则不能把 Prism intake 视为完整。",
+        ]
+    fcs_note = str(coverage.get("fcs_metadata_scope_note", "")).strip()
+    fcs_items = coverage.get("fcs_metadata_review_items") or []
+    if fcs_note or coverage.get("fcs_files_read"):
+        lines += [
+            "",
+            "**Flow/FCS metadata intake note / Flow/FCS metadata 读取说明**",
+            "",
+            f"> {fcs_note}" if fcs_note else "> FCS header/text metadata was indexed for MIFlowCyt-oriented material review.",
+            "> 中文提示：这里记录的是 FCS 文件里的事件数、通道/marker、仪器和补偿关键词线索；它不能替代 FlowJo/workspace/gating 层级、补偿矩阵、FMO/isotype 对照或群体比例复算。",
+        ]
+        if fcs_items:
+            rows = [["FCS / 文件", "Events / 事件", "Parameters / 参数", "Cytometer / 仪器", "Compensation / 补偿", "Markers / 标记"]]
+            for item in fcs_items[:12]:
+                if not isinstance(item, dict):
+                    continue
+                markers = item.get("markers") or []
+                marker_text = ", ".join(str(marker) for marker in markers[:6]) if isinstance(markers, list) else str(markers)
+                if isinstance(markers, list) and len(markers) > 6:
+                    marker_text += f", +{len(markers) - 6}"
+                rows.append([
+                    str(item.get("path", "")),
+                    str(item.get("event_count", "")),
+                    str(item.get("parameter_count", "")),
+                    str(item.get("cytometer", "")),
+                    "yes" if item.get("compensation_present") else "no",
+                    marker_text,
+                ])
+            if len(rows) > 1:
+                lines += ["", table(rows)]
+            if len(fcs_items) > 12:
+                lines.append(f"- Additional FCS metadata rows omitted from this table: {len(fcs_items) - 12}.")
+    if coverage.get("fcs_metadata_error_count"):
+        lines += [
+            "",
+            "**Flow/FCS metadata intake errors / Flow/FCS metadata 读取错误**",
+            "",
+        ]
+        for item in (coverage.get("fcs_metadata_errors") or [])[:10]:
+            if isinstance(item, dict):
+                path = str(item.get("path", "FCS"))
+                message = str(item.get("error", "could not read FCS metadata"))
+                lines.append(f"- `{path}`: {message}")
+        lines += [
+            "- Supply readable FCS files plus workspace/gating, compensation, and control records before treating flow cytometry review as complete.",
+            "- 请补充可读取 FCS 文件，以及 workspace/gating、补偿和对照记录；否则不能把 flow cytometry 复核视为完整。",
+        ]
+    docx_note = str(coverage.get("docx_structure_scope_note", "")).strip()
+    if docx_note:
+        lines += [
+            "",
+            "**DOCX structure intake note / DOCX 结构读取说明**",
+            "",
+            f"> {docx_note}",
+            "> 中文提示：这里记录的是 Word 正文、图注和表格结构，帮助整理 claim manifest；它不读取批注、修订痕迹或嵌入对象，也不能替代 raw/source 证据。",
+        ]
+    if coverage.get("docx_structure_warning_count"):
+        lines += [
+            "",
+            "**DOCX review-layer warnings / DOCX 审阅层提示**",
+            "",
+        ]
+        for item in (coverage.get("docx_structure_warnings") or [])[:10]:
+            if isinstance(item, dict):
+                path = str(item.get("path", "DOCX"))
+                message = str(item.get("message", "DOCX contains review-layer material outside body/caption/table extraction"))
+                lines.append(f"- `{path}`: {message}")
+        lines += [
+            "- Review comments, tracked changes, and embedded objects manually before treating DOCX intake as complete.",
+            "- 请人工复核批注、修订痕迹和嵌入对象；否则不能把 DOCX intake 视为完整。",
+        ]
+    if coverage.get("docx_structure_error_count"):
+        lines += [
+            "",
+            "**DOCX structure extraction errors / DOCX 结构抽取错误**",
+            "",
+        ]
+        for item in (coverage.get("docx_structure_errors") or [])[:10]:
+            if isinstance(item, dict):
+                path = str(item.get("path", "DOCX"))
+                message = str(item.get("error", "could not extract DOCX structure"))
+                lines.append(f"- `{path}`: {message}")
+        lines += [
+            "- Export the manuscript text, captions, and tables as DOCX/TXT/CSV/XLSX before treating DOCX intake as complete.",
+            "- 请将正文、图注和表格另存为 DOCX/TXT/CSV/XLSX；否则不能把 DOCX intake 视为完整。",
+        ]
+    pdf_note = str(coverage.get("pdf_structure_scope_note", "")).strip()
+    if pdf_note:
+        lines += [
+            "",
+            "**PDF structure intake note / PDF 结构读取说明**",
+            "",
+            f"> {pdf_note}",
+            "> 中文提示：这里记录的是可抽取文本中的图注/类表格结构；PDF 内嵌图片导出记录见下方，它们仍不是 raw/source 证据。",
+        ]
+    if coverage.get("pdf_structure_error_count"):
+        lines += [
+            "",
+            "**PDF structure extraction errors / PDF 结构抽取错误**",
+            "",
+        ]
+        for item in (coverage.get("pdf_structure_errors") or [])[:10]:
+            if isinstance(item, dict):
+                path = str(item.get("path", "PDF"))
+                message = str(item.get("error", "could not extract PDF structure"))
+                lines.append(f"- `{path}`: {message}")
+        lines += [
+            "- Export captions/tables as DOCX, TXT, CSV/XLSX, or supply panel image exports before treating PDF intake as complete.",
+            "- 请将图注/表格另存为 DOCX、TXT、CSV/XLSX，或补充面板图片导出后再视为 PDF intake 完整。",
+        ]
+    pdf_image_note = str(coverage.get("pdf_embedded_image_scope_note", "")).strip()
+    if pdf_image_note or coverage.get("pdf_embedded_images_extracted"):
+        lines += [
+            "",
+            "**PDF embedded-image intake note / PDF 内嵌图片读取说明**",
+            "",
+            f"> {pdf_image_note}" if pdf_image_note else "> PDF embedded raster images were exported as presentation-layer intake artifacts.",
+            "> 中文提示：导出的 PDF 内嵌图片只是展示层材料，不能代替原始图、未裁剪图、采集 metadata 或 figure assembly 记录。",
+        ]
+        exported = coverage.get("pdf_embedded_image_files") or []
+        if exported:
+            rows = [["Source PDF / 来源 PDF", "Page / 页", "Export / 导出文件", "Size / 尺寸"]]
+            for item in exported[:12]:
+                if not isinstance(item, dict):
+                    continue
+                size = ""
+                if item.get("width") and item.get("height"):
+                    size = f"{item.get('width')}x{item.get('height')}"
+                rows.append([
+                    str(item.get("source_pdf", "")),
+                    str(item.get("page", "")),
+                    str(item.get("output_path", "")),
+                    size,
+                ])
+            if len(rows) > 1:
+                lines += ["", table(rows)]
+            if len(exported) > 12:
+                lines.append(f"- Additional exported PDF images omitted from this table: {len(exported) - 12}.")
+    if coverage.get("pdf_embedded_image_error_count"):
+        lines += [
+            "",
+            "**PDF embedded-image extraction errors / PDF 内嵌图片抽取错误**",
+            "",
+        ]
+        for item in (coverage.get("pdf_embedded_image_errors") or [])[:10]:
+            if isinstance(item, dict):
+                path = str(item.get("path", "PDF"))
+                message = str(item.get("error", "could not extract embedded PDF image"))
+                lines.append(f"- `{path}`: {message}")
+    pptx_structure_note = str(coverage.get("pptx_structure_scope_note", "")).strip()
+    pptx_structure_items = coverage.get("pptx_structure_review_items") or []
+    if pptx_structure_note or coverage.get("pptx_files_structurally_read"):
+        lines += [
+            "",
+            "**PPTX text/path intake note / PPTX 文本与路径读取说明**",
+            "",
+            f"> {pptx_structure_note}" if pptx_structure_note else "> PPTX slide text, speaker notes, alt text, and explicit figure/source path pairs were indexed for assembly-manifest preparation.",
+            "> 中文提示：这里记录的是 PPTX slide 文本、备注、替代文本和显式路径线索；它帮助整理 assembly_manifest.csv，但不能替代导出的图像面板、raw/source record、PPT 编辑历史或已验证 provenance。",
+        ]
+        if pptx_structure_items:
+            rows = [["PPTX / 文件", "Slide / 页", "Figure panel / 图版", "Source record / 来源记录", "Relation / 关系"]]
+            for item in pptx_structure_items[:12]:
+                if not isinstance(item, dict):
+                    continue
+                rows.append([
+                    str(item.get("source_pptx", "")),
+                    str(item.get("slide", "")),
+                    str(item.get("figure_panel", "")),
+                    str(item.get("source_record", "")),
+                    str(item.get("relation_type", "")),
+                ])
+            if len(rows) > 1:
+                lines += ["", table(rows)]
+            if len(pptx_structure_items) > 12:
+                lines.append(f"- Additional PPTX explicit path pairs omitted from this table: {len(pptx_structure_items) - 12}.")
+    if coverage.get("pptx_structure_warning_count"):
+        lines += [
+            "",
+            "**PPTX structure intake warnings / PPTX 结构读取提示**",
+            "",
+        ]
+        for item in (coverage.get("pptx_structure_warnings") or [])[:10]:
+            if isinstance(item, dict):
+                path = str(item.get("path", "PPTX"))
+                message = str(item.get("warning", "PPTX structure warning"))
+                lines.append(f"- `{path}`: {message}")
+    if coverage.get("pptx_structure_error_count"):
+        lines += [
+            "",
+            "**PPTX structure extraction errors / PPTX 结构抽取错误**",
+            "",
+        ]
+        for item in (coverage.get("pptx_structure_errors") or [])[:10]:
+            if isinstance(item, dict):
+                path = str(item.get("path", "PPTX"))
+                message = str(item.get("error", "could not extract PPTX structure"))
+                lines.append(f"- `{path}`: {message}")
+        lines += [
+            "- Export figure panels and source/raw records, or supply a structured assembly manifest, before treating PPTX intake as complete.",
+            "- 请导出 figure panel 与 source/raw record，或补充结构化 assembly manifest；否则不能把 PPTX intake 视为完整。",
+        ]
+    pptx_image_note = str(coverage.get("pptx_embedded_image_scope_note", "")).strip()
+    if pptx_image_note or coverage.get("pptx_embedded_images_extracted"):
+        lines += [
+            "",
+            "**PPTX embedded-image intake note / PPTX 内嵌图片读取说明**",
+            "",
+            f"> {pptx_image_note}" if pptx_image_note else "> PPTX embedded raster images were exported as presentation-layer intake artifacts.",
+            "> 中文提示：导出的 PPTX 内嵌图片只是组图展示层材料，不能代替原始图、未裁剪图、采集 metadata 或 figure assembly provenance 记录。",
+        ]
+        exported = coverage.get("pptx_embedded_image_files") or []
+        if exported:
+            rows = [["Source PPTX / 来源 PPTX", "Slides / 页", "Export / 导出文件", "Size / 尺寸"]]
+            for item in exported[:12]:
+                if not isinstance(item, dict):
+                    continue
+                size = ""
+                if item.get("width") and item.get("height"):
+                    size = f"{item.get('width')}x{item.get('height')}"
+                slides = item.get("referenced_slides") or []
+                if isinstance(slides, list):
+                    slide_text = ", ".join(str(slide) for slide in slides) or "not mapped"
+                else:
+                    slide_text = str(slides)
+                rows.append([
+                    str(item.get("source_pptx", "")),
+                    slide_text,
+                    str(item.get("output_path", "")),
+                    size,
+                ])
+            if len(rows) > 1:
+                lines += ["", table(rows)]
+            if len(exported) > 12:
+                lines.append(f"- Additional exported PPTX images omitted from this table: {len(exported) - 12}.")
+    if coverage.get("pptx_embedded_image_error_count"):
+        lines += [
+            "",
+            "**PPTX embedded-image extraction errors / PPTX 内嵌图片抽取错误**",
+            "",
+        ]
+        for item in (coverage.get("pptx_embedded_image_errors") or [])[:10]:
+            if isinstance(item, dict):
+                path = str(item.get("path", "PPTX"))
+                message = str(item.get("error", "could not extract embedded PPTX image"))
+                lines.append(f"- `{path}`: {message}")
+    key_image_note = str(coverage.get("key_embedded_image_scope_note", "")).strip()
+    if key_image_note or coverage.get("key_embedded_images_extracted"):
+        lines += [
+            "",
+            "**Keynote embedded-image intake note / Keynote 内嵌图片读取说明**",
+            "",
+            f"> {key_image_note}" if key_image_note else "> Keynote embedded raster images were exported as presentation-layer intake artifacts.",
+            "> 中文提示：导出的 Keynote 内嵌图片只是组图展示层材料，不能代替原始图、未裁剪图、采集 metadata 或 figure assembly provenance 记录。",
+        ]
+        exported = coverage.get("key_embedded_image_files") or []
+        if exported:
+            rows = [["Source Keynote / 来源 Keynote", "Internal path / 内部路径", "Export / 导出文件", "Size / 尺寸"]]
+            for item in exported[:12]:
+                if not isinstance(item, dict):
+                    continue
+                size = ""
+                if item.get("width") and item.get("height"):
+                    size = f"{item.get('width')}x{item.get('height')}"
+                rows.append([
+                    str(item.get("source_key", "")),
+                    str(item.get("internal_path", "")),
+                    str(item.get("output_path", "")),
+                    size,
+                ])
+            if len(rows) > 1:
+                lines += ["", table(rows)]
+            if len(exported) > 12:
+                lines.append(f"- Additional exported Keynote images omitted from this table: {len(exported) - 12}.")
+    if coverage.get("key_embedded_image_error_count"):
+        lines += [
+            "",
+            "**Keynote embedded-image extraction errors / Keynote 内嵌图片抽取错误**",
+            "",
+        ]
+        for item in (coverage.get("key_embedded_image_errors") or [])[:10]:
+            if isinstance(item, dict):
+                path = str(item.get("path", "Keynote"))
+                message = str(item.get("error", "could not extract embedded Keynote image"))
+                lines.append(f"- `{path}`: {message}")
+    psd_preview_note = str(coverage.get("psd_preview_image_scope_note", "")).strip()
+    if psd_preview_note or coverage.get("psd_preview_images_extracted"):
+        lines += [
+            "",
+            "**PSD flattened-preview intake note / PSD 扁平预览读取说明**",
+            "",
+            f"> {psd_preview_note}" if psd_preview_note else "> PSD flattened previews were exported as presentation-layer intake artifacts.",
+            "> 中文提示：导出的 PSD 扁平预览只是组图展示层材料，不能代替原始图、未裁剪图、图层/mask/调整历史、采集 metadata 或 figure assembly provenance 记录。",
+        ]
+        exported = coverage.get("psd_preview_image_files") or []
+        if exported:
+            rows = [["Source PSD / 来源 PSD", "Export / 导出文件", "Size / 尺寸", "Source mode / 源模式"]]
+            for item in exported[:12]:
+                if not isinstance(item, dict):
+                    continue
+                size = ""
+                if item.get("width") and item.get("height"):
+                    size = f"{item.get('width')}x{item.get('height')}"
+                mode = str(item.get("source_mode", ""))
+                source_format = str(item.get("source_format", ""))
+                mode_text = f"{mode} ({source_format})" if source_format else mode
+                rows.append([
+                    str(item.get("source_psd", "")),
+                    str(item.get("output_path", "")),
+                    size,
+                    mode_text,
+                ])
+            if len(rows) > 1:
+                lines += ["", table(rows)]
+            if len(exported) > 12:
+                lines.append(f"- Additional exported PSD previews omitted from this table: {len(exported) - 12}.")
+    if coverage.get("psd_preview_image_error_count"):
+        lines += [
+            "",
+            "**PSD flattened-preview extraction errors / PSD 扁平预览抽取错误**",
+            "",
+        ]
+        for item in (coverage.get("psd_preview_image_errors") or [])[:10]:
+            if isinstance(item, dict):
+                path = str(item.get("path", "PSD"))
+                message = str(item.get("error", "could not extract flattened PSD preview"))
+                lines.append(f"- `{path}`: {message}")
+        lines += [
+            "- Export flattened figure panels and, when available, layer/source records before treating PSD intake as complete.",
+            "- 请导出扁平图版，并在可能时补充图层/source 记录；否则不能把 PSD intake 视为完整。",
+        ]
+    metadata_note = str(coverage.get("image_metadata_scope_note", "")).strip()
+    metadata_items = coverage.get("image_metadata_review_items") or []
+    if metadata_note or coverage.get("image_metadata_files_screened"):
+        lines += [
+            "",
+            "**Image frame/channel metadata intake / 图像帧、通道与 Z-stack metadata 读取**",
+            "",
+            f"> {metadata_note}" if metadata_note else "> Image metadata was read for frame/channel/Z/T intake coverage.",
+            "> 中文提示：这里记录的是图像文件自带的 frame/channel/Z/T 元数据线索；它不是图像真实性结论，也不能单独证明同视野/不同通道解释成立。",
+        ]
+        if metadata_items:
+            rows = [[
+                "Image / 图像",
+                "Frames / 帧",
+                "Channels / 通道",
+                "Z / Z-stack",
+                "T / 时间点",
+                "Status / 状态",
+                "Manual note / 人工复核提示",
+            ]]
+            for item in metadata_items[:12]:
+                if not isinstance(item, dict):
+                    continue
+                rows.append([
+                    str(item.get("path", "")),
+                    str(item.get("n_frames", "")),
+                    str(item.get("channel_count", "")),
+                    str(item.get("z_stack_count", "")),
+                    str(item.get("timepoint_count", "")),
+                    str(item.get("metadata_status", "")),
+                    str(item.get("manual_review_note", "")),
+                ])
+            if len(rows) > 1:
+                lines += ["", table(rows)]
+            if len(metadata_items) > 12:
+                lines.append(f"- Additional image metadata review items omitted from this table: {len(metadata_items) - 12}.")
+    if coverage.get("image_metadata_error_count"):
+        lines += [
+            "",
+            "**Image metadata extraction gaps / 图像 metadata 抽取缺口**",
+            "",
+            "- Some image metadata could not be read. Review acquisition metadata or export OME-TIFF/CSV metadata before treating channel/Z/T context as complete.",
+            "- 部分图像 metadata 无法读取。请补充采集 metadata，或导出 OME-TIFF/CSV metadata 后再视为通道/Z/T 背景完整。",
+        ]
+    splice_note = str(coverage.get("splice_forensics_scope_note", "")).strip()
+    splice_items = coverage.get("splice_forensics_review_items") or []
+    if splice_note or coverage.get("splice_forensics_images_screened"):
+        lines += [
+            "",
+            "**Weak splice-forensics triage / 弱拼接取证提示筛查**",
+            "",
+            f"> {splice_note}" if splice_note else "> ELA/JPEG residual, JPEG-ghost profile, noise-map, and CFA-like grid triage was run on supplied images.",
+            "> 中文提示：ELA/JPEG residual、JPEG-ghost profile、noise-map 与 CFA-like grid 只能作为弱提示；普通压缩、标注、导出、去噪、锐化、demosaicing 或成像差异也可能产生局部异常。",
+        ]
+        if splice_items:
+            rows = [[
+                "Image / 图像",
+                "Signals / 提示",
+                "ELA robust z",
+                "JPEG ghost z",
+                "JPEG range",
+                "JPEG min Q",
+                "Noise robust z",
+                "CFA robust z",
+                "CFA mean",
+            ]]
+            for item in splice_items[:12]:
+                if not isinstance(item, dict):
+                    continue
+                signals = item.get("signals") or []
+                rows.append([
+                    str(item.get("path", "")),
+                    ", ".join(str(signal) for signal in signals) if isinstance(signals, list) else str(signals),
+                    str(item.get("ela_best_robust_z", "")),
+                    str(item.get("jpeg_ghost_best_robust_z", "")),
+                    str(item.get("jpeg_ghost_profile_range", "")),
+                    str(item.get("jpeg_ghost_min_quality", "")),
+                    str(item.get("noise_best_robust_z", "")),
+                    str(item.get("cfa_best_robust_z", "")),
+                    str(item.get("cfa_best_mean", "")),
+                ])
+            if len(rows) > 1:
+                lines += ["", table(rows)]
+            if len(splice_items) > 12:
+                lines.append(f"- Additional splice-forensics triage items omitted from this table: {len(splice_items) - 12}.")
+    if coverage.get("splice_forensics_limit_reached"):
+        lines += [
+            "",
+            "- Splice-forensics triage reached an image budget; run a focused deep scan or external image-review packet before treating this scope as complete.",
+            "- 弱拼接取证提示筛查触发图片预算；请做 focused deep scan 或外部图像复核后再认为该范围完整。",
+        ]
+    channel_note = str(coverage.get("channel_metadata_scope_note", "")).strip()
+    channel_items = coverage.get("channel_metadata_review_items") or []
+    if channel_note or coverage.get("channel_metadata_declarations_checked"):
+        lines += [
+            "",
+            "**Same-field channel metadata consistency / 同视野通道 metadata 核验**",
+            "",
+            f"> {channel_note}" if channel_note else "> Declared same-field/different-channel relationships were checked against available image metadata.",
+            "> 中文提示：这里核对的是 manifest 声明是否有可机器读取的采集/通道 metadata 支撑；它不是图像清白证明，也不会自动消除图像相似候选。",
+        ]
+        if channel_items:
+            rows = [[
+                "Source / 来源",
+                "Target / 目标",
+                "Metadata support / metadata 支撑",
+                "Source status / 来源状态",
+                "Target status / 目标状态",
+            ]]
+            for item in channel_items[:12]:
+                if not isinstance(item, dict):
+                    continue
+                rows.append([
+                    str(item.get("source_path", "")),
+                    str(item.get("target_path", "")),
+                    str(item.get("metadata_support", "")),
+                    str(item.get("source_metadata_status", "")),
+                    str(item.get("target_metadata_status", "")),
+                ])
+            if len(rows) > 1:
+                lines += ["", table(rows)]
+            if len(channel_items) > 12:
+                lines.append(f"- Additional same-field channel metadata checks omitted from this table: {len(channel_items) - 12}.")
     image_boundary = coverage.get("image_screening_boundary") or {}
     if image_boundary:
         automated = [str(item) for item in image_boundary.get("automated_checks", []) if str(item).strip()]
@@ -983,6 +1770,33 @@ def render_coverage(coverage: dict[str, Any] | None) -> list[str]:
                 "",
                 f"> {limit_note}",
                 "> 中文提示：local patch / copy-move 深扫命中运行预算时，这是覆盖缺口；需要 focused deep scan 后才能把该范围视为完整筛查。",
+            ]
+    keypoint_limits = coverage.get("keypoint_screening_limits") or []
+    if keypoint_limits:
+        lines += [
+            "",
+            "**Keypoint geometric screening limits / Keypoint 几何筛查限制**",
+            "",
+            table([
+                ["Path / 路径", "Limit / 限制", "Pairs screened / 已筛图像对", "Images / 图像项", "Budget / 预算"],
+                *[
+                    [
+                        str(item.get("path", "")),
+                        str(item.get("limit_type", "")),
+                        str(item.get("pair_comparisons_attempted", "")),
+                        str(item.get("image_items", "")),
+                        str(item.get("max_pair_comparisons", "")),
+                    ]
+                    for item in keypoint_limits
+                ],
+            ]),
+        ]
+        keypoint_note = coverage.get("keypoint_screening_limit_note")
+        if keypoint_note:
+            lines += [
+                "",
+                f"> {keypoint_note}",
+                "> 中文提示：keypoint 几何筛查命中运行预算时，这是覆盖缺口；需要 focused deep scan 后才能把该范围视为完整筛查。",
             ]
     if coverage.get("audit_coverage_gap"):
         lines += [
@@ -1321,6 +2135,101 @@ def render_submission_readiness(summary: dict[str, Any]) -> list[str]:
     ]
 
 
+def render_scope(mode: str, manifest: dict[str, Any], case_id: str | None, scan_profile: str) -> list[str]:
+    return [
+        "## Scope / 范围",
+        "",
+        f"- Mode / 模式: {label_pair(mode, MODE_LABELS)} (`{mode}`)",
+        f"- Scan profile / 扫描档位: {label_pair(scan_profile, SCAN_PROFILE_LABELS)} (`{scan_profile}`)",
+        f"- Case ID / 案例编号: `{case_id or 'not supplied'}`",
+        f"- Package root / 材料目录: `{manifest.get('root', 'not supplied')}`",
+        "",
+        "> Scope note / 范围提示：This report describes the supplied package and executed modules only; it does not prove correctness.",
+        "> 本报告只描述已提供材料和已执行模块范围；不证明研究或数据正确。",
+        "",
+    ]
+
+
+def render_must_resolve(summary: dict[str, Any]) -> list[str]:
+    queue = summary.get("action_queue") or empty_action_queue()
+    categories = queue.get("categories", {})
+    rows = categories.get("must_resolve", []) or []
+    lines = ["## Must Resolve / 必须处理", ""]
+    if not rows:
+        lines += [
+            "- No must-resolve item is currently listed within the supplied scope.",
+            "- 当前所供材料范围内未列出“必须处理”项。",
+            "",
+            "> Still review Materials Needed and Audit Coverage before treating the package as ready.",
+            "> 仍需查看“需要补充的材料”和“Audit Coverage”，再判断材料是否准备充分。",
+            "",
+        ]
+        return lines
+
+    table_rows = [["ID", "Risk / 风险", "Item / 项目", "Required action / 所需动作", "Suggested owner / 建议负责人", "Status / 状态"]]
+    for row in rows[:8]:
+        item = row.get("item") or row.get("action_type", "")
+        location = row.get("location", "")
+        if location:
+            item = f"{item} (`{location}`)"
+        table_rows.append([
+            row.get("action_id", ""),
+            row.get("risk_level", ""),
+            item,
+            row.get("required_action", ""),
+            row.get("owner", "unassigned"),
+            row.get("status", "unresolved"),
+        ])
+    lines += [table(table_rows)]
+    if len(rows) > 8:
+        lines += [f"_Additional must-resolve items appear in the full Presubmission Action Queue: {len(rows) - 8}._", ""]
+    lines += [
+        "> Follow-up language should request records or clarification without inferring intent.",
+        "> 跟进语言应请求记录或澄清，不推断主观意图。",
+        "",
+    ]
+    return lines
+
+
+def render_materials_needed(manifest: dict[str, Any], coverage: dict[str, Any] | None) -> list[str]:
+    lines = ["## Materials Needed / 需要补充的材料", ""]
+    missing_rows = [["Material / 材料", "Risk / 风险", "Why needed / 为什么需要"]]
+    for item in manifest.get("missing_materials", []):
+        category = str(item.get("category", ""))
+        missing_rows.append([
+            missing_material_label(category),
+            risk_label(item.get("risk_level", "R1")),
+            item.get("reason", "") or "Needed for source/raw-level verification. / 用于 source/raw 级别复核。",
+        ])
+    unreadable_count = int((coverage or {}).get("image_files_unreadable", 0) or 0)
+    if unreadable_count:
+        missing_rows.append([
+            "Readable image exports / 可读取图像导出",
+            risk_label("R1"),
+            (
+                f"{unreadable_count} supplied image file(s) could not be read by the audit; "
+                "provide readable PNG/JPG/TIFF exports or document why screening is not possible. / "
+                f"{unreadable_count} 个已提供图像文件无法读取；请补充可读取导出，或说明为何无法筛查。"
+            ),
+        ])
+    manifest_warning_count = int((coverage or {}).get("assembly_manifest_warning_count", 0) or 0)
+    if manifest_warning_count:
+        missing_rows.append([
+            "Corrected assembly manifest rows / 修正后的组图 manifest 行",
+            risk_label("R1"),
+            (
+                f"{manifest_warning_count} assembly manifest warning(s) were recorded; ignored rows do not "
+                "support traceability calibration until corrected. / "
+                f"记录到 {manifest_warning_count} 条组图 manifest 提示；被忽略的行在修正前不会用于可追溯校准。"
+            ),
+        ])
+    if len(missing_rows) > 1:
+        lines += [table(missing_rows)]
+    else:
+        lines += ["No missing expected material categories were reported.\n", "未报告预期材料类别缺失。\n"]
+    return lines
+
+
 def render_action_queue(summary: dict[str, Any]) -> list[str]:
     queue = summary.get("action_queue") or empty_action_queue()
     categories = queue.get("categories", {})
@@ -1414,6 +2323,13 @@ def render_findings(findings: list[dict[str, Any]]) -> list[str]:
             "**Recommended action / 建议动作**",
             "",
             item.get("recommended_action", "") or "Verify against source/raw records before escalation. / 升级处理前请先核对 source/raw 记录。",
+            "",
+            "**Copy-ready neutral follow-up / 可复制的中性跟进文字**",
+            "",
+            "- Clarification / 澄清："
+            f" {finding_response_templates(item)['neutral_inquiry_template']}",
+            "- Materials / 补材料："
+            f" {finding_response_templates(item)['material_request_template']}",
             "",
             f"_Note / 备注: {item.get('note', 'Calibrated finding; not a misconduct verdict. / 已校准发现；不是不端结论。')}_",
             "",
@@ -1529,56 +2445,16 @@ def render_report(
     validate_instance(summary, SUMMARY_SCHEMA, "audit summary")
     lines = [f"# {title}", ""]
     lines += render_quick_read(summary, manifest, findings, coverage, normalized, scan_profile)
+    lines += render_scope(normalized, manifest, case_id, scan_profile)
+    lines += render_must_resolve(summary)
+    lines += render_materials_needed(manifest, coverage)
+    lines += ["---", ""]
     lines += render_submission_readiness(summary)
     lines += render_action_queue(summary)
-    lines += ["## Scope / 范围", ""]
-    lines += [
-        f"- Mode / 模式: {label_pair(normalized, MODE_LABELS)} (`{mode}`)",
-        f"- Scan profile / 扫描档位: {label_pair(scan_profile, SCAN_PROFILE_LABELS)} (`{scan_profile}`)",
-        f"- Case ID / 案例编号: `{case_id or 'not supplied'}`",
-        f"- Package root / 材料目录: `{manifest.get('root', 'not supplied')}`",
-        "",
-    ]
     lines += render_coverage(coverage)
     lines += render_claim_coverage(claim_coverage)
     lines += render_writing_readiness(writing_readiness)
     lines += render_methodology_checklist(methodology_checklist)
-
-    lines += ["## Materials Needed / 需要补充的材料", ""]
-    missing_rows = [["Material / 材料", "Risk / 风险", "Why needed / 为什么需要"]]
-    for item in manifest.get("missing_materials", []):
-        category = str(item.get("category", ""))
-        missing_rows.append([
-            missing_material_label(category),
-            risk_label(item.get("risk_level", "R1")),
-            item.get("reason", "") or "Needed for source/raw-level verification. / 用于 source/raw 级别复核。",
-        ])
-    unreadable_count = int((coverage or {}).get("image_files_unreadable", 0) or 0)
-    if unreadable_count:
-        missing_rows.append([
-            "Readable image exports / 可读取图像导出",
-            risk_label("R1"),
-            (
-                f"{unreadable_count} supplied image file(s) could not be read by the audit; "
-                "provide readable PNG/JPG/TIFF exports or document why screening is not possible. / "
-                f"{unreadable_count} 个已提供图像文件无法读取；请补充可读取导出，或说明为何无法筛查。"
-            ),
-        ])
-    manifest_warning_count = int((coverage or {}).get("assembly_manifest_warning_count", 0) or 0)
-    if manifest_warning_count:
-        missing_rows.append([
-            "Corrected assembly manifest rows / 修正后的组图 manifest 行",
-            risk_label("R1"),
-            (
-                f"{manifest_warning_count} assembly manifest warning(s) were recorded; ignored rows do not "
-                "support traceability calibration until corrected. / "
-                f"记录到 {manifest_warning_count} 条组图 manifest 提示；被忽略的行在修正前不会用于可追溯校准。"
-            ),
-        ])
-    if len(missing_rows) > 1:
-        lines += [table(missing_rows)]
-    else:
-        lines += ["No missing expected material categories were reported.\n", "未报告预期材料类别缺失。\n"]
 
     if positive_evidence:
         lines += ["## Verified Traceability Evidence / 已验证可追溯证据", ""]

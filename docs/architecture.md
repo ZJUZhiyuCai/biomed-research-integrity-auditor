@@ -44,9 +44,11 @@ For a first-time, non-developer walkthrough see `docs/self-audit-guide.md`, and 
 
 ## Provenance-First Negative Calibration
 
-Similarity is not risk by itself. `provenance/build_resource_graph.py` creates resource nodes and declared provenance edges from `package_manifest.json`, `figure_source_map.json`, and `figure_assembly/assembly_manifest.csv`, `.yaml`, or `.txt`.
+Similarity is not risk by itself. `provenance/build_resource_graph.py` creates resource nodes and declared provenance edges from `package_manifest.json`, `figure_source_map.json`, and `figure_assembly/assembly_manifest.csv`, `.yaml`, `.txt`, or explicit-path `.pptx` slide text.
 
 Structured assembly manifests are preferred over parsed free text. The parser reads only explicit fields such as `figure_panel`, `source_record`, `relation_type`, and `modality`; notes and prose are treated as audit material, not instructions. Ordered prose phrases such as "figures map to..." are reported as manifest warnings and are not used to create expected-traceability edges.
+
+When no structured CSV/TSV/YAML manifest is supplied, the parser can also read `figure_assembly/*.pptx` slide text, speaker notes, and shape alt text. The orchestrator also writes `pptx_structure.json`, which records those text layers, package-relative path mentions, and explicit figure/source path pairs for assembly-manifest preparation. A PPTX text source creates a lower-confidence expected-traceability edge only when the same text layer explicitly contains both a figure-panel path and a raw/source-data path. Embedded PPTX and zip-based Keynote images are exported separately as presentation-layer intake artifacts; they are not converted into expected-traceability edges or treated as raw records by the parser.
 
 The image contextual joiner classifies each similarity edge before calibration:
 
@@ -65,6 +67,8 @@ This layer is designed to reduce high-risk false positives in clean-control and 
 ## Package-Internal Text Overlap
 
 `detectors/text/text_overlap_screen.py` screens only text supplied inside the audit package: manuscript, supplement, prior drafts, thesis chapters, preprints, and lab previous papers. It does not query the web, publisher corpora, Crossref, PubMed, Google Scholar, or external plagiarism databases.
+
+Supported text intake includes TXT/MD, machine-text PDF, OCR-capable scanned PDF when the OCR runtime is available, and DOCX body/caption/table text parsed from WordprocessingML. DOCX structure intake also writes `docx_structure.json` with body paragraphs, caption-like paragraphs, and Word tables for material-prep and claim-manifest drafting. It records structural warnings when comments, tracked revisions, or embedded objects/media are present, but it does not copy comment text, resolve revision history, or extract embedded object contents. Unreadable text containers emit R1 extraction coverage-gap candidates rather than being treated as clean screening.
 
 The detector normalizes paragraph text, assigns coarse sections, builds word n-gram shingles, and emits paragraph-pair candidates with overlap examples. Candidate types are calibrated by section and disclosure context:
 
@@ -97,7 +101,9 @@ Current expected behavior:
 - create package-internal text-overlap candidates against supplied prior/lab text when thresholds are met;
 - keep screening supplied non-PDF text in the same package.
 
-Scanned or image-only PDFs still require OCR. Figure and caption extraction are outside this benchmark.
+Scanned or image-only PDFs still require OCR. Figure images embedded inside PDFs can now be exported as presentation-layer intake artifacts, but those exports are not raw/source records and do not establish provenance by themselves.
+
+The orchestrator also writes `docx_structure.json`, `pdf_structure.json`, `xlsx_structure.json`, `prism_project_intake.json`, `fcs_metadata_intake.json`, `pdf_embedded_images.json`, `pptx_structure.json`, `pptx_embedded_images.json`, `key_embedded_images.json`, and `psd_preview_images.json` when relevant files are supplied. `docx_structure.json` records best-effort DOCX body paragraphs, caption-like paragraphs, and Word tables, with extraction errors and review-layer warnings for comments/tracked changes/embedded objects. `pdf_structure.json` records best-effort caption-like and table-like text blocks from machine-readable PDF text, with page numbers and extraction errors. `xlsx_structure.json` records workbook/sheet metadata, headers, formula counts, merged cells, hidden sheets, and figure/table-like sheet labels for material preparation; it is not statistical validation. `prism_project_intake.json` records GraphPad Prism PZFX table/graph metadata and possible graph-to-table hints for manifest preparation; these hints are not verified figure provenance. `fcs_metadata_intake.json` records FCS event counts, channel/marker labels, cytometer fields, dates, and compensation-keyword presence for MIFlowCyt-oriented material review; it does not reconstruct gates, validate compensation, or verify reported population frequencies. `pdf_embedded_images.json` records any raster images exported under `pdf_embedded_images/`; `pptx_structure.json` records PPTX slide text, speaker notes, shape alt text, and explicit package-relative path pairs; `pptx_embedded_images.json` records raster images exported under `pptx_embedded_images/`; `key_embedded_images.json` records raster images exported under `key_embedded_images/` from zip-based Keynote files; `psd_preview_images.json` records flattened previews exported under `psd_preview_images/` when a PSD file can be decoded. These are intake/review aids only: they do not infer figure-to-source provenance and do not change R0-R4 risk levels by themselves.
 
 ## Scanned-PDF OCR Benchmark
 
@@ -150,7 +156,7 @@ Detector candidates must not include `risk_level` or `calibrated_risk_level`.
 
 ## Human Report Contract
 
-`audit-report.md` is a human-first bilingual Markdown report, not a detector payload dump. It starts with a Quick Read, submission-readiness status, presubmission action queue, scope, audit coverage, claim coverage when supplied, methodology readiness, materials needed, verified traceability evidence, risk register, finding cards, compact action checklist, technical appendix, and integrity boundary. Finding cards summarize observations, reader-facing evidence metrics, benign explanations, resolving materials, and next actions. Raw detector payloads remain in `calibrated_findings.json`, detector output files, and the final machine-readable summary.
+`audit-report.md` is a human-first bilingual Markdown report, not a detector payload dump. Its first page is ordered for PI/co-author scanning: Quick Read, Scope, Must Resolve, and Materials Needed. After that, it shows submission-readiness status, the full presubmission action queue, audit coverage, claim coverage when supplied, methodology readiness, verified traceability evidence, risk register, finding cards, compact action checklist, technical appendix, and integrity boundary. Finding cards summarize observations, reader-facing evidence metrics, benign explanations, resolving materials, next actions, and copy-ready neutral follow-up/material-request text. Raw detector payloads remain in `calibrated_findings.json`, detector output files, and the final machine-readable summary.
 
 ## Audit Summary Contract
 
@@ -162,7 +168,9 @@ Reports end with exactly one `AUDIT_JSON_SUMMARY` block. In addition to calibrat
 - `claim_coverage`: optional claim-to-evidence completeness counts when `claim_manifest.csv` is supplied. This records whether claims are linked to source data, raw records, analysis code, and protocols; it does not validate scientific truth.
 - `methodology_checklist`: structured manual-review readiness prompts for wet-lab, animal, clinical, cell, flow, and omics reporting standards. It records supporting-material availability and missing categories; it does not determine ARRIVE/CONSORT/ICMJE/MIFlowCyt/omics compliance.
 - `scan_profile`: `quick`, `standard`, or `deep`, so readers can tell whether a run was a fast first pass or a broader audit.
-- `action_queue`: four workflow buckets (`must_resolve`, `provide_materials`, `clarify_or_disclose`, `low_priority_checks`) with owner/status tracker fields. This is a repair queue, not a pass/fail score.
+- `action_queue`: four workflow buckets (`must_resolve`, `provide_materials`, `clarify_or_disclose`, `low_priority_checks`) with owner/status tracker fields plus neutral inquiry/material-request templates for finding-derived follow-up. This is a repair queue, not a pass/fail score.
+
+The local webapp Package Prep panel can write both `figure_assembly/assembly_manifest.csv` and package-root `claim_manifest.csv` with package-relative path checks. Filename starter suggestions normalize simple zero-padding and separator differences such as `Fig 02-A` versus `F2A`; tied filename candidates are surfaced as warnings and are not auto-linked. Browser-created rows are still audit material, not proof of traceability or claim correctness.
 
 Positive provenance is not proof of authenticity; it only records traceability within supplied materials. Audit coverage is descriptive scope, not a quality score.
 
@@ -174,14 +182,30 @@ Positive provenance is not proof of authenticity; it only records traceability w
 - `file_hash_manifest.json`: compact file hash manifest for leave-behind review.
 - `claim_coverage.json` / `claim_coverage.csv`: claim-to-evidence coverage from `claim_manifest.csv` if supplied.
 - `methodology_checklist.json` / `methodology_checklist.csv`: reporting-standard readiness checklist for manual review.
-- `missing_materials.csv`, `verified_traceability.csv`, `unresolved_actions.csv`, `resolved_actions.csv`, and `accepted_with_reason.csv`: CSV exports for co-author review.
-- `submission_qc_packet/`: a bundled packet containing the report, machine-readable summary, coverage, calibrated findings, hash manifest, claim coverage, methodology checklist, action trackers, and `author_signoff.yaml`.
+- `docx_structure.json`: best-effort DOCX paragraph/caption/table intake.
+- `pdf_structure.json`: best-effort PDF caption/table-like text intake.
+- `xlsx_structure.json`: best-effort XLSX workbook/sheet metadata intake for source-data preparation, not statistical validation.
+- `prism_project_intake.json`: best-effort GraphPad Prism PZFX table/graph metadata and possible graph-to-table hints for manifest preparation, not verified provenance.
+- `fcs_metadata_intake.json`: best-effort FCS event/channel/instrument metadata intake for MIFlowCyt-oriented material review, not gating or compensation validation.
+- `pdf_embedded_images.json` / `pdf_embedded_images/`: best-effort PDF embedded-raster export as presentation-layer intake artifacts, not raw/source provenance proof.
+- `pptx_structure.json`: best-effort PPTX slide text, speaker-note, alt-text, and path-pair intake for assembly-manifest preparation.
+- `pptx_embedded_images.json` / `pptx_embedded_images/`: best-effort PPTX embedded-raster export as presentation-layer assembly artifacts, not raw/source provenance proof.
+- `key_embedded_images.json` / `key_embedded_images/`: best-effort zip-based Keynote embedded-raster export as presentation-layer assembly artifacts, not raw/source provenance proof.
+- `psd_preview_images.json` / `psd_preview_images/`: best-effort flattened PSD preview export as presentation-layer assembly artifacts, not raw/source or layer provenance proof.
+- `image_metadata.json`: best-effort image frame/channel/Z/T metadata intake, including OME/TIFF fields when present. It records acquisition-context clues for manual review and multi-channel checks; it is not an authenticity or same-field clearance decision.
+- `channel_metadata_candidates.json`: a conservative detector output that cross-checks declared same-field/different-channel provenance edges against available image metadata. Missing multichannel acquisition metadata is calibrated as an R1 verification gap; present OME/channel metadata is supporting context only, not clearance.
+- `splice_forensics_candidates.json`: weak ELA/JPEG residual, JPEG-ghost profile, noise-map, and CFA-like grid triage for localized export/residual anomalies in supplied images. Signals are capped as weak forensic prompts requiring raw files or external specialist review; they are not splice/manipulation conclusions, robust JPEG-ghost analysis, or sensor-pattern authentication.
+- PSD layers, masks, adjustment history, opaque assembly containers such as `.ai`/`.indd`, and legacy `.ppt` are inventoried as R1 coverage gaps requiring panel exports and manual review even when a flattened PSD preview was exported.
+- `missing_materials.csv`, `verified_traceability.csv`, `unresolved_actions.csv`, `resolved_actions.csv`, and `accepted_with_reason.csv`: CSV exports for co-author review. Action trackers include neutral inquiry/material-request text so teams can ask for clarification without turning candidates into accusations.
+- `submission_qc_packet/`: a bundled packet containing the report, machine-readable summary, coverage, calibrated findings, hash manifest, claim coverage, methodology checklist, action trackers, audience-specific editable drafts, `image_review_packet/` when image files are present, and `author_signoff.yaml`.
+- `submission_qc_packet/audience_exports/`: PI, co-author, and journal/reviewer Markdown drafts generated from the neutral action queue. These are communication starting points, not automatically final responses.
+- `submission_qc_packet/image_review_packet/`: a target list for external image-review tools or human figure review. It includes image candidate rows, `external_tool_handoff.csv`/`EXTERNAL_TOOL_HANDOFF.md` with recommended review route and review question, an editable `image_review_tracker.csv` for reviewer/status/tool/result/attachment follow-up, image file hashes, copied crop evidence when available, detector payloads, and explicit data-governance notes; it is not an external-search result or a verdict. The webapp links handoff rows back to action-tracker rows through `source_finding_id` when available, so review status and attachment references stay visible in the team workflow.
 
-Source-data assay YAMLs live under `references/source_data_templates/` as human preparation templates, not under `schemas/` as active detector contracts. The current automated source-data modules screen CSV/TSV/XLSX tables for statistical consistency and unit-of-analysis issues; assay-specific template checks remain manual unless a future detector explicitly loads those templates.
+Source-data assay YAMLs live under `references/source_data_templates/` as human preparation templates, not under `schemas/` as active detector contracts. The current automated source-data modules screen CSV/TSV/XLSX tables and basic GraphPad Prism `.pzfx` XML column tables for statistical consistency; `xlsx_structure.json` separately indexes workbook/sheet metadata for preparation, and `prism_project_intake.json` separately indexes PZFX table/graph metadata and possible graph-to-table hints for manifest preparation. Unit-of-analysis screening remains CSV/TSV/XLSX-oriented. Assay-specific template checks remain manual unless a future detector explicitly loads those templates. Complex or unparseable Prism projects emit an R1 extraction gap rather than silent coverage.
 
 These outputs are versioning and review artifacts. They must not be displayed as a pass/fail approval, integrity score, or clean-manuscript certificate.
 
-Re-audit comparison is available through `scripts/compare_audit_runs.py` or `scripts/audit_package.py --compare-to <previous_output_dir>`. The diff summarizes changes in risk counts, missing materials, verified provenance, unresolved actions, and claim-evidence gaps.
+Re-audit comparison is available through `scripts/compare_audit_runs.py` or `scripts/audit_package.py --compare-to <previous_output_dir>`. The diff summarizes changes in risk counts, missing materials, verified provenance, unresolved actions, claim-evidence gaps, and finding movement (`no longer listed`, `new`, `still present`). It writes machine-readable JSON, CSV, and a human-readable `re_audit_diff.md`; the web app renders the main movement lists without treating the diff as a pass/fail score.
 
 ## Risk Calibration
 
@@ -199,21 +223,25 @@ Re-audit comparison is available through `scripts/compare_audit_runs.py` or `scr
 ## P0 Detectors
 
 - `detectors/image/global_near_duplicate.py`: global image near-duplicate clusters using average hash, dHash, pHash-style DCT, and D4 transforms.
+- `detectors/image/keypoint_geometric_match.py`: OpenCV ORB keypoint matching with RANSAC homography for rotated, rescaled, cropped, or perspective-shifted image similarity candidates. Figure-to-raw matches can become positive traceability; declared same-field/same-membrane figure-to-figure matches remain R1 verification items rather than automatic clearance.
 - `detectors/image/local_patch_reuse.py`: conservative overlapping-tile local patch reuse and same-image copy-move candidates with D4 confirmation, NumPy-backed normalized cross-correlation, evidence crop export, and a guarded low-contrast same-image probe that requires same-displacement tile support. Runtime tile/comparison budgets are reported as R1 `audit_coverage_gap` candidates rather than being treated as complete screening.
 - `detectors/text/external_literature_search.py`: external phrase-search candidates with query/result provenance and provider-gap reporting.
 - `detectors/text/text_overlap_screen.py`: package-internal paragraph overlap candidates using section-aware n-gram similarity.
 - `detectors/stats/pseudoreplication_screen.py`: possible unit-of-analysis mismatch candidates from biological and technical replicate columns.
 - `skill/.../stats_consistency_check.py`: direct summary consistency (SD/SEM/n, p-value range/validity, integer-count feasibility) plus weak forensic statistical screens. Digit/rounding weak screens require at least 8 comparable values by default; integer-count feasibility requires n >= 6 and propagates reported mean/SD precision. Benford-style first-digit prompts and p-value-clustering prompts are implemented as weak, sample-gated triage screens capped at R2.
-- `provenance/parse_assembly_manifest.py`: declared figure-to-raw/source links from assembly manifests.
+- `provenance/parse_assembly_manifest.py`: declared figure-to-raw/source links from structured manifests, text manifests, and explicit-path PPTX text layers.
 
 Image screening boundaries are part of `audit_coverage`, not hidden in developer notes. The report
 states that current automated image detectors cover package-local whole-image near-duplicates,
-D4 whole-image transforms, local patch reuse, same-image copy-move, limited low-contrast probing,
-and multi-frame TIFF-like frame screening. It also states that arbitrary-angle rotations,
-perspective/elastic deformation, substantial rescaling, splice forensics, JPEG ghosting,
-CFA/noise inconsistency, and lighting/shadow inconsistency are not covered by the current automated
-image screens. This keeps a "no image finding" result from reading like complete image-forensics
-clearance.
+D4 whole-image transforms, ORB/RANSAC keypoint geometric matches, local patch reuse,
+same-image copy-move, limited low-contrast probing, multi-frame TIFF-like frame screening,
+and weak ELA/JPEG residual, JPEG-ghost profile, noise-map, and CFA-like grid triage.
+It also states that elastic/nonrigid deformation, severe perspective distortion, very low-feature
+images, specialist sensor-pattern authentication beyond weak CFA-like grid triage, robust JPEG
+ghost analysis beyond weak recompression-profile prompts, and lighting/shadow inconsistency are
+not covered by the current automated image screens. Weak ELA/JPEG residual, JPEG-ghost profile,
+noise-map, and CFA-like grid triage is available only as an R2-capped prompt. This keeps a "no image finding" result
+from reading like complete image-forensics clearance.
 - `provenance/build_resource_graph.py`: package-level resource graph for provenance-aware calibration.
 
 ## Baseline Runner
