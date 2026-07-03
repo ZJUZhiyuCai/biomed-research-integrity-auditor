@@ -217,7 +217,8 @@ def role_from_path(path: str, provenance: dict[str, Any]) -> str:
 
 
 def undirected_pair(left: str, right: str) -> tuple[str, str]:
-    return tuple(sorted((left, right)))
+    first, second = sorted((left, right))
+    return first, second
 
 
 def is_authoritative_traceability_edge(edge: dict[str, Any], provenance: dict[str, Any]) -> bool:
@@ -581,15 +582,16 @@ def enrich_candidates(payload: dict[str, Any], package: Path, provenance_path: P
                     "members": sorted({path for edge in positive_edges for path in edge_paths(edge) if path}),
                 })
             reportable_edges = risk_edges_for_cluster(classified_edges)
-            item = candidate_from_edges(
+            updated_item = candidate_from_edges(
                 item,
                 reportable_edges,
                 positive_edges,
                 context,
                 str(provenance_path) if provenance_path else None,
             )
-            if item is None:
+            if updated_item is None:
                 continue
+            item = updated_item
         enriched.append(item)
 
     context_read_errors = [

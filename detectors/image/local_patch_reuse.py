@@ -77,7 +77,9 @@ def transformed(img: Any, transform_name: str) -> Any:
         return img.copy()
     from PIL import Image
 
-    return img.transpose(getattr(Image.Transpose, TRANSFORMS[transform_name]))
+    transpose_name = TRANSFORMS[transform_name]
+    assert transpose_name is not None
+    return img.transpose(getattr(Image.Transpose, transpose_name))
 
 
 def collect_images(root: Path) -> list[Path]:
@@ -85,7 +87,8 @@ def collect_images(root: Path) -> list[Path]:
 
 
 def undirected_pair(left: str, right: str) -> tuple[str, str]:
-    return tuple(sorted((left, right)))
+    first, second = sorted((left, right))
+    return first, second
 
 
 def bounds_to_region(bounds: tuple[int, int, int, int]) -> dict[str, int]:
@@ -691,8 +694,8 @@ def scan(
     routing = resolve_panel_modality_routing(provenance)
     excluded_panel_paths = {item["panel"] for item in routing.excluded_panels}
     image_paths = collect_images(root)
-    images = []
-    errors = []
+    images: list[dict[str, Any]] = []
+    errors: list[dict[str, str]] = []
     limit_records: list[dict[str, Any]] = []
     comparison_budget = ComparisonBudget(max_total_tile_comparisons)
     panels_excluded_from_deep_scan = list(routing.excluded_panels)
@@ -753,7 +756,7 @@ def scan(
         except Exception as exc:  # noqa: BLE001 - unreadable files should not abort an audit.
             errors.append({"path": str(path.relative_to(root)), "error": str(exc)})
 
-    candidates = []
+    candidates: list[dict[str, Any]] = []
     same_image_candidate_count = 0
     excluded_pair_count = 0
     for i, left in enumerate(images):

@@ -81,9 +81,10 @@ def fixture_search(query: str, fixture: dict[str, Any]) -> list[dict[str, Any]]:
 def europepmc_search(query: str, rows: int, timeout: float) -> list[dict[str, Any]]:
     import requests
 
+    params: dict[str, str | int] = {"query": f'"{query}"', "format": "json", "pageSize": rows}
     response = requests.get(
         "https://www.ebi.ac.uk/europepmc/webservices/rest/search",
-        params={"query": f'"{query}"', "format": "json", "pageSize": rows},
+        params=params,
         timeout=timeout,
     )
     response.raise_for_status()
@@ -107,9 +108,10 @@ def europepmc_search(query: str, rows: int, timeout: float) -> list[dict[str, An
 def crossref_search(query: str, rows: int, timeout: float) -> list[dict[str, Any]]:
     import requests
 
+    params: dict[str, str | int] = {"query.bibliographic": query, "rows": rows}
     response = requests.get(
         "https://api.crossref.org/works",
-        params={"query.bibliographic": query, "rows": rows},
+        params=params,
         timeout=timeout,
         headers={"User-Agent": "biomed-research-integrity-auditor/0.6.2"},
     )

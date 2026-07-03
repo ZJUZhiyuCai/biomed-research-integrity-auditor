@@ -105,7 +105,9 @@ def transformed(img: Any, transform_name: str) -> Any:
         return img.copy()
     from PIL import Image
 
-    return img.transpose(getattr(Image.Transpose, TRANSFORMS[transform_name]))
+    transpose_name = TRANSFORMS[transform_name]
+    assert transpose_name is not None
+    return img.transpose(getattr(Image.Transpose, transpose_name))
 
 
 def collect_images(root: Path) -> list[Path]:
@@ -113,12 +115,12 @@ def collect_images(root: Path) -> list[Path]:
 
 
 def connected_components(nodes: list[str], edges: list[dict[str, Any]]) -> list[list[str]]:
-    adjacency = {node: set() for node in nodes}
+    adjacency: dict[str, set[str]] = {node: set() for node in nodes}
     for edge in edges:
         adjacency[edge["left"]].add(edge["right"])
         adjacency[edge["right"]].add(edge["left"])
 
-    components = []
+    components: list[list[str]] = []
     seen: set[str] = set()
     for node in nodes:
         if node in seen or not adjacency[node]:
@@ -138,7 +140,7 @@ def connected_components(nodes: list[str], edges: list[dict[str, Any]]) -> list[
 
 
 def cluster_candidates(edges: list[dict[str, Any]], nodes: list[str], threshold: int) -> list[dict[str, Any]]:
-    candidates = []
+    candidates: list[dict[str, Any]] = []
     for component in connected_components(nodes, edges):
         component_edges = [
             edge for edge in edges
@@ -185,8 +187,8 @@ def scan(root: Path, threshold: int, hash_size: int) -> dict[str, Any]:
         raise SystemExit("Pillow is required: python3 -m pip install pillow") from exc
 
     image_paths = collect_images(root)
-    images = []
-    errors = []
+    images: list[dict[str, Any]] = []
+    errors: list[dict[str, str]] = []
     for path in image_paths:
         try:
             with Image.open(path) as img:
@@ -216,7 +218,7 @@ def scan(root: Path, threshold: int, hash_size: int) -> dict[str, Any]:
                     method: hamming(left_hashes[method], right_hashes[method])
                     for method in left_hashes
                 }
-                min_method = min(distances, key=distances.get)
+                min_method = min(distances, key=lambda method: distances[method])
                 score = distances[min_method]
                 if best is None or score < best["distance"]:
                     best = {

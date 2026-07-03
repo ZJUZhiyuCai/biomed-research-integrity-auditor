@@ -68,7 +68,7 @@ def resized_gray_array(img: Any, max_dimension: int) -> tuple[np.ndarray, float]
     return resized, scale
 
 
-def detect_features(gray: np.ndarray, orb: cv2.ORB) -> tuple[list[Any], np.ndarray | None]:
+def detect_features(gray: np.ndarray, orb: Any) -> tuple[list[Any], np.ndarray | None]:
     keypoints, descriptors = orb.detectAndCompute(gray, None)
     return list(keypoints or []), descriptors
 
@@ -129,7 +129,7 @@ def has_nontrivial_geometric_change(
 
 
 def projected_corners(width: int, height: int, homography: np.ndarray) -> list[dict[str, float]]:
-    corners = np.float32([[0, 0], [width, 0], [width, height], [0, height]]).reshape(-1, 1, 2)
+    corners = np.asarray([[0, 0], [width, 0], [width, height], [0, height]], dtype=np.float32).reshape(-1, 1, 2)
     try:
         projected = cv2.perspectiveTransform(corners, normalize_homography(homography)).reshape(-1, 2)
     except Exception:  # noqa: BLE001 - corner projection is descriptive evidence only.
@@ -251,7 +251,7 @@ def compare_pair(
     if len(left_descriptors) < 2 or len(right_descriptors) < 2:
         return [], 0, 0.0, None
     knn_matches = matcher.knnMatch(left_descriptors, right_descriptors, k=2)
-    good_matches = []
+    good_matches: list[Any] = []
     for pair in knn_matches:
         if len(pair) < 2:
             continue
@@ -261,8 +261,8 @@ def compare_pair(
     if len(good_matches) < min_good_matches:
         return good_matches, 0, 0.0, None
 
-    left_points = np.float32([left["keypoints"][match.queryIdx].pt for match in good_matches]).reshape(-1, 1, 2)
-    right_points = np.float32([right["keypoints"][match.trainIdx].pt for match in good_matches]).reshape(-1, 1, 2)
+    left_points = np.asarray([left["keypoints"][match.queryIdx].pt for match in good_matches], dtype=np.float32).reshape(-1, 1, 2)
+    right_points = np.asarray([right["keypoints"][match.trainIdx].pt for match in good_matches], dtype=np.float32).reshape(-1, 1, 2)
     homography, mask = cv2.findHomography(left_points, right_points, cv2.RANSAC, ransac_reprojection_threshold)
     if homography is None or mask is None:
         return good_matches, 0, 0.0, None
@@ -296,15 +296,15 @@ def scan(
     provenance = load_provenance(provenance_path)
     routing = resolve_panel_modality_routing(provenance)
     excluded_panel_paths = {item["panel"] for item in routing.excluded_panels}
-    orb = cv2.ORB_create(
+    orb = cv2.ORB_create(  # type: ignore[attr-defined]
         nfeatures=max_features,
         scaleFactor=1.2,
         nlevels=8,
         fastThreshold=7,
     )
     matcher = cv2.BFMatcher(cv2.NORM_HAMMING)
-    images = []
-    errors = []
+    images: list[dict[str, Any]] = []
+    errors: list[dict[str, str]] = []
     for path in collect_images(root):
         rel_path = display_path(path, root)
         if rel_path.startswith("figures/") and rel_path in excluded_panel_paths:
@@ -337,7 +337,7 @@ def scan(
         "min_scale_delta": min_scale_delta,
         "min_perspective_score": min_perspective_score,
     }
-    candidates = []
+    candidates: list[dict[str, Any]] = []
     pair_count = 0
     exhausted = False
     for left, right in itertools.combinations(images, 2):

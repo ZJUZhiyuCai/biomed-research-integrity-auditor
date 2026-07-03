@@ -60,7 +60,7 @@ def build_nodes(manifest: dict[str, Any]) -> tuple[list[dict[str, Any]], dict[st
 
 
 def load_links(paths: list[Path]) -> list[dict[str, Any]]:
-    links = []
+    links: list[dict[str, Any]] = []
     for path in paths:
         if not path.exists():
             continue
@@ -70,8 +70,8 @@ def load_links(paths: list[Path]) -> list[dict[str, Any]]:
 
 
 def build_edges(links: list[dict[str, Any]], path_to_id: dict[str, str]) -> tuple[list[dict[str, Any]], list[str]]:
-    edges = []
-    warnings = []
+    edges: list[dict[str, Any]] = []
+    warnings: list[str] = []
     seen = set()
     for link in links:
         source_path = str(link.get("source_path", ""))

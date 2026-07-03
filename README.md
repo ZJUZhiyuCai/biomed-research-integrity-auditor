@@ -33,9 +33,11 @@ python3.11 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
-python -m pip install -e .
+python -m pip install -e ".[webapp,ocr]"
 make preflight PYTHON=.venv/bin/python
 ```
+
+For CLI-only use, `python -m pip install -e .` is enough. Add extras only when needed: `.[webapp]` for the local web UI, `.[ocr]` for scanned-PDF OCR Python bindings, and `.[dev]` for contributor tools. The `requirements.txt` file remains the all-features development/CI convenience install.
 
 For a repeatable deployment that also links commands into `~/.local/bin`:
 
@@ -366,7 +368,7 @@ ln -s "$(pwd)/skill/biomed-research-integrity-auditor" ~/.codex/skills/biomed-re
 
 ## Contributing and security
 
-Please read [`CONTRIBUTING.md`](CONTRIBUTING.md) before opening a PR. Keep detector outputs as candidates, preserve neutral language, and do not commit private manuscripts, raw data, local audit outputs, or machine-specific paths.
+Please read [`CONTRIBUTING.md`](CONTRIBUTING.md) and [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md) before opening a PR. Keep detector outputs as candidates, preserve neutral language, and do not commit private manuscripts, raw data, local audit outputs, or machine-specific paths.
 
 Report security-sensitive issues using [`SECURITY.md`](SECURITY.md). Do not post exploit details or private research material in public issues.
 

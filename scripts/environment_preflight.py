@@ -13,7 +13,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 NODE_REQUIREMENT = "Node.js >=20.19.0 or >=22.12.0"
-REQUIRED_MODULES = [
+CORE_REQUIRED_MODULES = [
     "numpy",
     "cv2",
     "PIL",
@@ -23,9 +23,6 @@ REQUIRED_MODULES = [
     "pypdf",
     "fitz",
     "requests",
-    "fastapi",
-    "uvicorn",
-    "multipart",
     "detectors.image.global_near_duplicate",
     "detectors.image.channel_metadata_consistency",
     "detectors.image.keypoint_geometric_match",
@@ -34,9 +31,15 @@ REQUIRED_MODULES = [
     "detectors.stats.pseudoreplication_screen",
     "detectors.text.external_literature_search",
     "detectors.text.text_overlap_screen",
+]
+WEBAPP_REQUIRED_MODULES = [
+    "fastapi",
+    "uvicorn",
+    "multipart",
     "webapp.__main__",
     "webapp.backend.app",
 ]
+OCR_REQUIRED_MODULES = ["pytesseract"]
 
 
 class PreflightError(RuntimeError):
@@ -109,11 +112,9 @@ def ensure_node_runtime(frontend: Path, *, require_build: bool) -> str | None:
     return npm
 
 
-def check_python_runtime() -> list[str]:
+def check_python_modules(modules: list[str]) -> list[str]:
     failures = []
-    if sys.version_info < (3, 10):
-        failures.append(f"Python 3.10+ is required; found {sys.version.split()[0]}.")
-    for module in REQUIRED_MODULES:
+    for module in modules:
         try:
             importlib.import_module(module)
         except Exception as exc:  # noqa: BLE001 - user-facing preflight surface.
@@ -132,7 +133,14 @@ def check_tesseract(required: bool) -> list[str]:
 
 
 def run_preflight(root: Path, *, require_webapp: bool, require_ocr: bool) -> int:
-    failures = check_python_runtime()
+    failures = []
+    if sys.version_info < (3, 10):
+        failures.append(f"Python 3.10+ is required; found {sys.version.split()[0]}.")
+    failures.extend(check_python_modules(CORE_REQUIRED_MODULES))
+    if require_webapp:
+        failures.extend(check_python_modules(WEBAPP_REQUIRED_MODULES))
+    if require_ocr:
+        failures.extend(check_python_modules(OCR_REQUIRED_MODULES))
     notices = check_tesseract(require_ocr)
     if require_ocr:
         failures.extend(notices)
@@ -160,7 +168,10 @@ def run_preflight(root: Path, *, require_webapp: bool, require_ocr: bool) -> int
         print("  .venv/bin/python -m pip install --upgrade pip")
         print("  .venv/bin/python -m pip install -r requirements.txt")
         if require_webapp:
+            print("  Or install web UI extras with: .venv/bin/python -m pip install -e '.[webapp]'")
             print(f"  Install {NODE_REQUIREMENT} for the local web UI.")
+        if require_ocr:
+            print("  Or install OCR extras with: .venv/bin/python -m pip install -e '.[ocr]'")
         return 1
     print("Environment preflight passed.")
     return 0

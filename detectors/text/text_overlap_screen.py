@@ -411,7 +411,7 @@ def extraction_gap_candidate(error: dict[str, Any], idx: int) -> dict[str, Any]:
 
 def scan(root: Path, ngram: int, threshold: float, min_tokens: int) -> dict[str, Any]:
     paragraphs: list[Paragraph] = []
-    errors = []
+    errors: list[dict[str, str]] = []
     for path, category in collect_text_files(root):
         try:
             paragraphs.extend(parse_paragraphs(root, path, category, ngram, min_tokens))
@@ -431,7 +431,8 @@ def scan(root: Path, ngram: int, threshold: float, min_tokens: int) -> dict[str,
         for right in paragraphs[idx + 1:]:
             if not allowed_pair(left, right):
                 continue
-            key = tuple(sorted((left.paragraph_id, right.paragraph_id)))
+            first, second = sorted((left.paragraph_id, right.paragraph_id))
+            key = (first, second)
             if key in seen:
                 continue
             score = jaccard(left.shingles, right.shingles)

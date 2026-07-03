@@ -112,7 +112,7 @@ def screen_table(path: Path, rows: list[dict[str, str]]) -> list[dict[str, Any]]
         key = row.get(group_col, "all") if group_col else "all"
         buckets[key].append(row)
 
-    candidates = []
+    candidates: list[dict[str, Any]] = []
     for group, group_rows in buckets.items():
         biological_units = {row.get(biological, "") for row in group_rows if row.get(biological, "")}
         technical_units = {(row.get(biological, ""), row.get(technical, "")) for row in group_rows if row.get(technical, "")}
@@ -158,8 +158,8 @@ def screen_table(path: Path, rows: list[dict[str, str]]) -> list[dict[str, Any]]
 
 def scan(root: Path) -> dict[str, Any]:
     files = collect_files(root)
-    candidates = []
-    errors = []
+    candidates: list[dict[str, Any]] = []
+    errors: list[dict[str, str]] = []
     for file_path in files:
         try:
             for table_path, rows in read_tables(file_path):

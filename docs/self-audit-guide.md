@@ -157,7 +157,7 @@ python3.11 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
-python -m pip install -e .
+python -m pip install -e ".[webapp,ocr]"
 ```
 
 Run the audit (internal pre-submission mode is the default):

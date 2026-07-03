@@ -33,9 +33,11 @@ python3.11 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
-python -m pip install -e .
+python -m pip install -e ".[webapp,ocr]"
 make preflight PYTHON=.venv/bin/python
 ```
+
+如果只用 CLI，`python -m pip install -e .` 即可。按需添加 extras：`.[webapp]` 用于本地 Web UI，`.[ocr]` 用于 scanned-PDF OCR 的 Python 依赖，`.[dev]` 用于贡献者工具。`requirements.txt` 仍作为全功能开发/CI 环境的 convenience 安装文件。
 
 如果想一键部署并把命令链接到 `~/.local/bin`：
 
@@ -366,7 +368,7 @@ ln -s "$(pwd)/skill/biomed-research-integrity-auditor" ~/.codex/skills/biomed-re
 
 ## 贡献与安全
 
-提交 PR 前请先阅读 [`CONTRIBUTING.md`](CONTRIBUTING.md)。请保持 detector 输出为候选证据，保留中性语言，不要提交私有 manuscript、raw data、本地 audit 输出或带机器路径的文件。
+提交 PR 前请先阅读 [`CONTRIBUTING.md`](CONTRIBUTING.md) 和 [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md)。请保持 detector 输出为候选证据，保留中性语言，不要提交私有 manuscript、raw data、本地 audit 输出或带机器路径的文件。
 
 安全敏感问题请按 [`SECURITY.md`](SECURITY.md) 处理。不要在公开 issue 中发布 exploit 细节或非公开研究材料。
 

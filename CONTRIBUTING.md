@@ -2,6 +2,8 @@
 
 Thank you for helping improve Biomed Research Integrity Auditor. This project is a research-quality-control tool, not a misconduct detector, so contributions must preserve the integrity boundary as well as the code.
 
+Please also follow `CODE_OF_CONDUCT.md` in issues, pull requests, reviews, and project discussions.
+
 ## Project Boundary
 
 - Do not add language that concludes misconduct, fraud, fabrication, falsification, plagiarism, intent, or author guilt.
@@ -18,7 +20,7 @@ python3.11 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
-python -m pip install -e .
+python -m pip install -e ".[webapp,ocr,dev]"
 npm --prefix webapp/frontend ci
 make preflight PYTHON=.venv/bin/python
 ```
