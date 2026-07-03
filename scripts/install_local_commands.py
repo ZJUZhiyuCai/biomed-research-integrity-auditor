@@ -10,6 +10,8 @@ import shutil
 import subprocess
 import sys
 
+from scripts.environment_preflight import PreflightError, ensure_node_runtime
+
 
 ROOT = Path(__file__).resolve().parents[1]
 COMMANDS = (
@@ -68,9 +70,12 @@ def build_frontend(skip: bool) -> None:
     frontend = ROOT / "webapp" / "frontend"
     if not frontend.exists():
         return
-    npm = shutil.which("npm")
+    dist_index = frontend / "dist" / "index.html"
+    try:
+        npm = ensure_node_runtime(frontend, require_build=not dist_index.exists())
+    except PreflightError as exc:
+        raise SystemExit(str(exc)) from exc
     if not npm:
-        print("npm was not found; skipping frontend build. Install Node/npm to build the web UI.", file=sys.stderr)
         return
     if not (frontend / "node_modules").exists():
         run([npm, "install"], frontend)

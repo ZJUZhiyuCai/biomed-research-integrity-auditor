@@ -12,6 +12,8 @@ import subprocess
 import sys
 import webbrowser
 
+from scripts.environment_preflight import PreflightError, ensure_node_runtime
+
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_VENV = ROOT / ".venv"
@@ -76,12 +78,12 @@ def build_frontend(skip_frontend: bool) -> None:
     dist_index = frontend / "dist" / "index.html"
     if not frontend.exists():
         raise SystemExit("Missing webapp/frontend directory.")
-    npm = shutil.which("npm")
+    try:
+        npm = ensure_node_runtime(frontend, require_build=not dist_index.exists())
+    except PreflightError as exc:
+        raise SystemExit(str(exc)) from exc
     if not npm:
-        if dist_index.exists():
-            print("npm not found; using existing webapp/frontend/dist build.", file=sys.stderr)
-            return
-        raise SystemExit("npm is required to build the browser UI. Install Node/npm or use a release build with dist/.")
+        return
     if not (frontend / "node_modules").exists():
         run([npm, "install"], frontend)
     run([npm, "run", "build"], frontend)

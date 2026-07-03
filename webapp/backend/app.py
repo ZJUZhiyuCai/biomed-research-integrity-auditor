@@ -85,6 +85,7 @@ RELATION_ALLOWED_SOURCE_ROLES = {
     "same_membrane_reprobe": {"figures", "raw_images"},
 }
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp"}
+VENDOR_RAW_IMAGE_SUFFIXES = {".czi", ".nd2", ".lif", ".oib", ".oir", ".vsi", ".svs"}
 SOURCE_DATA_SUFFIXES = {".csv", ".tsv", ".xlsx", ".pzfx"}
 PDF_SUFFIXES = {".pdf"}
 DOCX_SUFFIXES = {".docx"}
@@ -701,7 +702,7 @@ def inventory_role(relative_path: Path) -> str:
     suffix = relative_path.suffix.lower()
     if top == "figures" and suffix in IMAGE_SUFFIXES:
         return "figures"
-    if top == "raw_images" and suffix in IMAGE_SUFFIXES:
+    if top == "raw_images" and suffix in IMAGE_SUFFIXES | VENDOR_RAW_IMAGE_SUFFIXES:
         return "raw_images"
     if top == "source_data" and suffix in SOURCE_DATA_SUFFIXES:
         return "source_data"

@@ -3502,10 +3502,12 @@ class EndToEndTests(unittest.TestCase):
             package = Path(tmp) / "format_gap_case"
             (package / "manuscript").mkdir(parents=True)
             (package / "source_data").mkdir()
+            (package / "raw_images").mkdir()
             (package / "supplementary").mkdir()
             (package / "manuscript" / "draft.doc").write_bytes(b"legacy word container placeholder")
             (package / "source_data" / "figure_values.xls").write_bytes(b"legacy excel placeholder")
             (package / "source_data" / "figure_values.pzfx").write_text("<GraphPadPrismFile />", encoding="utf-8")
+            (package / "raw_images" / "field_001.czi").write_bytes(b"vendor raw container placeholder")
             (package / "supplementary" / "Figure_S1.pdf").write_text(
                 "Supplementary figure container placeholder.\n",
                 encoding="utf-8",
@@ -3529,7 +3531,7 @@ class EndToEndTests(unittest.TestCase):
                 for item in calibrated["findings"]
                 if item.get("module") == "audit.format_coverage"
             ]
-            self.assertEqual(len(format_gaps), 3)
+            self.assertEqual(len(format_gaps), 4)
             self.assertTrue(all(item["calibrated_risk_level"] == "R1" for item in format_gaps))
             gap_types = {
                 item["evidence"]["gap_type"]
@@ -3539,11 +3541,12 @@ class EndToEndTests(unittest.TestCase):
                 "document_text_container_not_screened",
                 "legacy_excel_source_not_screened",
                 "pdf_embedded_figures_not_image_screened",
+                "vendor_raw_image_container_requires_metadata_export",
             })
 
             audit_summary = json.loads((out / "AUDIT_JSON_SUMMARY.json").read_text(encoding="utf-8"))
             coverage = audit_summary["audit_coverage"]
-            self.assertEqual(coverage["unsupported_relevant_file_count"], 3)
+            self.assertEqual(coverage["unsupported_relevant_file_count"], 4)
             self.assertIn("unsupported relevant file formats", audit_summary["materials_missing"])
             actions = [
                 row
@@ -3552,12 +3555,14 @@ class EndToEndTests(unittest.TestCase):
                 if row.get("source") == "AUDIT_JSON_SUMMARY.findings"
                 and row.get("action_type") in {"audit_coverage_gap", "source data extraction gap"}
             ]
-            self.assertEqual(len(actions), 4)
+            self.assertEqual(len(actions), 5)
             report = (out / "audit-report.md").read_text(encoding="utf-8")
             self.assertIn("Relevant files not automatically screened / 相关但未自动筛查的文件", report)
             self.assertIn("draft.doc", report)
             self.assertIn("figure_values.xls", report)
             self.assertIn("figure_values.pzfx", report)
+            self.assertIn("field_001.czi", report)
+            self.assertIn("OME-TIFF", report)
             self.assertIn("Figure_S1.pdf", report)
             self.assertTrue(any(
                 item["finding_type"] == "source data extraction gap"

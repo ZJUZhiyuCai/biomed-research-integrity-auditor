@@ -426,7 +426,7 @@ def evidence_metric_lines(evidence: Any) -> list[str]:
         for key, label in (
             ("best_hamming_distance", "Hamming distance"),
             ("hash_distance", "Tile hash distance"),
-            ("score", "Local similarity score"),
+            ("score", "Local similarity metric"),
             ("tile_hit_count", "Matching tile count"),
             ("good_matches", "Keypoint good matches"),
             ("inlier_count", "RANSAC inliers"),

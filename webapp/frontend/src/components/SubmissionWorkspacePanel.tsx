@@ -7,6 +7,7 @@ import { ClipboardList, Copy, Download, FileArchive, GitCompare, Paperclip, Penc
 import { artifactUrl, qcPacketUrl } from "../api";
 import type {
   ActionTrackerRow,
+  ActionTrackers,
   ClaimCoverage,
   CorrectionPlanRow,
   ImageReviewHandoffRow,
@@ -21,7 +22,7 @@ import { EmptyState, Metric, SectionTitle } from "./primitives";
 export function SubmissionWorkspacePanel({
   auditId,
   claimCoverage,
-  actionRows,
+  actionTrackers,
   correctionRows,
   reAuditDiff,
   qcPacket,
@@ -33,7 +34,7 @@ export function SubmissionWorkspacePanel({
 }: {
   auditId: string;
   claimCoverage?: ClaimCoverage | null;
-  actionRows: ActionTrackerRow[];
+  actionTrackers?: ActionTrackers;
   correctionRows: CorrectionPlanRow[];
   reAuditDiff?: ReAuditDiff | null;
   qcPacket?: SubmissionQCPacket;
@@ -60,7 +61,7 @@ export function SubmissionWorkspacePanel({
         <ClaimCoverageCard claimCoverage={claimCoverage} t={t} />
         <ActionTrackerCard
           auditId={auditId}
-          rows={actionRows}
+          actionTrackers={actionTrackers}
           onActionUpdate={onActionUpdate}
           onAttachmentUpload={onAttachmentUpload}
           t={t}
@@ -110,13 +111,13 @@ function ClaimCoverageCard({
 
 function ActionTrackerCard({
   auditId,
-  rows,
+  actionTrackers,
   onActionUpdate,
   onAttachmentUpload,
   t
 }: {
   auditId: string;
-  rows: ActionTrackerRow[];
+  actionTrackers?: ActionTrackers;
   onActionUpdate: (
     actionId: string,
     patch: Pick<ActionTrackerRow, "owner" | "status" | "human_note" | "accepted_with_reason" | "attachment_reference">
@@ -124,16 +125,26 @@ function ActionTrackerCard({
   onAttachmentUpload: (targetType: "action" | "image_review", targetId: string, file: File) => Promise<string>;
   t: Labels;
 }) {
+  const groups = [
+    { key: "unresolved", title: t.unresolvedActions, rows: actionTrackers?.unresolved || [] },
+    { key: "resolved", title: t.resolvedActions, rows: actionTrackers?.resolved || [] },
+    { key: "accepted_with_reason", title: t.acceptedWithReason, rows: actionTrackers?.accepted_with_reason || [] }
+  ];
+  const unresolvedCount = groups[0].rows.length;
+  const totalRows = groups.reduce((sum, group) => sum + group.rows.length, 0);
+
   return (
     <MiniPanel
       title={t.actionTracker}
       action={<a className="text-link" href={artifactUrl(auditId, "unresolved_actions.csv")}>{t.downloadCsv}</a>}
     >
       <div className="tracker-summary">
-        <strong>{rows.length}</strong>
+        <strong>{unresolvedCount}</strong>
         <span>{t.unresolvedActions}</span>
+        <strong>{totalRows}</strong>
+        <span>{t.trackedActions}</span>
       </div>
-      {rows.length === 0 ? (
+      {totalRows === 0 ? (
         <EmptyState text={t.notExecutedYet} />
       ) : (
         <div className="tracker-table-wrap">
@@ -152,20 +163,59 @@ function ActionTrackerCard({
               </tr>
             </thead>
             <tbody>
-              {rows.map((row) => (
-                <ActionEditorRow
-                  key={row.action_id || row.required_action}
-                  row={row}
-                  onActionUpdate={onActionUpdate}
-                  onAttachmentUpload={onAttachmentUpload}
-                  t={t}
-                />
+              {groups.map((group) => (
+                group.rows.length > 0 ? (
+                  <ActionTrackerGroup
+                    key={group.key}
+                    title={group.title}
+                    rows={group.rows}
+                    onActionUpdate={onActionUpdate}
+                    onAttachmentUpload={onAttachmentUpload}
+                    t={t}
+                  />
+                ) : null
               ))}
             </tbody>
           </table>
         </div>
       )}
     </MiniPanel>
+  );
+}
+
+function ActionTrackerGroup({
+  title,
+  rows,
+  onActionUpdate,
+  onAttachmentUpload,
+  t
+}: {
+  title: string;
+  rows: ActionTrackerRow[];
+  onActionUpdate: (
+    actionId: string,
+    patch: Pick<ActionTrackerRow, "owner" | "status" | "human_note" | "accepted_with_reason" | "attachment_reference">
+  ) => Promise<void>;
+  onAttachmentUpload: (targetType: "action" | "image_review", targetId: string, file: File) => Promise<string>;
+  t: Labels;
+}) {
+  return (
+    <>
+      <tr className="action-group-row">
+        <td colSpan={9}>
+          {title} · {rows.length}
+        </td>
+      </tr>
+      {rows.map((row) => (
+        <ActionEditorRow
+          key={row.action_id || row.required_action}
+          row={row}
+          onActionUpdate={onActionUpdate}
+          onAttachmentUpload={onAttachmentUpload}
+          t={t}
+        />
+      ))}
+    </>
   );
 }
 

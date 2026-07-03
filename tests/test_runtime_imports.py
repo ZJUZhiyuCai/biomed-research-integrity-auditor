@@ -16,6 +16,9 @@ class RuntimeImportTests(unittest.TestCase):
             "pypdf",
             "fitz",
             "requests",
+            "fastapi",
+            "uvicorn",
+            "multipart",
             "detectors.image.global_near_duplicate",
             "detectors.image.channel_metadata_consistency",
             "detectors.image.keypoint_geometric_match",
@@ -30,6 +33,8 @@ class RuntimeImportTests(unittest.TestCase):
             "scripts.xlsx_structure_extract",
             "scripts.prism_project_intake",
             "scripts.psd_preview_extract",
+            "webapp.__main__",
+            "webapp.backend.app",
         ]
         for module in modules:
             with self.subTest(module=module):

@@ -26,7 +26,7 @@
 
 ## 快速开始
 
-需要 Python 3.10+。
+需要 Python 3.10+。如果从源码构建本地 Web UI，还需要 Node.js 20.19+ 或 22.12+。
 
 ```bash
 python3.11 -m venv .venv
@@ -34,6 +34,7 @@ source .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 python -m pip install -e .
+make preflight PYTHON=.venv/bin/python
 ```
 
 如果想一键部署并把命令链接到 `~/.local/bin`：
@@ -147,7 +148,7 @@ material intake → structured extraction → provenance graph → detectors
 
 | 档位 | 适用场景 | 变化 |
 | --- | --- | --- |
-| `quick` | 第一次快速自查 | 保留快速 source/text/整图筛查；跳过 keypoint/local-patch 深度图像筛查和外部短语检索。 |
+| `quick` | 第一次快速自查 | 保留快速 source/text/整图筛查；跳过 keypoint/local-patch/copy-move/splice-forensics 深度图像筛查和外部短语检索。 |
 | `standard` | 默认投稿前 QC | 运行平衡检测集合，包括 keypoint 几何图像筛查；导出 submission QC packet。 |
 | `deep` | 回应质疑或重点复核 | 使用更敏感的图像相似度设置，在 coverage 中记录 deep-profile 参数。 |
 

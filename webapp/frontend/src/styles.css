@@ -962,6 +962,15 @@ button:disabled:hover {
   min-width: 980px;
 }
 
+.action-group-row td {
+  background: color-mix(in srgb, var(--panel) 82%, var(--accent-soft));
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
 .image-handoff-table {
   min-width: 1080px;
 }

@@ -218,7 +218,7 @@ export function Workspace(props: WorkspaceProps) {
           <SubmissionWorkspacePanel
             auditId={audit.audit_id}
             claimCoverage={detail.claim_coverage || detail.audit_summary?.claim_coverage}
-            actionRows={detail.action_trackers?.unresolved || []}
+            actionTrackers={detail.action_trackers}
             correctionRows={detail.correction_plan || []}
             reAuditDiff={detail.re_audit_diff}
             qcPacket={detail.submission_qc_packet}

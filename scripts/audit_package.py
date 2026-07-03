@@ -55,6 +55,7 @@ DETECTOR_SCHEMA = ROOT / "schemas" / "detector_output.schema.json"
 CALIBRATED_SCHEMA = ROOT / "schemas" / "calibrated_findings.schema.json"
 SUMMARY_SCHEMA = ROOT / "schemas" / "audit_summary.schema.json"
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp"}
+VENDOR_RAW_IMAGE_CONTAINER_EXTS = {".czi", ".nd2", ".lif", ".oib", ".oir", ".vsi", ".svs"}
 SOURCE_EXTS = {".csv", ".tsv", ".xlsx", ".pzfx"}
 TEXT_EXTS = {".txt", ".md", ".pdf", ".docx"}
 PDF_EXTS = {".pdf"}
@@ -1231,6 +1232,14 @@ def unsupported_format_groups(manifest: dict[str, Any]) -> list[dict[str, Any]]:
                 "Figure-assembly project containers may contain layered or presentation-level panels that are not fully parsed as provenance records by the automated audit.",
                 "Export final figure panels to PNG/JPG/TIFF, provide raw/uncropped images, and keep the original assembly project for manual review.",
                 ["PNG/JPG/TIFF panel exports", "raw or uncropped image files", "manual review of the original assembly project"],
+            )
+        elif extension in VENDOR_RAW_IMAGE_CONTAINER_EXTS and category == "raw_images":
+            add(
+                "vendor_raw_image_container_requires_metadata_export",
+                file_item,
+                "Vendor microscopy raw containers are inventoried as raw-image records, but the automated image metadata intake cannot parse their channel/Z-stack acquisition metadata without a supported export.",
+                "Export OME-TIFF or channel/Z metadata sidecars from the microscope software or Bio-Formats, and keep the original vendor raw container for manual review.",
+                ["OME-TIFF export", "channel/Z-stack metadata sidecar", "manual review of the original vendor raw container"],
             )
 
     result: list[dict[str, Any]] = []
@@ -2589,7 +2598,8 @@ def main() -> int:
         default="standard",
         help=(
             "Runtime depth. quick keeps fast presentation-layer screens and skips expensive local-patch "
-            "and external phrase search; standard is the default presubmission audit; deep uses stricter image thresholds."
+            "copy-move, keypoint, splice-forensics triage, and external phrase search; standard is the "
+            "default presubmission audit; deep uses stricter image thresholds."
         ),
     )
     parser.add_argument("--output-dir", type=Path)

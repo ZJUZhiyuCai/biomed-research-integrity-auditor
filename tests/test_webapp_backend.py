@@ -738,11 +738,13 @@ class WebappBackendTests(unittest.TestCase):
 
                 figure = package / "figures" / "Figure_1A.png"
                 raw = package / "raw_images" / "Acq_001.tif"
+                vendor_raw = package / "raw_images" / "Acq_002.czi"
                 source = package / "source_data" / "Figure_1_values.csv"
                 analysis = package / "statistics_code" / "analysis.py"
                 protocol = package / "protocols" / "sample_map.md"
                 figure.write_bytes(b"figure")
                 raw.write_bytes(b"raw")
+                vendor_raw.write_bytes(b"vendor raw")
                 source.write_text("group,value\ncontrol,1.0\n", encoding="utf-8")
                 analysis.write_text("print('analysis placeholder')\n", encoding="utf-8")
                 protocol.write_text("Sample map placeholder.\n", encoding="utf-8")
@@ -753,6 +755,7 @@ class WebappBackendTests(unittest.TestCase):
                 self.assertIn("microscopy", inventory["modality_options"])
                 self.assertIn("figures/Figure_1A.png", inventory["files_by_role"]["figures"])
                 self.assertIn("raw_images/Acq_001.tif", inventory["files_by_role"]["raw_images"])
+                self.assertIn("raw_images/Acq_002.czi", inventory["files_by_role"]["raw_images"])
                 self.assertIn("source_data/Figure_1_values.csv", inventory["files_by_role"]["source_data"])
 
                 save = client.post("/api/packages/assembly-manifest", json={

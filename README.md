@@ -26,7 +26,7 @@ Current status is tracked in the source, tests, and changelog. Internal review n
 
 ## Quick start
 
-Requires Python 3.10+.
+Requires Python 3.10+. The local web UI also needs Node.js 20.19+ or 22.12+ when building from a source checkout.
 
 ```bash
 python3.11 -m venv .venv
@@ -34,6 +34,7 @@ source .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 python -m pip install -e .
+make preflight PYTHON=.venv/bin/python
 ```
 
 For a repeatable deployment that also links commands into `~/.local/bin`:
@@ -147,7 +148,7 @@ Use `--scan-profile` to control speed and depth:
 
 | Profile | Use case | What changes |
 | --- | --- | --- |
-| `quick` | First-pass drag-and-check | Fast source/text/global-image screens; skips keypoint/local-patch deep image screening and external phrase search. |
+| `quick` | First-pass drag-and-check | Fast source/text/global-image screens; skips keypoint/local-patch/copy-move/splice-forensics deep image screening and external phrase search. |
 | `standard` | Default pre-submission QC | Balanced detector set, including keypoint geometric image screening; exports submission QC packet. |
 | `deep` | Focused recheck or response-to-concern | More sensitive image similarity settings; records deep-profile parameters in coverage. |
 

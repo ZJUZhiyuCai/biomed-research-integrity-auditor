@@ -72,7 +72,7 @@ Before running an audit on a user's computer, check that the local runtime can a
    - Treat unsupported keys in `schemas/risk_rules.yaml` as configuration errors, not comments.
    - If files are missing, keep them as R1 completeness gaps before doing deeper analysis.
    - Never imply that an audit is complete when source data or raw records are unavailable.
-   - Use `--scan-profile quick` for a first-pass local self-check; it explicitly skips expensive keypoint/local-patch/copy-move deep image screening and external phrase search. Use `--scan-profile standard` for routine presubmission QC. Use `--scan-profile deep` for focused rechecks or response-to-concern work.
+   - Use `--scan-profile quick` for a first-pass local self-check; it explicitly skips expensive keypoint/local-patch/copy-move/splice-forensics deep image screening and external phrase search. Use `--scan-profile standard` for routine presubmission QC. Use `--scan-profile deep` for focused rechecks or response-to-concern work.
    - The orchestrator also writes `audit_snapshot.json`, `file_hash_manifest.json`, `claim_coverage.*`, `methodology_checklist.*`, CSV review exports, action trackers, `correction_plan.*`, and `submission_qc_packet/`. The QC packet includes editable `audience_exports/` drafts for PI, co-author, and journal/reviewer communication. When image files are present, it also includes `image_review_packet/`, a target list, `external_tool_handoff.csv`/`.md`, and `image_review_tracker.csv` follow-up sheet for ImageTwin/Proofig/manual figure review. Treat these as versioning/review artifacts and communication aids, not approval certificates or external-search results.
    - If a package includes `claim_manifest.csv`, or the user passes `--claim-manifest`, read Claim Coverage as claim-to-evidence completeness only; it does not prove the claim is true.
    - To compare a repaired package against an earlier audit, use `scripts/compare_audit_runs.py <old_output> <new_output>` or run the new audit with `--compare-to <old_output>`. Read `re_audit_diff.md` for a human-readable view of no-longer-listed, new, still-present, and still-missing items; it is a repair-tracking aid, not a pass/fail score.
@@ -91,7 +91,7 @@ Before running an audit on a user's computer, check that the local runtime can a
    - Manually check the mappings; filename similarity is only a starting point. If multiple files match a figure name equally well, surface the ambiguity as a preparation warning rather than choosing one automatically.
 
 4. Screen image-integrity candidates.
-   - The orchestrator runs `detectors/image/global_near_duplicate.py`, `detectors/image/keypoint_geometric_match.py`, `detectors/image/local_patch_reuse.py`, and `calibrators/contextual_joiner.py` when raw or exported images are available. `--scan-profile quick` skips the keypoint/local-patch deep image screens and records that scope limit.
+   - The orchestrator runs `detectors/image/global_near_duplicate.py`, `detectors/image/keypoint_geometric_match.py`, `detectors/image/local_patch_reuse.py`, and `calibrators/contextual_joiner.py` when raw or exported images are available. `--scan-profile quick` skips the keypoint/local-patch/copy-move/splice-forensics deep image screens and records that scope limit.
    - Figure-panel similarity to a declared raw/source image is positive traceability evidence, not an image-reuse concern.
    - Figure-panel similarity to a raw/source image without a machine-readable provenance link is an R1 traceability gap, not R3.
    - A manifest line alone does not clear an image-reuse concern. If two figure panels are declared as same-field/same-membrane but are detected as a whole-image near-duplicate, treat it as an unverifiable `manifest_conflict` (R3) requiring raw images and acquisition metadata, not as cleared traceability.
@@ -195,7 +195,7 @@ Every finding must include:
 - Risk level
 - Location: manuscript page, figure, panel, supplement, source-data cell/range, raw filename
 - Finding type
-- Evidence: files, coordinates/rows, method, similarity score or calculation, screenshots/comparison output when available
+- Evidence: files, coordinates/rows, method, similarity metric or calculation, screenshots/comparison output when available
 - Why it matters
 - Benign explanations tested
 - Materials required to resolve
