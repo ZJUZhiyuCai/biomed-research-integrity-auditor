@@ -3,6 +3,8 @@
 A practical, non-developer guide to running a pre-submission research-integrity self-audit
 on your own manuscript package.
 
+[中文版本](self-audit-guide.zh-CN.md)
+
 This tool helps you **organize evidence and surface risks** before submission. It does
 **not** decide misconduct, and it does **not** prove a paper is correct. Read the
 [boundary](#what-this-tool-is-and-is-not) section first.

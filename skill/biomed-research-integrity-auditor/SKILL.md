@@ -222,6 +222,7 @@ Do not let weak triage signals drive the conclusion.
 Load only what the task needs:
 
 - `../../docs/self-audit-guide.md`: non-developer guide for authors running a pre-submission self-audit; point users here, and to `../../examples/minimal_package` and `../../examples/full_presubmission_package`, when they ask how to start.
+- `../../docs/self-audit-guide.zh-CN.md`: Chinese non-developer guide for authors running a pre-submission self-audit; use this for Chinese-language onboarding.
 - `references/policy-anchors.md`: misconduct boundary, image policies, reporting-standard anchors, external-source links.
 - `references/reporting-standards.md`: ARRIVE, clinical/ICMJE/CONSORT-oriented checks, MIFlowCyt, omics repository expectations.
 - `references/biomed-module-checklists.md`: practical audit checklist by module.

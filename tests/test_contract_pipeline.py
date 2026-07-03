@@ -3007,6 +3007,22 @@ class RiskCapTests(unittest.TestCase):
         self.assertIn("最小样本量门槛", readme_zh)
         self.assertIn("不能单独作为证据", readme_zh)
 
+    def test_bilingual_guides_and_templates_are_discoverable(self) -> None:
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        readme_zh = (ROOT / "README.zh-CN.md").read_text(encoding="utf-8")
+        self_guide = (ROOT / "docs/self-audit-guide.md").read_text(encoding="utf-8")
+        self_guide_zh = (ROOT / "docs/self-audit-guide.zh-CN.md").read_text(encoding="utf-8")
+        response_guide = (ROOT / "docs/response-to-concern-guide.md").read_text(encoding="utf-8")
+        skill = (ROOT / "skill/biomed-research-integrity-auditor/SKILL.md").read_text(encoding="utf-8")
+
+        self.assertIn("docs/self-audit-guide.zh-CN.md", readme)
+        self.assertIn("docs/self-audit-guide.zh-CN.md", readme_zh)
+        self.assertIn("self-audit-guide.zh-CN.md", self_guide)
+        self.assertIn("self-audit-guide.md", self_guide_zh)
+        self.assertIn("#本工具是什么和不是什么", self_guide_zh)
+        self.assertIn("author-query-letter.zh-CN.md", response_guide)
+        self.assertIn("self-audit-guide.zh-CN.md", skill)
+
     def test_local_patch_r4_requires_direct_contradiction_tag(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             detector_output = Path(tmp) / "local_patch.json"

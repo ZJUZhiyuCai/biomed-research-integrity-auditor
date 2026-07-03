@@ -70,6 +70,10 @@ Use the template at:
 
 `skill/biomed-research-integrity-auditor/templates/author-query-letter.md`
 
+Chinese version / 中文版本：
+
+`skill/biomed-research-integrity-auditor/templates/author-query-letter.zh-CN.md`
+
 Each audit also writes an editable draft at:
 
 `submission_qc_packet/audience_exports/JOURNAL_RESPONSE_DRAFT.md`

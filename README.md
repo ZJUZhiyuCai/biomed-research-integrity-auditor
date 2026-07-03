@@ -20,7 +20,7 @@ Current status is tracked in the source, tests, and changelog. Internal review n
 
 | You are… | Start here |
 | --- | --- |
-| An **author** running a pre-submission self-audit | [`docs/self-audit-guide.md`](docs/self-audit-guide.md) and [Quick start](#quick-start) below |
+| An **author** running a pre-submission self-audit | [`docs/self-audit-guide.md`](docs/self-audit-guide.md) ([中文](docs/self-audit-guide.zh-CN.md)) and [Quick start](#quick-start) below |
 | A **reviewer or integrity office** triaging concerns | [Quick start](#quick-start), then [`docs/response-to-concern-guide.md`](docs/response-to-concern-guide.md) and the external/response modes in [`docs/architecture.md`](docs/architecture.md) |
 | A **developer or evaluator** | [How it works](#how-it-works) and [For developers and evaluators](#for-developers-and-evaluators) |
 
@@ -68,7 +68,7 @@ biomed-audit /path/to/my_package --output-dir audit_outputs/my_package
 
 The default mode is `--mode internal_presubmission`. Also available: `external_public_material` and `response_to_concern`.
 
-**Authors:** the [self-audit guide](docs/self-audit-guide.md) walks through preparing materials, running the audit, and reading the report — including which conclusions you may *not* draw.
+**Authors:** the [self-audit guide](docs/self-audit-guide.md) ([中文](docs/self-audit-guide.zh-CN.md)) walks through preparing materials, running the audit, and reading the report — including which conclusions you may *not* draw.
 
 **Responding to a journal/reviewer concern:** use the [response-to-concern guide](docs/response-to-concern-guide.md) and keep the language evidence-based and neutral.
 
@@ -254,7 +254,7 @@ DOCX manuscript/protocol intake reads body paragraphs, caption-styled paragraphs
 | `schemas/` | Active JSON/YAML contracts for detector output, risk rules, and report artifacts. |
 | `references/source_data_templates/` | Human source-data preparation templates; not automatically loaded as detector contracts. |
 | `examples/` | Runnable example packages (`minimal_package/`, `full_presubmission_package/`). |
-| `docs/self-audit-guide.md` | Non-developer guide to materials and report reading. |
+| `docs/self-audit-guide.md`, `docs/self-audit-guide.zh-CN.md` | Non-developer guide to materials and report reading. |
 | `docs/response-to-concern-guide.md` | Neutral workflow for journal/reviewer/public concern responses. |
 | `docs/architecture.md`, `docs/design-notes.md` | Pipeline architecture and design rationale. |
 | `evals/` | Synthetic packages, eval harness, and ground truth. |

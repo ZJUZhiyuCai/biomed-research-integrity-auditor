@@ -20,7 +20,7 @@
 
 | 你是… | 建议入口 |
 | --- | --- |
-| **作者/课题组**，想做投稿前自查 | [`docs/self-audit-guide.md`](docs/self-audit-guide.md) 和下方[快速开始](#快速开始) |
+| **作者/课题组**，想做投稿前自查 | [`docs/self-audit-guide.zh-CN.md`](docs/self-audit-guide.zh-CN.md) 和下方[快速开始](#快速开始) |
 | **审稿人/研究诚信办公室**，需要 triage 公开材料 | [快速开始](#快速开始)，再看 [`docs/response-to-concern-guide.md`](docs/response-to-concern-guide.md) 和 [`docs/architecture.md`](docs/architecture.md) 中的外部/回应模式 |
 | **开发者/评测者** | [工作原理](#工作原理) 和 [开发者与评测者](#开发者与评测者) |
 
@@ -68,7 +68,7 @@ biomed-audit /path/to/my_package --output-dir audit_outputs/my_package
 
 默认模式是 `--mode internal_presubmission`，另有 `external_public_material` 和 `response_to_concern` 可选。
 
-**作者用户：**请先读 [自查指南](docs/self-audit-guide.md)。它说明了材料目录怎么准备、报告怎么读、以及哪些结论不能从工具输出中推出。
+**作者用户：**请先读 [中文自查指南](docs/self-audit-guide.zh-CN.md)。它说明了材料目录怎么准备、报告怎么读、以及哪些结论不能从工具输出中推出。
 
 **回应期刊/审稿人关注：**请使用 [response-to-concern guide](docs/response-to-concern-guide.md)，用基于证据的中性措辞逐条回应。
 
@@ -254,7 +254,7 @@ DOCX 稿件/方案可直接读取正文段落、caption 样式段落和表格单
 | `schemas/` | detector output、risk rules、报告 artifact 的有效 JSON/YAML 契约。 |
 | `references/source_data_templates/` | 人工 source-data 准备模板；不会作为自动 detector contract 加载。 |
 | `examples/` | 可直接运行的示例包：`minimal_package/`、`full_presubmission_package/`。 |
-| `docs/self-audit-guide.md` | 面向非开发者的自查指南。 |
+| `docs/self-audit-guide.md`、`docs/self-audit-guide.zh-CN.md` | 面向非开发者的自查指南。 |
 | `docs/response-to-concern-guide.md` | 面向期刊/审稿人/公开关注回应的中性工作流。 |
 | `docs/architecture.md`、`docs/design-notes.md` | 架构与设计说明。 |
 | `evals/` | synthetic packages、评测 harness 和 ground truth。 |
