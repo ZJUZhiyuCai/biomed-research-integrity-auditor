@@ -43,6 +43,21 @@ Use for published papers, PubPeer-like questions, peer-review concerns, or publi
 
 Use when the user is responding to reviewer, journal, or PubPeer-style concerns. Input should include the concern text plus author-supplied raw/source records when available. Output a concern-by-concern response matrix: supported concern, explainable concern, missing material, correction need, and neutral response language.
 
+## Environment Preflight
+
+Before running an audit on a user's computer, check that the local runtime can actually execute the pipeline. Do this before interpreting detector output.
+
+- Prefer the project virtual environment when working from a source checkout: `PYTHON=.venv/bin/python make validate` or run commands with `.venv/bin/python`.
+- If no environment exists, ask the user to create and populate it first:
+  - `python3 -m venv .venv`
+  - `.venv/bin/python -m pip install --upgrade pip`
+  - `.venv/bin/python -m pip install -r requirements.txt`
+- Required Python runtime is Python 3.10 or newer. If the active `python3` is older or lacks dependencies such as `numpy`, `cv2`, `PIL`, `jsonschema`, `openpyxl`, `pypdf`, `fitz`, `pytesseract`, `fastapi`, or `uvicorn`, stop and surface an environment setup step before running or trusting the audit.
+- For the webapp, ensure frontend dependencies exist before building or launching: `npm --prefix webapp/frontend install` if `node_modules` is absent, then `npm --prefix webapp/frontend run build` or `make run PYTHON=.venv/bin/python`.
+- OCR for scanned PDFs also needs a local `tesseract` binary. If it is missing, report scanned-PDF OCR as unavailable and ask the user to install/configure it rather than implying those pages were screened.
+- Do not treat dependency errors, missing OpenCV/NumPy, missing frontend packages, or unavailable OCR as scientific findings. They are environment blockers or R1 audit-coverage gaps only after the user chooses to run with that reduced scope.
+- Do not silently fall back from a configured `.venv` to system Python. A system Python that imports less than the project environment can make image detectors or schema validation appear to "pass" while actually not running.
+
 ## Core Workflow
 
 1. Run the contract-first package audit entrypoint.
