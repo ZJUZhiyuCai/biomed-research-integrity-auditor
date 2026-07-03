@@ -2,7 +2,7 @@
 
 Dear Authors,
 
-While reviewing the publicly available materials for [paper/title/DOI], I noticed a reproducible concern that may benefit from clarification.
+While reviewing the publicly available materials for [paper title and DOI], I noticed a reproducible concern that may benefit from clarification.
 
 Could you clarify [specific figure/panel/source-data issue]? In particular, could you provide or point to [uncropped blot/source data/raw image/sample map/analysis code] so the relationship between [panel/claim] and the underlying source record can be verified?
 

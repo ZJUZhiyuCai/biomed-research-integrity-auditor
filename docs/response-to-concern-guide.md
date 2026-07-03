@@ -2,7 +2,7 @@
 
 Use this mode when a journal, reviewer, reader, or post-publication forum asks about a figure, source table, image panel, statistical value, or text passage.
 
-中文提示：当期刊、审稿人、读者或公开平台对图像、source data、统计值或文本提出疑问时，使用本流程。
+中文提示：当期刊、审稿人、读者或公开平台对图像、源数据/原始数据、统计值或文本提出疑问时，使用本流程。
 
 ## Boundary / 边界
 

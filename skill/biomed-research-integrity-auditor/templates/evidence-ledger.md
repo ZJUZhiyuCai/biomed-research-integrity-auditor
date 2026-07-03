@@ -51,4 +51,4 @@ Specific internal correction or neutral clarification request.
 
 ## Boundary Note / 边界说明
 
-This is a calibrated audit finding, not a misconduct verdict. / 这是已校准审计发现，不是不端结论。
+This is a calibrated audit finding, not a misconduct verdict. / 这是已校准审计发现，不是学术不端行为结论。

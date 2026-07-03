@@ -27,7 +27,7 @@ Not allowed in a public dataset:
 ## Retraction Watch / Crossref
 
 Crossref Retraction Watch data can be used as publication-status metadata. It is article-level
-metadata, not figure-level truth. A retraction reason can help stratify cases but does not identify
+metadata, not figure-level ground truth. A retraction reason can help stratify cases but does not identify
 which image tile, row, or paragraph a detector should find unless a human label links it to public
 evidence.
 

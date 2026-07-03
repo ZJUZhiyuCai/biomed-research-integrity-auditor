@@ -68,7 +68,7 @@ my_package/
 DOCX manuscripts can be read directly for body text, caption-styled paragraphs, and table cell
 text. If Word comments, tracked revisions, or embedded objects are present, the report will flag
 them as material-prep warnings because those layers are not read as body/caption/table evidence.
-Legacy Word `.doc` files still need to be saved as DOCX, extractable PDF, TXT, or MD. Source
+Legacy Word `.doc` files still need to be saved as DOCX, machine-readable PDF, TXT, or MD. Source
 data can be CSV/TSV/XLSX; basic GraphPad Prism `.pzfx` XML column tables are also parsed for
 statistical checks. Legacy Excel `.xls` and complex/unparseable Prism projects should still be
 exported to CSV/XLSX under `source_data/`; otherwise the report should be read as incomplete for

@@ -10,7 +10,7 @@
 | Materials reviewed / 已审材料 |  |
 | Missing material categories / 缺失材料类别 |  |
 
-State the one-paragraph reader takeaway here. Do not use misconduct or fraud language.
+<!-- Editor instruction: State the one-paragraph reader takeaway here. Do not use misconduct or fraud language. -->
 
 ## Scope / 范围
 

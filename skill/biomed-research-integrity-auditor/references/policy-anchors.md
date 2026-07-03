@@ -10,7 +10,7 @@ Use these anchors to keep the audit neutral and source-backed.
 
 ## Image Integrity
 
-- Nature Portfolio image integrity policy requires that image adjustments preserve the original data; inappropriate enhancement, obscuring, moving, removing, or introducing features is not acceptable.
+- Nature Portfolio image integrity policy requires that image adjustments preserve the original data. Inappropriate enhancement, obscuring, moving, removing, or introducing features is not acceptable.
 - For life-science gels and blots, journals commonly require source or unprocessed images, clear disclosure of splicing/cropping, and preservation of original relationships.
 - Source: https://www.nature.com/nature-portfolio/editorial-policies/image-integrity
 
