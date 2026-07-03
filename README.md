@@ -353,12 +353,22 @@ make release-artifacts
 
 Builds the frontend, Python wheel/sdist, source bundle, and SHA-256 manifest under `dist/release/`. GitHub Actions templates are at `packaging/github-workflows/`; enabling them requires a maintainer token with workflow permission. PyPI and Homebrew publication require maintainer credentials; see [`packaging/README.md`](packaging/README.md).
 
+The active validation workflow is in [`.github/workflows/validate.yml`](.github/workflows/validate.yml). It installs Python, Node, OCR runtime, and frontend dependencies, then runs `make validate` plus key synthetic audit regressions.
+
 ### Install as a Codex skill
 
 ```bash
 mkdir -p ~/.codex/skills
 ln -s "$(pwd)/skill/biomed-research-integrity-auditor" ~/.codex/skills/biomed-research-integrity-auditor
 ```
+
+---
+
+## Contributing and security
+
+Please read [`CONTRIBUTING.md`](CONTRIBUTING.md) before opening a PR. Keep detector outputs as candidates, preserve neutral language, and do not commit private manuscripts, raw data, local audit outputs, or machine-specific paths.
+
+Report security-sensitive issues using [`SECURITY.md`](SECURITY.md). Do not post exploit details or private research material in public issues.
 
 ---
 

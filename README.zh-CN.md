@@ -353,12 +353,22 @@ make release-artifacts
 
 构建前端、Python wheel/sdist、源码 bundle 和 SHA-256 manifest，写入 `dist/release/`。GitHub Actions 模板在 `packaging/github-workflows/`；启用需要 maintainer token。PyPI 与 Homebrew 发布需要维护者凭据；详见 [`packaging/README.md`](packaging/README.md)。
 
+当前启用的验证 workflow 在 [`.github/workflows/validate.yml`](.github/workflows/validate.yml)：安装 Python、Node、OCR runtime 和前端依赖，然后运行 `make validate` 与关键 synthetic audit 回归。
+
 ### 安装为 Codex Skill
 
 ```bash
 mkdir -p ~/.codex/skills
 ln -s "$(pwd)/skill/biomed-research-integrity-auditor" ~/.codex/skills/biomed-research-integrity-auditor
 ```
+
+---
+
+## 贡献与安全
+
+提交 PR 前请先阅读 [`CONTRIBUTING.md`](CONTRIBUTING.md)。请保持 detector 输出为候选证据，保留中性语言，不要提交私有 manuscript、raw data、本地 audit 输出或带机器路径的文件。
+
+安全敏感问题请按 [`SECURITY.md`](SECURITY.md) 处理。不要在公开 issue 中发布 exploit 细节或非公开研究材料。
 
 ---
 
