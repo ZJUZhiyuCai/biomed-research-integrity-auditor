@@ -13,7 +13,6 @@ import csv
 from datetime import datetime, timezone
 import json
 import re
-import sys
 from pathlib import Path
 from typing import Any
 
@@ -21,11 +20,9 @@ import requests
 
 
 ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
 
-from scripts.csv_safety import csv_safe_row  # noqa: E402
-from detectors.text.text_overlap_screen import read_text  # noqa: E402
+from scripts.csv_safety import csv_safe_row
+from detectors.text.text_overlap_screen import read_text
 
 
 TEXT_EXTS = {".txt", ".md", ".pdf", ".docx"}

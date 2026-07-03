@@ -22,8 +22,11 @@ python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 python -m pip install -e ".[webapp,ocr,dev]"
 npm --prefix webapp/frontend ci
+pre-commit install
 make preflight PYTHON=.venv/bin/python
 ```
+
+Before opening a PR, run `pre-commit run --all-files` and `PYTHON=.venv/bin/python make validate`.
 
 Scanned-PDF OCR needs the `tesseract` binary on `PATH`. If it is unavailable, OCR coverage should be reported as unavailable rather than silently treated as screened.
 

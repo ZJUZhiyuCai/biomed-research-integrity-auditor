@@ -25,14 +25,11 @@ ROOT = Path(__file__).resolve().parents[1]
 PYTHON = sys.executable
 RISK_ORDER = {"R0": 0, "R1": 1, "R2": 2, "R3": 3, "R4": 4}
 
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-
-from calibrators.contract_validation import ContractError, validate_instance  # noqa: E402
-from calibrators.risk_cap_engine import calibrate_payload, load_rules  # noqa: E402
-from detectors.image.image_io import iter_normalized_frames, normalized_rgb  # noqa: E402
-from provenance.panel_modality import normalize_modality, resolve_panel_modality_routing  # noqa: E402
-from scripts.submission_qc import (  # noqa: E402
+from calibrators.contract_validation import ContractError, validate_instance
+from calibrators.risk_cap_engine import calibrate_payload, load_rules
+from detectors.image.image_io import iter_normalized_frames, normalized_rgb
+from provenance.panel_modality import normalize_modality, resolve_panel_modality_routing
+from scripts.submission_qc import (
     write_claim_coverage_csv,
     write_correction_plan_csv,
     write_missing_materials_csv,

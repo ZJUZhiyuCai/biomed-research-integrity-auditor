@@ -7,7 +7,6 @@ import argparse
 import itertools
 import json
 import math
-import sys
 from pathlib import Path
 from typing import Any
 
@@ -15,8 +14,6 @@ import cv2
 import numpy as np
 
 ROOT = Path(__file__).resolve().parents[2]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
 
 from detectors.image.image_io import iter_normalized_frames
 from provenance.panel_modality import resolve_panel_modality_routing

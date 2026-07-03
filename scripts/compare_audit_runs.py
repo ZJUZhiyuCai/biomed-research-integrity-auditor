@@ -5,15 +5,12 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
 
-from scripts.submission_qc import (  # noqa: E402
+from scripts.submission_qc import (
     build_re_audit_diff,
     write_json,
     write_re_audit_diff_csv,

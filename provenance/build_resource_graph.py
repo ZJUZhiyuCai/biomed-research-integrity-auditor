@@ -6,16 +6,13 @@ from __future__ import annotations
 import argparse
 import json
 import re
-import sys
 from pathlib import Path
 from typing import Any
 
 
 ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
 
-from calibrators.contract_validation import validate_instance  # noqa: E402
+from calibrators.contract_validation import validate_instance
 
 
 GRAPH_SCHEMA = ROOT / "schemas" / "provenance_graph.schema.json"

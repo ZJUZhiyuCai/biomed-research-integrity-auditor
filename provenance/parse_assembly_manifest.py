@@ -8,7 +8,6 @@ import csv
 import json
 import posixpath
 import re
-import sys
 import zipfile
 from pathlib import Path
 from typing import Any
@@ -17,8 +16,6 @@ import xml.etree.ElementTree as ET
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
 
 from provenance.panel_modality import normalize_modality
 

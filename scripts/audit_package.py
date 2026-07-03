@@ -15,19 +15,17 @@ from typing import Any
 
 
 ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
 
-from calibrators.contract_validation import ContractError, validate_instance  # noqa: E402
-from scripts.methodology_checklist import (  # noqa: E402
+from calibrators.contract_validation import ContractError, validate_instance
+from scripts.methodology_checklist import (
     build_methodology_checklist,
     write_methodology_checklist_csv,
 )
-from scripts.writing_readiness_check import (  # noqa: E402
+from scripts.writing_readiness_check import (
     build_writing_readiness,
     write_csv as write_writing_readiness_csv,
 )
-from scripts.submission_qc import (  # noqa: E402
+from scripts.submission_qc import (
     build_audit_snapshot,
     build_claim_coverage,
     build_file_hash_manifest,

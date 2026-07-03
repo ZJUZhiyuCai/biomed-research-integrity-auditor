@@ -5,16 +5,13 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 from pathlib import Path
 from typing import Any
 
 
 ROOT = Path(__file__).resolve().parents[3]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
 
-from calibrators.contract_validation import ContractError, validate_instance  # noqa: E402
+from calibrators.contract_validation import ContractError, validate_instance
 
 
 SUMMARY_SCHEMA = ROOT / "schemas" / "audit_summary.schema.json"

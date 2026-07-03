@@ -15,15 +15,12 @@ import argparse
 from io import BytesIO
 import json
 import math
-import sys
 from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
 
-from detectors.image.image_io import normalized_rgb  # noqa: E402
+from detectors.image.image_io import normalized_rgb
 
 
 DETECTOR_NAME = "image.splice_forensics_triage"

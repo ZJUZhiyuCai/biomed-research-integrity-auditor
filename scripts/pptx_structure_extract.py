@@ -12,16 +12,13 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
-import sys
 from typing import Any
 import zipfile
 
 
 ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
 
-from provenance.parse_assembly_manifest import (  # noqa: E402
+from provenance.parse_assembly_manifest import (
     IMAGE_OR_DATA_RE,
     extract_line_links,
     package_files,

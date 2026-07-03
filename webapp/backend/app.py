@@ -32,17 +32,15 @@ from pydantic import BaseModel, Field
 
 
 ROOT = Path(__file__).resolve().parents[2]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
 
-from provenance.panel_modality import CANONICAL_MODALITIES, normalize_modality  # noqa: E402
-from scripts.csv_safety import csv_safe_row  # noqa: E402
-from scripts.docx_structure_extract import scan as scan_docx_structure  # noqa: E402
-from scripts.pdf_structure_extract import scan as scan_pdf_structure  # noqa: E402
-from scripts.pptx_structure_extract import scan as scan_pptx_structure  # noqa: E402
-from scripts.prism_project_intake import scan as scan_prism_project_intake  # noqa: E402
-from scripts.xlsx_structure_extract import scan as scan_xlsx_structure  # noqa: E402
-from scripts.submission_qc import (  # noqa: E402
+from provenance.panel_modality import CANONICAL_MODALITIES, normalize_modality
+from scripts.csv_safety import csv_safe_row
+from scripts.docx_structure_extract import scan as scan_docx_structure
+from scripts.pdf_structure_extract import scan as scan_pdf_structure
+from scripts.pptx_structure_extract import scan as scan_pptx_structure
+from scripts.prism_project_intake import scan as scan_prism_project_intake
+from scripts.xlsx_structure_extract import scan as scan_xlsx_structure
+from scripts.submission_qc import (
     ACTION_FIELDNAMES,
     CLAIM_COLUMNS,
     IMAGE_REVIEW_TRACKER_FIELDS,
