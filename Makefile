@@ -14,7 +14,7 @@ validate:
 	$(PYTHON) scripts/environment_preflight.py --require-webapp
 	cd webapp/frontend && (test -d node_modules || npm ci)
 	cd webapp/frontend && npm run build
-	$(PYTHON) -m py_compile scripts/*.py provenance/*.py benchmarks/*/*.py benchmarks/*/scripts/*.py $(EVAL_DIR)/run_eval.py $(EVAL_DIR)/run_script_baseline.py $(EVAL_DIR)/generate_synthetic_cases.py $(EVAL_DIR)/assert_audit_outputs.py $(SKILL_DIR)/scripts/*.py detectors/image/*.py detectors/stats/*.py detectors/text/*.py calibrators/*.py webapp/*.py webapp/backend/*.py tests/*.py
+	$(PYTHON) -m py_compile scripts/*.py scripts/pipeline/*.py provenance/*.py benchmarks/*/*.py benchmarks/*/scripts/*.py $(EVAL_DIR)/run_eval.py $(EVAL_DIR)/run_script_baseline.py $(EVAL_DIR)/generate_synthetic_cases.py $(EVAL_DIR)/assert_audit_outputs.py $(SKILL_DIR)/scripts/*.py detectors/image/*.py detectors/stats/*.py detectors/text/*.py calibrators/*.py webapp/*.py webapp/backend/*.py tests/*.py
 	$(PYTHON) -m mypy calibrators/ provenance/ detectors/ --ignore-missing-imports
 	$(PYTHON) -m unittest discover -s tests
 	$(PYTHON) benchmarks/true_pdf/run_true_pdf_benchmark.py --output-dir tmp/true_pdf_benchmark
