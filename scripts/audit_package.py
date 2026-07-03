@@ -21,6 +21,7 @@ from scripts.pipeline.common import (
 from scripts.pipeline import detectors as detector_stage
 from scripts.pipeline import report as report_stage
 from scripts.pipeline.coverage import build_coverage
+from scripts.pipeline.detector_registry import DEFAULT_REGISTRY
 from scripts.pipeline.detectors import run_detector, write_audit_coverage_gap, write_format_coverage_gaps
 from scripts.pipeline.orchestrator import run_pipeline
 from scripts.pipeline.report import extract_audit_summary
@@ -136,6 +137,15 @@ def main() -> int:
         default="none",
         help="Optional DOI/reference metadata provider for writing-readiness checks. Default stays offline.",
     )
+    parser.add_argument(
+        "--detector-registry",
+        type=Path,
+        default=DEFAULT_REGISTRY,
+        help=(
+            "Optional YAML registry for extension detectors that emit detector_output.schema.json. "
+            "Use 'none' to disable extension-detector loading."
+        ),
+    )
     args = parser.parse_args()
 
     package = args.package_dir.expanduser().resolve()
@@ -148,6 +158,9 @@ def main() -> int:
     compare_to = args.compare_to.expanduser().resolve() if args.compare_to else None
     if compare_to is not None and not compare_to.is_dir():
         raise SystemExit(f"Previous audit output directory not found: {compare_to}")
+    detector_registry = None if str(args.detector_registry).lower() == "none" else args.detector_registry.expanduser().resolve()
+    if detector_registry is not None and not detector_registry.is_file():
+        raise SystemExit(f"Detector registry not found: {detector_registry}")
     result = run_pipeline(
         package,
         args.mode,
@@ -160,6 +173,7 @@ def main() -> int:
         claim_manifest,
         compare_to,
         args.reference_check_provider,
+        detector_registry,
     )
     print(json.dumps(result, indent=2, ensure_ascii=False))
     return 0

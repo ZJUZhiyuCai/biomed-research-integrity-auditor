@@ -8,6 +8,8 @@
 
 > **最重要的一条：**"未发现问题"只表示*在当前提供的材料和当前检测范围内没有触发信号*，绝不等于"论文已被证明正确"。
 
+> **数据本地化与隐私：**默认情况下，manuscript、raw images、source data、报告和附件都留在运行工具的本机。CLI 和本地 Web App 不会把材料包内容上传到项目服务器。可选的外部检查需要用户主动开启，且只会发送该检查所需的查询/参考文献 metadata；启用前请先确认所在机构、GDPR、HIPAA 或期刊的数据治理要求。
+
 从工程上看：本地 **CLI** + 本地 **Web App** + 可安装的 Codex **Skill** + 可脚本化的检测器流水线（detector pipeline）。
 
 当前状态以源码、测试和 changelog 为准。内部复核记录与本地运行输出不保留在公开仓库中。
@@ -37,7 +39,7 @@ python -m pip install -e ".[webapp,ocr]"
 make preflight PYTHON=.venv/bin/python
 ```
 
-如果只用 CLI，`python -m pip install -e .` 即可。按需添加 extras：`.[webapp]` 用于本地 Web UI，`.[ocr]` 用于 scanned-PDF OCR 的 Python 依赖，`.[dev]` 用于贡献者工具。`requirements.txt` 仍作为全功能开发/CI 环境的 convenience 安装文件。
+如果只用 CLI，`python -m pip install -e .` 即可。按需添加 extras：`.[webapp]` 用于本地 Web UI，`.[ocr]` 用于 scanned-PDF OCR 的 Python 依赖，`.[dev]` 用于贡献者工具。`requirements.txt` 仍作为全功能开发/CI 环境的 convenience 安装文件；`requirements-lock.txt` 是 Python 3.11 可复现安装锁文件，用于 bug 复现和部署审计。
 
 如果想一键部署并把命令链接到 `~/.local/bin`：
 
@@ -268,6 +270,17 @@ DOCX 稿件/方案可直接读取正文段落、caption 样式段落和表格单
 ```bash
 biomed-audit evals/cases/case_004 --output-dir audit_outputs/case_004
 ```
+
+### 扩展 detector registry
+
+内置检测阶段仍保持显式编排，因为它们需要 provenance-aware 后处理和不同扫描档位的安全护栏。贡献者如果要增加本地扩展 detector，可以把条目写入 [`schemas/detector_registry.yaml`](schemas/detector_registry.yaml)，或运行时传入单独文件，不必修改 orchestrator：
+
+```bash
+biomed-audit examples/minimal_package --detector-registry path/to/detectors.yaml
+biomed-audit examples/minimal_package --detector-registry none  # 关闭扩展 detector
+```
+
+注册进来的 detector 必须输出 [`schemas/detector_output.schema.json`](schemas/detector_output.schema.json)；它们仍然只输出候选信号，不直接给最终风险结论。
 
 ### 非 LLM detector baseline
 

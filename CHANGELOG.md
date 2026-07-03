@@ -3,6 +3,12 @@
 ## Unreleased
 
 ### Added
+- YAML-backed extension detector registry (`schemas/detector_registry.yaml`) for contributed
+  detectors that already emit the detector-output contract, with a CLI switch to disable
+  extension loading when reproducibility requires a fixed built-in detector set.
+- Python 3.11 `requirements-lock.txt` for reproducible dependency installs and deployment/debugging audits.
+- README data-locality/privacy statements clarifying that package contents stay local by default
+  and optional external checks are opt-in metadata/query calls.
 - CLI package intake now emits an R1 package-guardrail coverage gap for symlinks,
   unreadable entries, and resource-limit overages; symlinks are skipped rather than
   followed or hashed, and resource-heavy image screening is explicitly marked as not run.

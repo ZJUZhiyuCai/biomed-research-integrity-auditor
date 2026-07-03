@@ -1,0 +1,21 @@
+schema_version: 0.1.0
+
+# Optional extension detectors. Built-in detector families are still staged by
+# the audited pipeline because they need provenance-aware post-processing and
+# profile-specific safety limits. Add local or contributed detectors here when
+# they already emit schemas/detector_output.schema.json.
+#
+# Example:
+# detectors:
+#   - name: custom_text_detector
+#     output: custom_text_candidates.json
+#     profiles: [quick, standard, deep]
+#     modes: [internal_presubmission, external_public_material, response_to_concern]
+#     run_if_any_suffix: [.txt, .md, .pdf, .docx]
+#     command:
+#       - "{python}"
+#       - "{root}/detectors/text/custom_text_detector.py"
+#       - "{package}"
+#       - "--output"
+#       - "{output}"
+detectors: []

@@ -29,6 +29,7 @@ from calibrators.contract_validation import ContractError, validate_instance
 from calibrators.risk_cap_engine import calibrate_payload, load_rules
 from detectors.image.image_io import iter_normalized_frames, normalized_rgb
 from provenance.panel_modality import normalize_modality, resolve_panel_modality_routing
+from scripts.pipeline.detector_registry import run_registered_detectors
 from scripts.pipeline.guardrails import (
     PackageGuardrailLimits,
     scan_package_guardrails,
@@ -4432,6 +4433,109 @@ class EndToEndTests(unittest.TestCase):
                     # The full example demonstrates verified figure-to-raw traceability.
                     self.assertGreaterEqual(len(summary["positive_provenance"]), 2)
                     self.assertEqual(coverage["image_files_unreadable"], 0)
+
+    def test_installed_biomed_audit_console_script_generates_report(self) -> None:
+        cli = shutil.which("biomed-audit")
+        if cli is None:
+            sibling = Path(PYTHON).resolve().parent / "biomed-audit"
+            if sibling.is_file():
+                cli = str(sibling)
+        if cli is None:
+            self.skipTest("biomed-audit console script is not installed")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "console_out"
+            result = subprocess.run(
+                [
+                    cli,
+                    "examples/minimal_package",
+                    "--scan-profile",
+                    "quick",
+                    "--detector-registry",
+                    "none",
+                    "--output-dir",
+                    str(out),
+                    "--case-id",
+                    "console_script_minimal",
+                ],
+                cwd=ROOT,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue((out / "audit-report.md").is_file())
+            self.assertTrue((out / "AUDIT_JSON_SUMMARY.json").is_file())
+            pipeline_summary = json.loads((out / "pipeline_summary.json").read_text(encoding="utf-8"))
+            self.assertIsNone(pipeline_summary["detector_registry"])
+
+    def test_detector_registry_runs_extension_detector_and_can_be_disabled(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            package = tmp_path / "pkg"
+            package.mkdir()
+            write_minimal_source(package)
+            output_dir = tmp_path / "out"
+            output_dir.mkdir()
+            detector_script = tmp_path / "extension_detector.py"
+            detector_script.write_text(
+                "import json, sys\n"
+                "from pathlib import Path\n"
+                "package = Path(sys.argv[1])\n"
+                "output = Path(sys.argv[3])\n"
+                "payload = {\n"
+                "  'detector_name': 'extension.fixture',\n"
+                "  'detector_version': 'test',\n"
+                "  'input': {'package': str(package)},\n"
+                "  'candidates': [],\n"
+                "  'errors': []\n"
+                "}\n"
+                "output.write_text(json.dumps(payload), encoding='utf-8')\n",
+                encoding="utf-8",
+            )
+            registry = tmp_path / "detectors.yaml"
+            registry.write_text(
+                yaml.safe_dump({
+                    "detectors": [
+                        {
+                            "name": "fixture",
+                            "output": "extension_fixture_candidates.json",
+                            "profiles": ["quick"],
+                            "modes": ["internal_presubmission"],
+                            "run_if_any_suffix": [".csv"],
+                            "command": [
+                                "{python}",
+                                str(detector_script),
+                                "{package}",
+                                "--output",
+                                "{output}",
+                            ],
+                        }
+                    ]
+                }),
+                encoding="utf-8",
+            )
+
+            disabled = run_registered_detectors(
+                package,
+                output_dir,
+                mode="internal_presubmission",
+                scan_profile="quick",
+                registry_path=None,
+            )
+            self.assertEqual(disabled, [])
+
+            outputs = run_registered_detectors(
+                package,
+                output_dir,
+                mode="internal_presubmission",
+                scan_profile="quick",
+                registry_path=registry,
+            )
+            self.assertEqual([path.name for path in outputs], ["extension_fixture_candidates.json"])
+            payload = json.loads(outputs[0].read_text(encoding="utf-8"))
+            validate_instance(payload, ROOT / "schemas" / "detector_output.schema.json", "extension detector")
 
     def test_submission_qc_artifacts_snapshot_and_claim_coverage(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

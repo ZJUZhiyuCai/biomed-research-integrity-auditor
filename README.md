@@ -8,6 +8,8 @@ It is **not** a fraud detector. It never concludes that misconduct occurred. Ins
 
 > **The one rule:** "no issue found" means *nothing was flagged within the supplied materials and the current detector scope*. It never means the work is proven correct.
 
+> **Data locality and privacy:** By default, manuscript files, raw images, source data, reports, and attachments stay on the machine running the tool. The CLI and local web app do not upload package contents to any project server. Optional external checks are opt-in and may send only the query/reference metadata needed for that check; confirm institutional, GDPR, HIPAA, or journal data-governance requirements before enabling them.
+
 Under the hood: a local **CLI**, a local-first **web app**, a Codex **skill**, and a scriptable detector pipeline.
 
 Current status is tracked in the source, tests, and changelog. Internal review notes and local run outputs are not kept in the public repository.
@@ -37,7 +39,7 @@ python -m pip install -e ".[webapp,ocr]"
 make preflight PYTHON=.venv/bin/python
 ```
 
-For CLI-only use, `python -m pip install -e .` is enough. Add extras only when needed: `.[webapp]` for the local web UI, `.[ocr]` for scanned-PDF OCR Python bindings, and `.[dev]` for contributor tools. The `requirements.txt` file remains the all-features development/CI convenience install.
+For CLI-only use, `python -m pip install -e .` is enough. Add extras only when needed: `.[webapp]` for the local web UI, `.[ocr]` for scanned-PDF OCR Python bindings, and `.[dev]` for contributor tools. The `requirements.txt` file remains the all-features development/CI convenience install; `requirements-lock.txt` is the Python 3.11 reproducible lock file for bug reproduction and deployment audits.
 
 For a repeatable deployment that also links commands into `~/.local/bin`:
 
@@ -268,6 +270,17 @@ DOCX manuscript/protocol intake reads body paragraphs, caption-styled paragraphs
 ```bash
 biomed-audit evals/cases/case_004 --output-dir audit_outputs/case_004
 ```
+
+### Extension detector registry
+
+Built-in detector stages stay explicit because they have provenance-aware post-processing and profile-specific guardrails. Contributors can add local extension detectors without editing the orchestrator by adding entries to [`schemas/detector_registry.yaml`](schemas/detector_registry.yaml), or by passing a separate file:
+
+```bash
+biomed-audit examples/minimal_package --detector-registry path/to/detectors.yaml
+biomed-audit examples/minimal_package --detector-registry none  # disable extensions
+```
+
+Registered detectors must emit [`schemas/detector_output.schema.json`](schemas/detector_output.schema.json); they still produce candidates, not final risk decisions.
 
 ### Non-LLM detector baseline
 

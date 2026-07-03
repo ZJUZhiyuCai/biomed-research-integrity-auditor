@@ -17,6 +17,7 @@ from scripts.pipeline.common import (
     write_json,
 )
 from scripts.pipeline.coverage import build_coverage
+from scripts.pipeline.detector_registry import DEFAULT_REGISTRY, run_registered_detectors
 from scripts.pipeline.detectors import (
     run_image_detector,
     run_source_detectors,
@@ -88,6 +89,7 @@ def run_pipeline(
     claim_manifest: Path | None = None,
     compare_to: Path | None = None,
     reference_check_provider: str = "none",
+    detector_registry: Path | None = DEFAULT_REGISTRY,
 ) -> dict[str, Any]:
     output_dir.mkdir(parents=True, exist_ok=True)
     package_guardrails = scan_package_guardrails(package)
@@ -136,6 +138,14 @@ def run_pipeline(
         detector_outputs.append(package_guardrail_output)
     detector_outputs.extend(run_source_detectors(package, output_dir))
     detector_outputs.extend(run_image_detector(package, output_dir, provenance_graph, scan_profile, package_guardrails))
+    detector_outputs.extend(run_registered_detectors(
+        package,
+        output_dir,
+        mode=mode,
+        scan_profile=scan_profile,
+        registry_path=detector_registry,
+        provenance_graph=provenance_graph,
+    ))
     effective_external_provider = "none" if scan_profile == "quick" else external_literature_provider
     detector_outputs.extend(run_text_detectors(
         package,
@@ -251,6 +261,7 @@ def run_pipeline(
         "finding_count": len(read_json(calibrated).get("findings", [])),
         "overall_risk": audit_summary.get("overall_risk"),
         "external_literature_provider": resolved_provider,
+        "detector_registry": str(detector_registry) if detector_registry else None,
         "coverage": str(coverage_path),
         "submission_qc_packet": qc_packet,
         "start_here": str(start_here),

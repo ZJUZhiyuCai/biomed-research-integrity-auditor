@@ -4,6 +4,7 @@ include README.zh-CN.md
 include CODE_OF_CONDUCT.md
 include CONTRIBUTING.md
 include requirements.txt
+include requirements-lock.txt
 include Makefile
 recursive-include schemas *.json *.yaml
 recursive-include references *.md *.yaml
