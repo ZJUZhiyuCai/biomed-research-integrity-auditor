@@ -96,13 +96,20 @@ def expected_categories(mode: str, domains: list[str]) -> list[str]:
 def build_manifest(root: Path, mode: str, domains: list[str]) -> dict[str, Any]:
     files = []
     category_counts: dict[str, int] = {}
+    inventory_warnings: list[str] = []
     for path in sorted(root.rglob("*")):
-        if not path.is_file() or any(part.startswith(".") for part in path.relative_to(root).parts):
+        relative = path.relative_to(root)
+        if any(part.startswith(".") for part in relative.parts):
             continue
-        category = classify(path.relative_to(root))
+        if path.is_symlink():
+            inventory_warnings.append(f"Skipped symlink: {relative.as_posix()}")
+            continue
+        if not path.is_file():
+            continue
+        category = classify(relative)
         category_counts[category] = category_counts.get(category, 0) + 1
         files.append({
-            "path": str(path.relative_to(root)),
+            "path": str(relative),
             "category": category,
             "extension": path.suffix.lower(),
             "size_bytes": path.stat().st_size,
@@ -125,6 +132,7 @@ def build_manifest(root: Path, mode: str, domains: list[str]) -> dict[str, Any]:
         "category_counts": category_counts,
         "expected_categories": expected,
         "missing_materials": missing,
+        "inventory_warnings": inventory_warnings,
         "files": files,
     }
 

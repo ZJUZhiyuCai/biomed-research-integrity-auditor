@@ -78,7 +78,10 @@ def read_tables(path: Path) -> list[tuple[Path, list[dict[str, str]]]]:
 def collect_files(path: Path) -> list[Path]:
     if path.is_file():
         return [path] if path.suffix.lower() in TABLE_EXTS else []
-    return [p for p in sorted(path.rglob("*")) if p.is_file() and p.suffix.lower() in TABLE_EXTS]
+    return [
+        p for p in sorted(path.rglob("*"))
+        if not p.is_symlink() and p.is_file() and p.suffix.lower() in TABLE_EXTS
+    ]
 
 
 def present_column(rows: list[dict[str, str]], candidates: tuple[str, ...]) -> str | None:

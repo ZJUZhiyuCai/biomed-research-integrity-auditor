@@ -28,7 +28,10 @@ FIGURE_TABLE_LABEL_RE = re.compile(
 
 
 def collect_xlsx_files(root: Path) -> list[Path]:
-    return sorted(path for path in root.rglob("*") if path.is_file() and path.suffix.lower() in XLSX_EXTS)
+    return sorted(
+        path for path in root.rglob("*")
+        if not path.is_symlink() and path.is_file() and path.suffix.lower() in XLSX_EXTS
+    )
 
 
 def cell_to_display_text(value: Any) -> str:

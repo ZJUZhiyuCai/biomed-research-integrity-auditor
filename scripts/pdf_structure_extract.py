@@ -200,7 +200,10 @@ def extract_table_like_blocks(path: str, page: int, text: str, start_index: int)
 
 
 def collect_pdf_files(root: Path) -> list[Path]:
-    return sorted(path for path in root.rglob("*") if path.is_file() and path.suffix.lower() in PDF_EXTS)
+    return sorted(
+        path for path in root.rglob("*")
+        if not path.is_symlink() and path.is_file() and path.suffix.lower() in PDF_EXTS
+    )
 
 
 def scan(root: Path) -> dict[str, Any]:

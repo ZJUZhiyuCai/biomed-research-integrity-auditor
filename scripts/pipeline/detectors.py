@@ -180,7 +180,15 @@ def run_source_detectors(package: Path, output_dir: Path) -> list[Path]:
     return outputs
 
 
-def run_image_detector(package: Path, output_dir: Path, provenance_graph: Path, scan_profile: str = "standard") -> list[Path]:
+def run_image_detector(
+    package: Path,
+    output_dir: Path,
+    provenance_graph: Path,
+    scan_profile: str = "standard",
+    package_guardrails: dict[str, Any] | None = None,
+) -> list[Path]:
+    if package_guardrails and package_guardrails.get("image_screening_blocked"):
+        return []
     if not has_files(package, IMAGE_EXTS):
         return []
 
@@ -387,7 +395,7 @@ def run_text_detectors(
 
 
 def write_audit_coverage_gap(package: Path, output_dir: Path) -> Path:
-    files = [path for path in sorted(package.rglob("*")) if path.is_file()]
+    files = [path for path in sorted(package.rglob("*")) if not path.is_symlink() and path.is_file()]
     relative_files = [str(path.relative_to(package)) for path in files[:25]]
     observed_suffixes = sorted({path.suffix.lower() or "<none>" for path in files})
     payload = {

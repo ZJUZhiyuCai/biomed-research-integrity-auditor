@@ -3,6 +3,9 @@
 ## Unreleased
 
 ### Added
+- CLI package intake now emits an R1 package-guardrail coverage gap for symlinks,
+  unreadable entries, and resource-limit overages; symlinks are skipped rather than
+  followed or hashed, and resource-heavy image screening is explicitly marked as not run.
 - Human reports now use a PI/co-author first-page order: Quick Read, Scope, Must Resolve,
   and Materials Needed appear before workflow status, the full action queue, coverage,
   finding cards, and technical appendices.

@@ -1338,7 +1338,10 @@ def check_cross_file_sequence_reuse(tables: list[tuple[Path, list[dict[str, str]
 def collect_files(path: Path) -> list[Path]:
     if path.is_file():
         return [path] if path.suffix.lower() in TABLE_EXTS else []
-    return [p for p in sorted(path.rglob("*")) if p.is_file() and p.suffix.lower() in TABLE_EXTS]
+    return [
+        p for p in sorted(path.rglob("*"))
+        if not p.is_symlink() and p.is_file() and p.suffix.lower() in TABLE_EXTS
+    ]
 
 
 def main() -> int:

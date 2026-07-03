@@ -30,7 +30,10 @@ def safe_stem(value: str) -> str:
 
 
 def collect_key_files(root: Path) -> list[Path]:
-    return sorted(path for path in root.rglob("*") if path.is_file() and path.suffix.lower() in KEY_EXTS)
+    return sorted(
+        path for path in root.rglob("*")
+        if not path.is_symlink() and path.is_file() and path.suffix.lower() in KEY_EXTS
+    )
 
 
 def image_dimensions(data: bytes) -> tuple[int | None, int | None]:

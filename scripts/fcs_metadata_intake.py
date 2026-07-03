@@ -45,7 +45,10 @@ COMPENSATION_KEYS = ("$SPILLOVER", "SPILLOVER", "$COMP", "COMP")
 
 
 def collect_fcs_files(root: Path) -> list[Path]:
-    return sorted(path for path in root.rglob("*") if path.is_file() and path.suffix.lower() in FCS_EXTS)
+    return sorted(
+        path for path in root.rglob("*")
+        if not path.is_symlink() and path.is_file() and path.suffix.lower() in FCS_EXTS
+    )
 
 
 def header_int(header: bytes, name: str) -> int | None:

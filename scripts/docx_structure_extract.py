@@ -76,7 +76,10 @@ def caption_kind(label: str) -> str:
 
 
 def collect_docx_files(root: Path) -> list[Path]:
-    return sorted(path for path in root.rglob("*") if path.is_file() and path.suffix.lower() in DOCX_EXTS)
+    return sorted(
+        path for path in root.rglob("*")
+        if not path.is_symlink() and path.is_file() and path.suffix.lower() in DOCX_EXTS
+    )
 
 
 def read_document_body(path: Path) -> ET.Element:

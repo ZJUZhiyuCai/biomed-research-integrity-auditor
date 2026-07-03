@@ -36,7 +36,7 @@ def image_files(package: Path) -> list[Path]:
     return sorted(
         path
         for path in package.rglob("*")
-        if path.is_file() and path.suffix.lower() in IMAGE_EXTS
+        if not path.is_symlink() and path.is_file() and path.suffix.lower() in IMAGE_EXTS
     )
 
 

@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from typing import Any
 
 from scripts.pipeline.common import (
     DetectorRunResult,
@@ -34,11 +35,17 @@ def run_source_detectors(package: Path, output_dir: Path) -> list[Path]:
         detector_stage.run_detector = original
 
 
-def run_image_detector(package: Path, output_dir: Path, provenance_graph: Path, scan_profile: str = "standard") -> list[Path]:
+def run_image_detector(
+    package: Path,
+    output_dir: Path,
+    provenance_graph: Path,
+    scan_profile: str = "standard",
+    package_guardrails: dict[str, Any] | None = None,
+) -> list[Path]:
     original = detector_stage.run_detector
     detector_stage.run_detector = run_detector
     try:
-        return detector_stage.run_image_detector(package, output_dir, provenance_graph, scan_profile)
+        return detector_stage.run_image_detector(package, output_dir, provenance_graph, scan_profile, package_guardrails)
     finally:
         detector_stage.run_detector = original
 

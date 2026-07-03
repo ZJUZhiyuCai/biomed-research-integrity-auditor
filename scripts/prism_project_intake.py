@@ -56,7 +56,10 @@ def normalized_id(value: str | None) -> str:
 
 
 def collect_pzfx_files(root: Path) -> list[Path]:
-    return sorted(path for path in root.rglob("*") if path.is_file() and path.suffix.lower() in PZFX_EXTS)
+    return sorted(
+        path for path in root.rglob("*")
+        if not path.is_symlink() and path.is_file() and path.suffix.lower() in PZFX_EXTS
+    )
 
 
 def table_title(table: ET.Element, index: int) -> str:

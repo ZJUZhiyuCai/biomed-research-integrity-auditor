@@ -57,7 +57,10 @@ def run(cmd: list[str]) -> None:
 
 
 def has_files(path: Path, suffixes: set[str]) -> bool:
-    return path.exists() and any(item.is_file() and item.suffix.lower() in suffixes for item in path.rglob("*"))
+    return path.exists() and any(
+        not item.is_symlink() and item.is_file() and item.suffix.lower() in suffixes
+        for item in path.rglob("*")
+    )
 
 
 def find_external_literature_fixture(package: Path) -> Path | None:

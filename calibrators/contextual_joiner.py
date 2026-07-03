@@ -47,7 +47,7 @@ def read_package_text(package: Path) -> tuple[str, list[dict[str, Any]]]:
     chunks = []
     errors: list[dict[str, Any]] = []
     for path in sorted(package.rglob("*")):
-        if not path.is_file() or path.suffix.lower() not in TEXT_EXTS:
+        if path.is_symlink() or not path.is_file() or path.suffix.lower() not in TEXT_EXTS:
             continue
         try:
             text = path.read_text(encoding="utf-8", errors="ignore")
@@ -65,12 +65,18 @@ def read_package_text(package: Path) -> tuple[str, list[dict[str, Any]]]:
 
 def has_source_data(package: Path) -> bool:
     source_dir = package / "source_data"
-    return source_dir.exists() and any(path.is_file() and path.suffix.lower() in SOURCE_EXTS for path in source_dir.rglob("*"))
+    return source_dir.exists() and any(
+        not path.is_symlink() and path.is_file() and path.suffix.lower() in SOURCE_EXTS
+        for path in source_dir.rglob("*")
+    )
 
 
 def has_raw_images(package: Path) -> bool:
     raw_dir = package / "raw_images"
-    return raw_dir.exists() and any(path.is_file() and path.suffix.lower() in RAW_IMAGE_EXTS for path in raw_dir.rglob("*"))
+    return raw_dir.exists() and any(
+        not path.is_symlink() and path.is_file() and path.suffix.lower() in RAW_IMAGE_EXTS
+        for path in raw_dir.rglob("*")
+    )
 
 
 def contains_any(text: str, patterns: list[str]) -> bool:

@@ -40,7 +40,10 @@ def safe_stem(value: str) -> str:
 
 
 def collect_pptx_files(root: Path) -> list[Path]:
-    return sorted(path for path in root.rglob("*") if path.is_file() and path.suffix.lower() in PPTX_EXTS)
+    return sorted(
+        path for path in root.rglob("*")
+        if not path.is_symlink() and path.is_file() and path.suffix.lower() in PPTX_EXTS
+    )
 
 
 def slide_number_from_rels(name: str) -> int | None:

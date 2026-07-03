@@ -78,7 +78,7 @@ def path_category(path: Path, root: Path) -> str | None:
 def collect_text_files(root: Path) -> list[tuple[Path, str]]:
     files = []
     for path in sorted(root.rglob("*")):
-        if not path.is_file() or path.suffix.lower() not in TEXT_EXTS:
+        if path.is_symlink() or not path.is_file() or path.suffix.lower() not in TEXT_EXTS:
             continue
         category = path_category(path, root)
         if category:

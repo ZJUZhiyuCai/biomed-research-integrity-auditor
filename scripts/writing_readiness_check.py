@@ -43,7 +43,8 @@ def collect_text_files(package: Path) -> list[Path]:
     return [
         path
         for path in sorted(package.rglob("*"))
-        if path.is_file()
+        if not path.is_symlink()
+        and path.is_file()
         and path.suffix.lower() in TEXT_EXTS
         and "submission_qc_packet" not in path.parts
     ]
@@ -185,7 +186,11 @@ def check_submission_files(package: Path) -> dict[str, Any]:
         "data_availability": ["data_availability", "data-availability"],
         "author_contributions": ["author_contribution", "contributions"],
     }
-    names = [path.relative_to(package).as_posix().lower() for path in package.rglob("*") if path.is_file()]
+    names = [
+        path.relative_to(package).as_posix().lower()
+        for path in package.rglob("*")
+        if not path.is_symlink() and path.is_file()
+    ]
     rows = {}
     missing = []
     for key, tokens in expected.items():

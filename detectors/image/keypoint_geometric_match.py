@@ -34,7 +34,10 @@ DEFAULT_MIN_PERSPECTIVE_SCORE = 0.0015
 
 
 def collect_images(root: Path) -> list[Path]:
-    return [path for path in sorted(root.rglob("*")) if path.is_file() and path.suffix.lower() in IMAGE_EXTS]
+    return [
+        path for path in sorted(root.rglob("*"))
+        if not path.is_symlink() and path.is_file() and path.suffix.lower() in IMAGE_EXTS
+    ]
 
 
 def display_path(path: Path, root: Path) -> str:

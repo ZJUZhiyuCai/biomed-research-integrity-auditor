@@ -31,7 +31,10 @@ def safe_stem(value: str) -> str:
 
 
 def collect_psd_files(root: Path) -> list[Path]:
-    return sorted(path for path in root.rglob("*") if path.is_file() and path.suffix.lower() in PSD_EXTS)
+    return sorted(
+        path for path in root.rglob("*")
+        if not path.is_symlink() and path.is_file() and path.suffix.lower() in PSD_EXTS
+    )
 
 
 def export_preview(root: Path, path: Path, image_dir: Path) -> tuple[dict[str, Any], dict[str, Any] | None, dict[str, Any] | None]:

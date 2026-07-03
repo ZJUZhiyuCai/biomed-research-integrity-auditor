@@ -24,6 +24,10 @@ from scripts.pipeline.detectors import (
     write_audit_coverage_gap,
     write_format_coverage_gaps,
 )
+from scripts.pipeline.guardrails import (
+    scan_package_guardrails,
+    write_package_guardrail_candidates,
+)
 from scripts.pipeline.intake import (
     build_docx_structure,
     build_fcs_metadata_intake,
@@ -86,6 +90,8 @@ def run_pipeline(
     reference_check_provider: str = "none",
 ) -> dict[str, Any]:
     output_dir.mkdir(parents=True, exist_ok=True)
+    package_guardrails = scan_package_guardrails(package)
+    package_guardrail_output = write_package_guardrail_candidates(package, output_dir, package_guardrails)
     manifest = build_manifest(package, mode, domains, output_dir)
     manifest_payload = read_json(manifest)
     audit_id = case_id or package.name
@@ -121,12 +127,15 @@ def run_pipeline(
     build_pptx_embedded_images(package, output_dir)
     build_key_embedded_images(package, output_dir)
     build_psd_preview_images(package, output_dir)
-    build_image_metadata(package, output_dir)
+    if not package_guardrails.get("image_screening_blocked"):
+        build_image_metadata(package, output_dir)
 
     provenance_graph = build_provenance(package, manifest, output_dir)
     detector_outputs = []
+    if package_guardrail_output is not None:
+        detector_outputs.append(package_guardrail_output)
     detector_outputs.extend(run_source_detectors(package, output_dir))
-    detector_outputs.extend(run_image_detector(package, output_dir, provenance_graph, scan_profile))
+    detector_outputs.extend(run_image_detector(package, output_dir, provenance_graph, scan_profile, package_guardrails))
     effective_external_provider = "none" if scan_profile == "quick" else external_literature_provider
     detector_outputs.extend(run_text_detectors(
         package,

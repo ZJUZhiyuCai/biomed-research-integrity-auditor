@@ -37,7 +37,10 @@ def relpath(root: Path, path: Path) -> str:
 
 
 def collect_images(root: Path) -> list[Path]:
-    return sorted(path for path in root.rglob("*") if path.is_file() and path.suffix.lower() in IMAGE_EXTS)
+    return sorted(
+        path for path in root.rglob("*")
+        if not path.is_symlink() and path.is_file() and path.suffix.lower() in IMAGE_EXTS
+    )
 
 
 def open_rgb(path: Path) -> Any:

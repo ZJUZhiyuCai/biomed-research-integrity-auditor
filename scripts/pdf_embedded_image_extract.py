@@ -42,7 +42,10 @@ def is_true_pdf(path: Path) -> bool:
 
 
 def collect_pdf_files(root: Path) -> list[Path]:
-    return sorted(path for path in root.rglob("*") if path.is_file() and path.suffix.lower() in PDF_EXTS)
+    return sorted(
+        path for path in root.rglob("*")
+        if not path.is_symlink() and path.is_file() and path.suffix.lower() in PDF_EXTS
+    )
 
 
 def normalize_extracted_image(image_payload: dict[str, Any]) -> ImageBytes:

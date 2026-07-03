@@ -29,6 +29,11 @@ from calibrators.contract_validation import ContractError, validate_instance
 from calibrators.risk_cap_engine import calibrate_payload, load_rules
 from detectors.image.image_io import iter_normalized_frames, normalized_rgb
 from provenance.panel_modality import normalize_modality, resolve_panel_modality_routing
+from scripts.pipeline.guardrails import (
+    PackageGuardrailLimits,
+    scan_package_guardrails,
+    write_package_guardrail_candidates,
+)
 from scripts.submission_qc import (
     write_claim_coverage_csv,
     write_correction_plan_csv,
@@ -3493,6 +3498,81 @@ class EndToEndTests(unittest.TestCase):
             self.assertTrue(all(item["calibrated_risk_level"] == "R1" for item in coverage))
             summary = json.loads((out / "AUDIT_JSON_SUMMARY.json").read_text(encoding="utf-8"))
             self.assertTrue(any(item["finding_type"] == "audit_coverage_gap" for item in summary["findings"]))
+
+    def test_package_guardrail_reports_resource_limits_as_r1_candidate(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "resource_case"
+            figures = package / "figures"
+            figures.mkdir(parents=True)
+            for idx in range(3):
+                (figures / f"panel_{idx}.png").write_bytes(b"not a real image")
+
+            guardrails = scan_package_guardrails(
+                package,
+                PackageGuardrailLimits(
+                    max_package_size_bytes=10_000,
+                    max_single_file_bytes=10_000,
+                    max_image_files=2,
+                    max_total_files=10,
+                ),
+            )
+            self.assertTrue(guardrails["has_findings"])
+            self.assertTrue(guardrails["image_screening_blocked"])
+            self.assertTrue(any(item["limit_type"] == "max_image_files" for item in guardrails["limit_records"]))
+
+            output = write_package_guardrail_candidates(package, Path(tmp), guardrails)
+            self.assertIsNotNone(output)
+            assert output is not None
+            payload = json.loads(output.read_text(encoding="utf-8"))
+            validate_instance(payload, ROOT / "schemas" / "detector_output.schema.json", "package guardrail candidate")
+            self.assertEqual(payload["candidates"][0]["finding_type"], "package_intake_guardrail")
+            self.assertIn("audit_coverage_gap", payload["candidates"][0]["risk_cap_tags"])
+
+    @unittest.skipIf(not hasattr(Path, "symlink_to"), "symlinks are not supported by this platform")
+    def test_audit_package_skips_symlink_entries_and_reports_guardrail(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            package = tmp_path / "symlink_case"
+            figures = package / "figures"
+            figures.mkdir(parents=True)
+            outside = tmp_path / "outside_secret.png"
+            outside.write_bytes(b"outside material should not be inventoried")
+            link = figures / "linked_external.png"
+            try:
+                link.symlink_to(outside)
+            except (OSError, NotImplementedError) as exc:
+                self.skipTest(f"symlink creation unavailable: {exc}")
+
+            out = tmp_path / "out"
+            run([
+                PYTHON,
+                "scripts/audit_package.py",
+                str(package),
+                "--output-dir",
+                str(out),
+                "--case-id",
+                "symlink_case",
+            ])
+
+            manifest = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
+            manifest_paths = {item["path"] for item in manifest["files"]}
+            self.assertNotIn("figures/linked_external.png", manifest_paths)
+            self.assertTrue(any("Skipped symlink: figures/linked_external.png" in item for item in manifest["inventory_warnings"]))
+
+            guardrail = json.loads((out / "package_guardrail_candidates.json").read_text(encoding="utf-8"))
+            self.assertEqual(guardrail["candidates"][0]["finding_type"], "package_intake_guardrail")
+            self.assertIn("figures/linked_external.png", guardrail["candidates"][0]["evidence"]["symlink_entries"])
+
+            snapshot = json.loads((out / "audit_snapshot.json").read_text(encoding="utf-8"))
+            snapshot_paths = {item["path"] for item in snapshot["files"]}
+            self.assertNotIn("figures/linked_external.png", snapshot_paths)
+
+            summary = json.loads((out / "AUDIT_JSON_SUMMARY.json").read_text(encoding="utf-8"))
+            self.assertTrue(any(item["finding_type"] == "package_intake_guardrail" for item in summary["findings"]))
+            self.assertEqual(summary["overall_risk"], "R1")
+            coverage = summary["audit_coverage"]
+            self.assertTrue(coverage["package_guardrail_active"])
+            self.assertFalse(coverage["package_guardrail_image_screening_blocked"])
 
     def test_relevant_unsupported_formats_emit_human_visible_coverage_gaps(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

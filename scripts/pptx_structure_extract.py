@@ -35,7 +35,10 @@ PPTX_EXTS = {".pptx"}
 
 
 def collect_pptx_files(root: Path) -> list[Path]:
-    return sorted(path for path in root.rglob("*") if path.is_file() and path.suffix.lower() in PPTX_EXTS)
+    return sorted(
+        path for path in root.rglob("*")
+        if not path.is_symlink() and path.is_file() and path.suffix.lower() in PPTX_EXTS
+    )
 
 
 def path_mentions(text: str, files: dict[str, list[str]]) -> list[dict[str, str]]:

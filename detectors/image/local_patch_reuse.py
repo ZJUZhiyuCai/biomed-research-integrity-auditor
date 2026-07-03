@@ -80,7 +80,10 @@ def transformed(img: Any, transform_name: str) -> Any:
 
 
 def collect_images(root: Path) -> list[Path]:
-    return [path for path in sorted(root.rglob("*")) if path.is_file() and path.suffix.lower() in IMAGE_EXTS]
+    return [
+        path for path in sorted(root.rglob("*"))
+        if not path.is_symlink() and path.is_file() and path.suffix.lower() in IMAGE_EXTS
+    ]
 
 
 def undirected_pair(left: str, right: str) -> tuple[str, str]:

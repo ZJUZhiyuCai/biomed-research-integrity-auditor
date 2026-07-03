@@ -23,6 +23,7 @@ from scripts.pipeline.common import (
 
 
 RAW_CANDIDATE_ARTIFACTS = (
+    "package_guardrail_candidates.json",
     "stats_consistency_candidates.json",
     "pseudoreplication_candidates.json",
     "global_image_candidates.json",
@@ -212,6 +213,8 @@ def build_coverage(
         "unsupported_relevant_files": [],
         "unsupported_relevant_file_count": 0,
         "audit_coverage_gap": False,
+        "package_guardrail_active": False,
+        "package_guardrail_image_screening_blocked": False,
         "image_screening_boundary": IMAGE_SCREENING_BOUNDARY,
         "external_literature_provider": external_provider,
         "scan_profile": scan_profile,
@@ -238,7 +241,19 @@ def build_coverage(
         ),
     }
 
-    if has_files(package, IMAGE_EXTS):
+    guardrail_payload = load_safe("package_guardrail_candidates.json")
+    if guardrail_payload:
+        coverage["modules_executed"].append("package_intake_guardrail")
+        guardrail_input = guardrail_payload.get("input", {}) or {}
+        coverage["package_guardrail_active"] = True
+        coverage["package_guardrail"] = guardrail_input
+        coverage["package_guardrail_image_screening_blocked"] = bool(guardrail_input.get("image_screening_blocked"))
+        if guardrail_input.get("image_screening_blocked"):
+            coverage["modules_not_executed"].append(
+                "image screening (blocked by package intake resource guardrail; not a clean result)"
+            )
+
+    if has_files(package, IMAGE_EXTS) and not coverage.get("package_guardrail_image_screening_blocked"):
         coverage["modules_executed"].append("image_global_near_duplicate")
         if scan_profile == "quick":
             coverage["modules_not_executed"].append(
@@ -348,7 +363,7 @@ def build_coverage(
                         "some local patch / same-image copy-move tile comparisons "
                         "(runtime budget reached; not a clean result)"
                     )
-    else:
+    elif not has_files(package, IMAGE_EXTS):
         coverage["modules_not_executed"].append("image screening (no image files supplied)")
 
     if has_files(package / "source_data", SOURCE_EXTS):
