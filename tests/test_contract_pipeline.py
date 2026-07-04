@@ -2712,17 +2712,41 @@ class ContractPipelineTests(unittest.TestCase):
             summary = json.loads((out / "AUDIT_JSON_SUMMARY.json").read_text(encoding="utf-8"))
             coverage = summary["audit_coverage"]
             self.assertIn("pdf_embedded_image_extraction", coverage["modules_executed"])
+            self.assertIn("image_global_near_duplicate", coverage["modules_executed"])
             self.assertEqual(coverage["pdf_embedded_images_extracted"], 1)
             self.assertEqual(coverage["pdf_embedded_image_error_count"], 0)
+            self.assertEqual(coverage["image_screening_input_files"], 1)
+            self.assertEqual(coverage["image_screening_derived_images"], 1)
+            self.assertNotIn("image screening (no image files supplied)", coverage["modules_not_executed"])
             self.assertTrue(coverage["pdf_embedded_image_files"][0]["output_path"].startswith("pdf_embedded_images/"))
             report = (out / "audit-report.md").read_text(encoding="utf-8")
             self.assertIn("PDF embedded-image intake note / PDF 内嵌图片读取说明", report)
             self.assertIn("导出的 PDF 内嵌图片只是展示层材料", report)
+            self.assertIn("Image screening included 1 derived presentation-layer image", report)
             packet = out / "submission_qc_packet"
             self.assertTrue((packet / "pdf_embedded_images.json").is_file())
             self.assertTrue((packet / "pdf_embedded_images").is_dir())
             packet_readme = (packet / "QC_PACKET_README.md").read_text(encoding="utf-8")
             self.assertIn("pdf_embedded_images", packet_readme)
+
+    def test_derived_image_screening_records_reject_path_escape(self) -> None:
+        from scripts.pipeline.detectors import derived_image_records
+
+        with tempfile.TemporaryDirectory() as tmp:
+            output_dir = Path(tmp)
+            image_dir = output_dir / "pdf_embedded_images"
+            image_dir.mkdir(parents=True)
+            write_png(image_dir / "safe.png", textured_image(994, size=(32, 32)))
+            (output_dir / "pdf_embedded_images.json").write_text(json.dumps({
+                "images": [
+                    {"output_path": "../escape.png", "source_pdf": "supplementary/Figure_S1.pdf"},
+                    {"output_path": "/absolute/escape.png", "source_pdf": "supplementary/Figure_S1.pdf"},
+                    {"output_path": "pdf_embedded_images/safe.png", "source_pdf": "supplementary/Figure_S1.pdf"},
+                ]
+            }), encoding="utf-8")
+            records = derived_image_records(output_dir)
+            self.assertEqual(len(records), 1)
+            self.assertEqual(records[0]["source_output_path"], "pdf_embedded_images/safe.png")
 
     def test_pptx_embedded_image_extractor_exports_presentation_images(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

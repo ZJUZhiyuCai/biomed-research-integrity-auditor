@@ -30,6 +30,16 @@ def load_public_smoke_runner():
     return module
 
 
+def load_lu_public_runner():
+    path = BENCH / "scripts" / "run_lu_public_benchmark.py"
+    spec = importlib.util.spec_from_file_location("run_lu_public_benchmark", path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec and spec.loader
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
 class PPPRBenchmarkTests(unittest.TestCase):
     def test_label_schema_rejects_misconduct_truth_fields(self) -> None:
         schema = json.loads((BENCH / "labels.schema.json").read_text(encoding="utf-8"))
@@ -240,6 +250,55 @@ class PPPRBenchmarkTests(unittest.TestCase):
                 self.assertEqual(list(validator.iter_errors(label)), [])
                 self.assertEqual(label["label_strength"], "ori_unit_sample")
                 self.assertNotIn("misconduct", json.dumps(label).lower())
+
+    def test_lu_public_subset_labels_are_reference_only_and_schema_safe(self) -> None:
+        schema = json.loads((BENCH / "labels.schema.json").read_text(encoding="utf-8"))
+        validator = Draft202012Validator(schema)
+        labels_path = BENCH / "labels" / "lu_xiongbin_finding_level_labels.jsonl"
+        labels = [
+            json.loads(line)
+            for line in labels_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        self.assertGreaterEqual(len(labels), 5)
+        case_ids = {label["case_id"] for label in labels}
+        source_rows = (BENCH / "sources" / "lu_xiongbin_public_cases.csv").read_text(encoding="utf-8")
+        for case_id in case_ids:
+            self.assertIn(case_id, source_rows)
+        for label in labels:
+            self.assertEqual(list(validator.iter_errors(label)), [])
+            self.assertEqual(label.get("evaluation_role"), "reference_only")
+            lowered = json.dumps(label).lower()
+            self.assertNotIn("fraud", lowered)
+            self.assertNotIn("guilty", lowered)
+
+    def test_lu_public_runner_builds_metadata_package_without_network(self) -> None:
+        runner = load_lu_public_runner()
+        row = {
+            "case_id": "lu_nature_biomimetic_reference",
+            "case_kind": "metadata_only",
+            "original_title": "Example title",
+            "original_doi": "10.1038/ncomms10081",
+            "original_pmid": "",
+            "original_pmcid": "",
+            "journal": "Nature Communications",
+            "public_status": "retracted",
+            "status_date": "2026-06-26",
+            "status_url": "https://www.nature.com/articles/s41467-026-74778-3",
+            "known_public_locations": "Figure 4a and Supplementary Fig. 22",
+            "material_strategy": "metadata_only",
+            "label_strength": "journal_confirmed_retraction",
+            "evaluation_role": "reference_only",
+            "notes": "metadata only",
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            result = runner.build_metadata_only_package(row, Path(tmp))
+            package = Path(result["package_dir"])
+            self.assertTrue((package / "PACKAGE_SOURCE_METADATA.json").is_file())
+            self.assertTrue((package / "PUBLIC_STATUS_NOTE.md").is_file())
+            payload = json.loads((package / "PACKAGE_SOURCE_METADATA.json").read_text(encoding="utf-8"))
+            self.assertTrue(payload["local_only"])
+            self.assertEqual(payload["benchmark_label_role"], "reference_only")
 
 
 if __name__ == "__main__":

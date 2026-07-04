@@ -121,6 +121,10 @@ def build_coverage(
         "image_panels_screened": 0,
         "image_files_unreadable": 0,
         "unreadable_image_files": [],
+        "image_screening_input_files": 0,
+        "image_screening_derived_images": 0,
+        "image_screening_derived_sources": [],
+        "image_screening_inputs_note": "",
         "keypoint_pairs_screened": 0,
         "keypoint_candidates": 0,
         "keypoint_screening_limits": [],
@@ -253,7 +257,12 @@ def build_coverage(
                 "image screening (blocked by package intake resource guardrail; not a clean result)"
             )
 
-    if has_files(package, IMAGE_EXTS) and not coverage.get("package_guardrail_image_screening_blocked"):
+    screening_payload = load_safe("image_screening_inputs.json")
+    screening_original_images = (screening_payload or {}).get("original_images", []) or []
+    screening_derived_images = (screening_payload or {}).get("derived_images", []) or []
+    image_screening_has_inputs = bool(screening_original_images or screening_derived_images) or has_files(package, IMAGE_EXTS)
+
+    if image_screening_has_inputs and not coverage.get("package_guardrail_image_screening_blocked"):
         coverage["modules_executed"].append("image_global_near_duplicate")
         if scan_profile == "quick":
             coverage["modules_not_executed"].append(
@@ -392,7 +401,7 @@ def build_coverage(
                         "some local patch / same-image copy-move tile comparisons "
                         "(runtime budget reached; not a clean result)"
                     )
-    elif not has_files(package, IMAGE_EXTS):
+    elif not image_screening_has_inputs:
         coverage["modules_not_executed"].append("image screening (no image files supplied)")
 
     stats_payload = load_safe("stats_consistency_candidates.json")
@@ -908,5 +917,18 @@ def build_coverage(
         coverage["unreadable_image_files"] = sorted(unreadable_image_files.values(), key=lambda item: item["path"])
         coverage["image_files_unreadable"] = len(unreadable_image_files)
         coverage["unreadable_image_action_required"] = True
+
+    if screening_payload:
+        coverage["image_screening_input_files"] = int(len(screening_original_images) + len(screening_derived_images))
+        coverage["image_screening_derived_images"] = int(len(screening_derived_images))
+        coverage["image_screening_derived_sources"] = [
+            {
+                "artifact": item.get("artifact", ""),
+                "source_container": item.get("source_container", ""),
+                "target_relative_path": item.get("target_relative_path", ""),
+            }
+            for item in screening_derived_images[:20]
+        ]
+        coverage["image_screening_inputs_note"] = str(screening_payload.get("scope_note", ""))
 
     return coverage

@@ -62,3 +62,27 @@ Current baseline: `results/public_smoke_2026-06-30.json` records 2 public cases,
 labels hit (`finding_level_recall: 1.0`). ORI same-section overlap and low-contrast copy-move
 samples are retained as `scope_gap` labels for future detector work, not as clean-paper or
 no-concern conclusions.
+
+## Lu/Xiongbin Lu Public-Concern Subset
+
+`sources/lu_xiongbin_public_cases.csv` and
+`labels/lu_xiongbin_finding_level_labels.jsonl` define a focused public-concern subset around
+published retraction/status statements associated with Xiongbin Lu coauthored articles. The labels
+are `reference_only` by default: they record public article status and journal-identified locations
+without treating the retraction itself as detector-recall ground truth.
+
+To build local packages and run the auditor without committing third-party article materials:
+
+```bash
+python3 benchmarks/pppr_integrity_benchmark/scripts/run_lu_public_benchmark.py \
+  --output-root tmp/lu_xiongbin_public_benchmark \
+  --scan-profile deep
+```
+
+The runner downloads selected public JCI figure exports, public supplemental PDFs where available,
+PMC OA XML/PDF files where metadata permits, and metadata-only placeholders for rows where original
+article materials are not redistributed. PubPeer comments are not scraped or copied.
+
+Current baseline: `results/lu_xiongbin_public_2026-07-04.json` records 7 reference-only public
+status/location rows. The two JCI rows produced R3 candidate outputs from local public figure and
+supplemental-PDF image screening; XML/metadata-only rows remain coverage-limited reference rows.

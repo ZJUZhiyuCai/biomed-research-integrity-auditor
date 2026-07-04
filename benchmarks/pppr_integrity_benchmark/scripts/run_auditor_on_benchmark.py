@@ -26,7 +26,7 @@ def selected_cases(packages_dir: Path, split: Path | None) -> list[Path]:
     return [packages_dir / case_id for case_id in sorted(wanted) if (packages_dir / case_id).is_dir()]
 
 
-def run_case(package: Path, output_dir: Path, mode: str) -> dict[str, object]:
+def run_case(package: Path, output_dir: Path, mode: str, scan_profile: str) -> dict[str, object]:
     case_output = output_dir / package.name
     cmd = [
         PYTHON,
@@ -38,6 +38,8 @@ def run_case(package: Path, output_dir: Path, mode: str) -> dict[str, object]:
         package.name,
         "--output-dir",
         str(case_output),
+        "--scan-profile",
+        scan_profile,
         "--external-literature-provider",
         "none",
     ]
@@ -71,12 +73,13 @@ def main() -> int:
         "external_public_material",
         "response_to_concern",
     ])
+    parser.add_argument("--scan-profile", default="standard", choices=["quick", "standard", "deep"])
     parser.add_argument("--summary", type=Path)
     args = parser.parse_args()
 
     packages = selected_cases(args.packages_dir.expanduser().resolve(), args.split.expanduser().resolve() if args.split else None)
     args.output_dir.mkdir(parents=True, exist_ok=True)
-    results = [run_case(package, args.output_dir, args.mode) for package in packages]
+    results = [run_case(package, args.output_dir, args.mode, args.scan_profile) for package in packages]
     payload = {"case_count": len(results), "results": results}
     summary = args.summary or (args.output_dir / "benchmark_run_summary.json")
     summary.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")

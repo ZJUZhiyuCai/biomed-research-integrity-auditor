@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -203,6 +204,106 @@ def run_source_detectors(package: Path, output_dir: Path) -> list[Path]:
     return outputs
 
 
+DERIVED_IMAGE_ARTIFACTS = (
+    ("pdf_embedded_images.json", "figures/_derived_pdf_embedded"),
+    ("pptx_embedded_images.json", "figures/_derived_pptx_embedded"),
+    ("key_embedded_images.json", "figures/_derived_keynote_embedded"),
+    ("psd_preview_images.json", "figures/_derived_psd_preview"),
+)
+
+
+def derived_image_records(output_dir: Path) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    for artifact_name, target_prefix in DERIVED_IMAGE_ARTIFACTS:
+        artifact = output_dir / artifact_name
+        if not artifact.is_file():
+            continue
+        try:
+            payload = read_json(artifact)
+        except Exception:
+            continue
+        for item in payload.get("images", []) or []:
+            output_path = str(item.get("output_path", ""))
+            if not output_path:
+                continue
+            output_rel = Path(output_path)
+            if output_rel.is_absolute() or ".." in output_rel.parts:
+                continue
+            source = output_dir / output_rel
+            if not source.is_file() or source.suffix.lower() not in IMAGE_EXTS:
+                continue
+            records.append({
+                "artifact": artifact_name,
+                "source": source,
+                "source_output_path": output_path,
+                "target_relative_path": str(Path(target_prefix) / output_rel),
+                "source_container": (
+                    item.get("source_pdf")
+                    or item.get("source_pptx")
+                    or item.get("source_key")
+                    or item.get("source_psd")
+                    or ""
+                ),
+                "page": item.get("page", ""),
+                "width": item.get("width", ""),
+                "height": item.get("height", ""),
+            })
+    return records
+
+
+def prepare_image_screening_root(package: Path, output_dir: Path) -> Path:
+    """Build an output-local image-screening package when derived images exist."""
+    derived_records = derived_image_records(output_dir)
+    if not derived_records:
+        return package
+
+    screening_root = output_dir / "image_screening_package"
+    if screening_root.exists():
+        shutil.rmtree(screening_root)
+    screening_root.mkdir(parents=True, exist_ok=True)
+
+    original_records: list[dict[str, Any]] = []
+    for source in sorted(package.rglob("*")):
+        if source.is_symlink() or not source.is_file() or source.suffix.lower() not in IMAGE_EXTS:
+            continue
+        rel = source.relative_to(package)
+        target = screening_root / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
+        original_records.append({
+            "source_path": rel.as_posix(),
+            "target_relative_path": rel.as_posix(),
+        })
+
+    copied_derived: list[dict[str, Any]] = []
+    for record in derived_records:
+        target_rel = Path(str(record["target_relative_path"]))
+        target = screening_root / target_rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(record["source"], target)
+        copied_derived.append({
+            key: value
+            for key, value in record.items()
+            if key != "source"
+        })
+
+    write_json(output_dir / "image_screening_inputs.json", {
+        "schema_version": "0.1.0",
+        "input_package": str(package),
+        "screening_root": str(screening_root),
+        "original_images": original_records,
+        "derived_images": copied_derived,
+        "original_image_count": len(original_records),
+        "derived_image_count": len(copied_derived),
+        "scope_note": (
+            "Image detectors screened an output-local package containing original supplied images plus "
+            "presentation-layer images exported from PDFs/PPTX/Keynote/PSD. Derived images are screening "
+            "inputs only; they are not raw records or provenance proof."
+        ),
+    })
+    return screening_root
+
+
 def run_image_detector(
     package: Path,
     output_dir: Path,
@@ -212,7 +313,8 @@ def run_image_detector(
 ) -> list[Path]:
     if package_guardrails and package_guardrails.get("image_screening_blocked"):
         return []
-    if not has_files(package, IMAGE_EXTS):
+    image_root = prepare_image_screening_root(package, output_dir)
+    if not has_files(image_root, IMAGE_EXTS):
         return []
 
     outputs: list[Path] = []
@@ -220,7 +322,7 @@ def run_image_detector(
     global_cmd = [
         PYTHON,
         "detectors/image/global_near_duplicate.py",
-        str(package),
+        str(image_root),
         "--output",
         str(image_output),
     ]
@@ -267,7 +369,7 @@ def run_image_detector(
     splice_cmd = [
         PYTHON,
         "detectors/image/splice_forensics_triage.py",
-        str(package),
+        str(image_root),
         "--output",
         str(splice_output),
     ]
@@ -287,7 +389,7 @@ def run_image_detector(
     keypoint_cmd = [
         PYTHON,
         "detectors/image/keypoint_geometric_match.py",
-        str(package),
+        str(image_root),
         "--provenance",
         str(provenance_graph),
         "--output",
@@ -328,7 +430,7 @@ def run_image_detector(
     local_patch_cmd = [
         PYTHON,
         "detectors/image/local_patch_reuse.py",
-        str(package),
+        str(image_root),
         "--provenance",
         str(provenance_graph),
         "--evidence-dir",

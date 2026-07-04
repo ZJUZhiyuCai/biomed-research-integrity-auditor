@@ -3,6 +3,12 @@
 ## Unreleased
 
 ### Added
+- Lu/Xiongbin Lu public-concern benchmark subset with reference-only public status/location labels,
+  a local runner that downloads permitted public materials into `tmp/`, and a committed run summary
+  that contains no third-party article materials or PubPeer comments.
+- Image detectors can now screen an output-local package that includes presentation-layer images
+  exported from PDF/PPTX/Keynote/PSD intake artifacts. Reports disclose those derived images as
+  screening inputs only, not raw records or provenance proof.
 - Local patch / same-image copy-move screening now cuts exported composite figures into image-like
   subpanels before deep scanning, preserves the original figure path for provenance calibration,
   and reports skipped chart/text/axis presentation regions in audit coverage.

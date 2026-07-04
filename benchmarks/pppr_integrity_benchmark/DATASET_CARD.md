@@ -45,6 +45,16 @@ the current detector family is not yet expected to recover.
 This is a smoke baseline, not a finished PPPR benchmark. Scope-gap labels are real-data evidence
 for future recall work, not clean/no-concern conclusions.
 
+## Focused Public-Concern Subsets
+
+The Lu/Xiongbin Lu subset records public retraction/status statements and journal-identified figure
+locations for a small set of coauthored articles. These rows are intended for local reproducibility
+and workflow hardening. They are `reference_only` unless and until an annotator independently
+verifies a detector-recoverable observation from public materials.
+
+`results/lu_xiongbin_public_2026-07-04.json` is the first committed summary for this subset. It
+contains only run statistics and source URLs; downloaded article materials remain local under `tmp/`.
+
 ## Label Strengths
 
 - `weak_pubpeer_signal`: public discussion exists, no independent manual verification yet.

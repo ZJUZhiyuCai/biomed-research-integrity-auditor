@@ -1017,6 +1017,8 @@ def render_coverage(coverage: dict[str, Any] | None) -> list[str]:
     lines += ["", table([
         ["Coverage item / 覆盖项", "Value / 数值"],
         ["Image panels screened / 已筛图像面板", str(coverage.get("image_panels_screened", 0))],
+        ["Image-screening input files / 图像筛查输入文件", str(coverage.get("image_screening_input_files", 0))],
+        ["Derived presentation images included in image screening / 已纳入图像筛查的展示层导出图", str(coverage.get("image_screening_derived_images", 0))],
         ["Unreadable image files / 不可读取图像", str(coverage.get("image_files_unreadable", 0))],
         ["Splice-forensics triage images / 弱拼接取证已筛图像", str(coverage.get("splice_forensics_images_screened", 0))],
         ["Splice-forensics triage signals / 弱拼接取证提示", str(coverage.get("splice_forensics_candidates", 0))],
@@ -1280,6 +1282,14 @@ def render_coverage(coverage: dict[str, Any] | None) -> list[str]:
             "> 中文提示：导出的 PDF 内嵌图片只是展示层材料，不能代替原始图、未裁剪图、采集 metadata 或 figure assembly 记录。",
         ]
         exported = coverage.get("pdf_embedded_image_files") or []
+        screening_note = str(coverage.get("image_screening_inputs_note", "")).strip()
+        if int(coverage.get("image_screening_derived_images", 0) or 0) > 0:
+            lines.append(
+                f"> Image screening included {coverage.get('image_screening_derived_images', 0)} derived presentation-layer image(s). "
+                "This broadens automated screening scope but still does not establish raw-image provenance."
+            )
+            if screening_note:
+                lines.append(f"> {screening_note}")
         if exported:
             rows = [["Source PDF / 来源 PDF", "Page / 页", "Export / 导出文件", "Size / 尺寸"]]
             for item in exported[:12]:
