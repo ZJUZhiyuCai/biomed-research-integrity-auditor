@@ -3,6 +3,12 @@
 ## Unreleased
 
 ### Added
+- Statistical screening now compares row-oriented source tables for preserved decimal digits and
+  integer-offset patterns across paired treatment/group rows, while keeping the result capped as a
+  weak R2 triage signal.
+- Public supplementary source tables such as `MOESM*.xlsx` are now included in statistical
+  screening even when they are supplied outside `source_data/`; pseudoreplication still requires
+  an explicit `source_data/` package folder.
 - Local webapp hardening: explicit local-development CORS allowlist, bounded concurrent audit
   starts, and per-file zip extraction that avoids `extractall` while preserving zip-slip and
   symlink rejection.

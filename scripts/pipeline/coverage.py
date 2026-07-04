@@ -366,13 +366,18 @@ def build_coverage(
     elif not has_files(package, IMAGE_EXTS):
         coverage["modules_not_executed"].append("image screening (no image files supplied)")
 
+    stats_payload = load_safe("stats_consistency_candidates.json")
+    if stats_payload:
+        coverage["modules_executed"].append("statistics_consistency")
+        coverage["source_tables_screened"] = len(stats_payload.get("files_screened", []) or [])
     if has_files(package / "source_data", SOURCE_EXTS):
-        coverage["modules_executed"].extend(["statistics_consistency", "pseudoreplication"])
-        stats_payload = load_safe("stats_consistency_candidates.json")
-        if stats_payload:
-            coverage["source_tables_screened"] = len(stats_payload.get("files_screened", []) or [])
+        coverage["modules_executed"].append("pseudoreplication")
     else:
-        coverage["modules_not_executed"].append("statistics screening (no source_data CSV/TSV/XLSX/PZFX supplied)")
+        coverage["modules_not_executed"].append("pseudoreplication screening (no source_data CSV/TSV/XLSX/PZFX supplied)")
+    if not stats_payload:
+        coverage["modules_not_executed"].append(
+            "statistics screening (no source_data or supplementary CSV/TSV/XLSX/PZFX source tables supplied)"
+        )
 
     xlsx_payload = load_safe("xlsx_structure.json")
     if xlsx_payload:

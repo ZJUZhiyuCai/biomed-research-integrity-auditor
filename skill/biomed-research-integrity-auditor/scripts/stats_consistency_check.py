@@ -26,6 +26,21 @@ TIME_TOKEN_RE = re.compile(
 )
 SUMMARY_COLUMNS = {"mean", "sd", "sem", "se", "n", "p", "p_value", "pvalue"}
 TERMINAL_DIGIT_SKIP_COLUMNS = {"n"}
+ROW_LABEL_COLUMNS = (
+    "group",
+    "condition",
+    "treatment",
+    "arm",
+    "sample",
+    "sample_id",
+    "series",
+    "label",
+    "name",
+    "figure",
+    "panel",
+    "comparison",
+    "id",
+)
 MISSING_NUMERIC_TEXT = {"na", "n/a", "nan", "null", "-"}
 FORMAT_DECIMAL_COMMA = "decimal_comma"
 FORMAT_DECIMAL_POINT = "decimal_point"
@@ -656,6 +671,43 @@ def numeric_columns(
     return dict(columns)
 
 
+def row_vector_label(row: dict[str, str], idx: int) -> str:
+    for key in ROW_LABEL_COLUMNS:
+        value = str(row.get(key, "")).strip()
+        if value:
+            return value
+    return f"row{idx}"
+
+
+def numeric_row_vectors(
+    rows: list[dict[str, str]],
+    profiles: dict[str, str] | None = None,
+) -> list[dict[str, Any]]:
+    numeric_profiles = profiles or infer_numeric_format_profiles(rows)
+    vectors = []
+    for idx, row in enumerate(rows, start=2):
+        values = []
+        for column, raw in row.items():
+            if column in SUMMARY_COLUMNS or column in TERMINAL_DIGIT_SKIP_COLUMNS:
+                continue
+            normalized = normalized_numeric_text(raw, numeric_profiles.get(column))
+            value = parse_float(raw, numeric_profiles.get(column))
+            if value is None:
+                continue
+            values.append({
+                "column": column,
+                "raw": normalized or str(raw),
+                "value": value,
+            })
+        if values:
+            vectors.append({
+                "row_index": idx,
+                "label": row_vector_label(row, idx),
+                "values": values,
+            })
+    return vectors
+
+
 def terminal_digit(raw: str) -> str | None:
     text = normalized_numeric_text(raw)
     if text is None:
@@ -1135,6 +1187,103 @@ def check_digit_preservation(
     return findings
 
 
+def paired_row_values(left: dict[str, Any], right: dict[str, Any]) -> list[tuple[str, str, str, float, float]]:
+    right_by_column = {item["column"]: item for item in right["values"]}
+    pairs = []
+    for left_item in left["values"]:
+        right_item = right_by_column.get(left_item["column"])
+        if right_item is None:
+            continue
+        pairs.append((
+            left_item["column"],
+            str(left_item["raw"]),
+            str(right_item["raw"]),
+            float(left_item["value"]),
+            float(right_item["value"]),
+        ))
+    return pairs
+
+
+def check_row_digit_preservation(
+    path: Path,
+    rows: list[dict[str, str]],
+    profiles: dict[str, str] | None,
+    min_pairs: int,
+    min_digit_pairs: int,
+    share_threshold: float = 0.95,
+) -> list[dict[str, Any]]:
+    findings = []
+    vectors = numeric_row_vectors(rows, profiles)
+    for i, left in enumerate(vectors):
+        for right in vectors[i + 1:]:
+            if left["label"] == right["label"]:
+                continue
+            pairs = paired_row_values(left, right)
+            if len(pairs) < min_pairs:
+                continue
+
+            decimal_comparable = []
+            terminal_comparable = []
+            integer_differences = 0
+            exact_match_count = 0
+            difference_counts: Counter[int] = Counter()
+            for _, left_raw, right_raw, left_value, right_value in pairs:
+                left_decimal = first_decimal_digit(left_raw)
+                right_decimal = first_decimal_digit(right_raw)
+                if left_decimal is not None and right_decimal is not None:
+                    decimal_comparable.append(left_decimal == right_decimal)
+                left_terminal = terminal_digit(left_raw)
+                right_terminal = terminal_digit(right_raw)
+                if left_terminal is not None and right_terminal is not None:
+                    terminal_comparable.append(left_terminal == right_terminal)
+
+                difference = right_value - left_value
+                nearest_integer = round(difference)
+                scale = max(1.0, abs(left_value), abs(right_value), abs(difference))
+                if abs(difference - nearest_integer) <= 1e-9 * scale:
+                    integer_differences += 1
+                    difference_counts[int(nearest_integer)] += 1
+                if abs(difference) <= 1e-12 * max(1.0, abs(left_value), abs(right_value)):
+                    exact_match_count += 1
+
+            if len(decimal_comparable) < min_digit_pairs:
+                continue
+            decimal_share = sum(1 for matched in decimal_comparable if matched) / len(decimal_comparable)
+            integer_difference_share = integer_differences / len(pairs)
+            terminal_share = (
+                sum(1 for matched in terminal_comparable if matched) / len(terminal_comparable)
+                if terminal_comparable
+                else None
+            )
+            if decimal_share < share_threshold or integer_difference_share < share_threshold:
+                continue
+
+            findings.append(weak_issue(
+                f"{path.name}:row{left['row_index']}<->row{right['row_index']}",
+                "Digit positions are preserved across paired rows",
+                {
+                    "left_row_label": left["label"],
+                    "right_row_label": right["label"],
+                    "left_row_index": left["row_index"],
+                    "right_row_index": right["row_index"],
+                    "paired_values": len(pairs),
+                    "matched_columns": [column for column, *_ in pairs[:20]],
+                    "first_decimal_digit_match_share": round(decimal_share, 3),
+                    "first_decimal_digit_pairs": len(decimal_comparable),
+                    "integer_difference_share": round(integer_difference_share, 3),
+                    "exact_match_count": exact_match_count,
+                    "difference_counts": dict(sorted(difference_counts.items())),
+                    "terminal_digit_match_share": round(terminal_share, 3) if terminal_share is not None else None,
+                    "minimum_paired_values_for_automatic_check": min_digit_pairs,
+                    "boundary_note": (
+                        "Row-wise preserved decimal digits are a weak statistical triage signal; "
+                        "raw/source records are required before escalation."
+                    ),
+                },
+            ))
+    return findings
+
+
 def check_time_stratified_shifts(
     path: Path,
     columns: dict[str, list[tuple[int, str, float]]],
@@ -1297,6 +1446,7 @@ def check_table_forensics(
     findings.extend(check_repeated_summaries(path, rows, profiles))
     findings.extend(check_column_relationships(path, columns, min_pairs, residual_tolerance))
     findings.extend(check_digit_preservation(path, columns, min_pairs, effective_min_count(0, min_digit_pairs), 0.85))
+    findings.extend(check_row_digit_preservation(path, rows, profiles, min_pairs, effective_min_count(0, min_digit_pairs)))
     findings.extend(check_time_stratified_shifts(path, columns, min_pairs, residual_tolerance))
     findings.extend(check_longitudinal_mechanics(path, rows, columns, residual_tolerance, profiles))
     return findings
@@ -1346,7 +1496,7 @@ def collect_files(path: Path) -> list[Path]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("path", type=Path, help="CSV/TSV/XLSX/PZFX file or folder containing source-data tables")
+    parser.add_argument("paths", nargs="+", type=Path, help="CSV/TSV/XLSX/PZFX files or folders containing source-data tables")
     parser.add_argument("--sem-tolerance", type=float, default=1e-3)
     parser.add_argument("--min-pairs", type=int, default=4, help="Minimum paired numeric rows for column relationship checks")
     parser.add_argument("--min-digit-count", type=int, default=None, help="Override minimum numeric values for terminal-digit, rounding, and precision checks")
@@ -1364,8 +1514,16 @@ def main() -> int:
     parser.add_argument("--output", type=Path, default=Path("stats_consistency_findings.json"))
     args = parser.parse_args()
 
-    target = args.path.expanduser().resolve()
-    files = collect_files(target)
+    targets = [path.expanduser().resolve() for path in args.paths]
+    files = []
+    seen_files: set[Path] = set()
+    for target in targets:
+        for file_path in collect_files(target):
+            resolved = file_path.resolve()
+            if resolved in seen_files:
+                continue
+            seen_files.add(resolved)
+            files.append(file_path)
     candidates = []
     errors = []
     tables = []
@@ -1406,7 +1564,8 @@ def main() -> int:
         "detector_name": "stats.consistency_check",
         "detector_version": "0.4.0",
         "input": {
-            "path": str(target),
+            "path": str(targets[0]),
+            "paths": [str(target) for target in targets],
             "sem_tolerance": args.sem_tolerance,
             "min_pairs": args.min_pairs,
             "min_digit_count": args.min_digit_count,

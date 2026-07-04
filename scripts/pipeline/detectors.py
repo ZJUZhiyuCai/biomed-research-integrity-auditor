@@ -152,31 +152,54 @@ def run_detector(stage: str, package: Path, output_dir: Path, cmd: list[str], ex
     return DetectorRunResult(expected_output, True)
 
 
+def supplementary_source_table_candidates(package: Path) -> list[Path]:
+    candidates = []
+    for item in sorted(package.rglob("*")):
+        if item.is_symlink() or not item.is_file() or item.suffix.lower() not in SOURCE_EXTS:
+            continue
+        try:
+            relative = item.relative_to(package)
+        except ValueError:
+            continue
+        parts = {part.lower() for part in relative.parts[:-1]}
+        name = item.name.lower()
+        if "source_data" in parts:
+            continue
+        if name.startswith("moesm") or parts.intersection({"supplementary", "supplemental", "supplement", "supplements"}):
+            candidates.append(item)
+    return candidates
+
+
 def run_source_detectors(package: Path, output_dir: Path) -> list[Path]:
     source_dir = package / "source_data"
     outputs: list[Path] = []
-    if not has_files(source_dir, SOURCE_EXTS):
+    stats_inputs: list[Path] = []
+    if has_files(source_dir, SOURCE_EXTS):
+        stats_inputs.append(source_dir)
+    stats_inputs.extend(supplementary_source_table_candidates(package))
+    if not stats_inputs:
         return outputs
 
     stats_output = output_dir / "stats_consistency_candidates.json"
     result = run_detector("stats_consistency", package, output_dir, [
         PYTHON,
         "skill/biomed-research-integrity-auditor/scripts/stats_consistency_check.py",
-        str(source_dir),
+        *[str(path) for path in stats_inputs],
         "--output",
         str(stats_output),
     ], stats_output)
     outputs.append(result.output)
 
-    pseudo_output = output_dir / "pseudoreplication_candidates.json"
-    result = run_detector("pseudoreplication", package, output_dir, [
-        PYTHON,
-        "detectors/stats/pseudoreplication_screen.py",
-        str(source_dir),
-        "--output",
-        str(pseudo_output),
-    ], pseudo_output)
-    outputs.append(result.output)
+    if has_files(source_dir, SOURCE_EXTS):
+        pseudo_output = output_dir / "pseudoreplication_candidates.json"
+        result = run_detector("pseudoreplication", package, output_dir, [
+            PYTHON,
+            "detectors/stats/pseudoreplication_screen.py",
+            str(source_dir),
+            "--output",
+            str(pseudo_output),
+        ], pseudo_output)
+        outputs.append(result.output)
     return outputs
 
 

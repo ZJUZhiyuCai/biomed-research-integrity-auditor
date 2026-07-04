@@ -1412,6 +1412,79 @@ class ContractPipelineTests(unittest.TestCase):
         )
         self.assertTrue(any(item["finding_type"] == "Digit positions are preserved across paired columns" for item in findings))
 
+    def test_row_digit_preservation_detects_horizontal_group_vectors(self) -> None:
+        stats = load_stats_consistency_check()
+        offsets = [0] * 5 + [10] * 6 + [15] * 5 + [20] * 6 + [25] * 6 + [30] * 6 + [35] * 6
+        left_row = {"group": "Hydrogel-mEGF"}
+        right_row = {"group": "NanoFLUID-mEGF"}
+        for idx, offset in enumerate(offsets, start=1):
+            decimal = idx % 10
+            left_row[f"value_{idx:02d}"] = f"{40 + idx}.{decimal}"
+            right_row[f"value_{idx:02d}"] = f"{40 + idx + offset}.{decimal}"
+
+        findings = stats.check_table_forensics(
+            Path("fig3c_horizontal.csv"),
+            [left_row, right_row],
+            min_pairs=4,
+            min_digit_count=None,
+            min_digit_pairs=None,
+            min_benford_values=30,
+            min_pvalue_cluster_values=20,
+            digit_dominance=0.65,
+            rounding_share=0.85,
+            residual_tolerance=1e-9,
+            benford_chi_square_threshold=20.0,
+            pvalue_threshold_window=0.005,
+            pvalue_near_threshold_share=0.35,
+            pvalue_repeated_value_share=0.25,
+        )
+
+        row_findings = [
+            item
+            for item in findings
+            if item["finding_type"] == "Digit positions are preserved across paired rows"
+        ]
+        self.assertTrue(row_findings)
+        evidence = row_findings[0]["evidence"]
+        self.assertEqual(evidence["left_row_label"], "Hydrogel-mEGF")
+        self.assertEqual(evidence["right_row_label"], "NanoFLUID-mEGF")
+        self.assertEqual(evidence["paired_values"], 40)
+        self.assertEqual(evidence["first_decimal_digit_match_share"], 1.0)
+        self.assertEqual(evidence["integer_difference_share"], 1.0)
+        self.assertEqual(evidence["exact_match_count"], 5)
+        self.assertEqual(evidence["difference_counts"][0], 5)
+        self.assertEqual(evidence["difference_counts"][10], 6)
+        self.assertEqual(row_findings[0]["candidate_type"], "weak_statistical_signal")
+        self.assertEqual(row_findings[0]["risk_suggestion"], "R2_max")
+
+    def test_row_digit_preservation_does_not_flag_ordinary_horizontal_rows(self) -> None:
+        stats = load_stats_consistency_check()
+        left_row = {"group": "Hydrogel-mEGF"}
+        right_row = {"group": "NanoFLUID-mEGF"}
+        for idx in range(1, 41):
+            left_decimal = (idx * 3) % 10
+            right_decimal = (idx * 7 + 1) % 10
+            left_row[f"value_{idx:02d}"] = f"{40 + idx}.{left_decimal}"
+            right_row[f"value_{idx:02d}"] = f"{52 + idx}.{right_decimal}"
+
+        findings = stats.check_table_forensics(
+            Path("ordinary_horizontal.csv"),
+            [left_row, right_row],
+            min_pairs=4,
+            min_digit_count=None,
+            min_digit_pairs=None,
+            min_benford_values=30,
+            min_pvalue_cluster_values=20,
+            digit_dominance=0.65,
+            rounding_share=0.85,
+            residual_tolerance=1e-9,
+            benford_chi_square_threshold=20.0,
+            pvalue_threshold_window=0.005,
+            pvalue_near_threshold_share=0.35,
+            pvalue_repeated_value_share=0.25,
+        )
+        self.assertFalse(any(item["finding_type"] == "Digit positions are preserved across paired rows" for item in findings))
+
     def test_integer_count_feasibility_has_small_n_and_precision_gates(self) -> None:
         stats = load_stats_consistency_check()
         tiny_n = [{"outcome": "cell_count", "mean": "2.5", "sd": "1.0", "n": "5"}]
@@ -3356,6 +3429,37 @@ class EndToEndTests(unittest.TestCase):
             packet = out / "submission_qc_packet"
             self.assertTrue((packet / "xlsx_structure.json").is_file())
             self.assertIn("xlsx_structure.json", (packet / "QC_PACKET_README.md").read_text(encoding="utf-8"))
+
+    def test_supplementary_moesm_xlsx_runs_stats_without_source_data_folder(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "moesm_source_case"
+            write_xlsx(package / "supplementary" / "MOESM1.xlsx", [
+                ["group", "mean", "sd", "sem", "n"],
+                ["control", 1.0, 0.2, 0.1, 4],
+                ["treated", 1.5, 0.5, 0.1, 4],
+            ])
+            out = Path(tmp) / "out"
+            run([
+                PYTHON,
+                "scripts/audit_package.py",
+                str(package),
+                "--output-dir",
+                str(out),
+                "--case-id",
+                "moesm_source_case",
+            ])
+
+            summary = json.loads((out / "pipeline_summary.json").read_text(encoding="utf-8"))
+            self.assertTrue(any(path.endswith("stats_consistency_candidates.json") for path in summary["detector_outputs"]))
+            stats_payload = json.loads((out / "stats_consistency_candidates.json").read_text(encoding="utf-8"))
+            self.assertTrue(any(path.endswith("MOESM1.xlsx") for path in stats_payload["files_screened"]))
+            audit_summary = json.loads((out / "AUDIT_JSON_SUMMARY.json").read_text(encoding="utf-8"))
+            coverage = audit_summary["audit_coverage"]
+            self.assertIn("statistics_consistency", coverage["modules_executed"])
+            self.assertIn("pseudoreplication screening (no source_data CSV/TSV/XLSX/PZFX supplied)", coverage["modules_not_executed"])
+            self.assertFalse(any(item.startswith("statistics screening") for item in coverage["modules_not_executed"]))
+            calibrated = json.loads((out / "calibrated_findings.json").read_text(encoding="utf-8"))
+            self.assertTrue(any(item["finding_type"] == "SD is not consistent with SEM * sqrt(n)" for item in calibrated["findings"]))
 
     def test_pzfx_source_data_runs_stats_without_format_gap(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
