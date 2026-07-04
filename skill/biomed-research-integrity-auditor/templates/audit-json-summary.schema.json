@@ -1,6 +1,8 @@
 {
   "audit_mode": "internal_presubmission, external_public_material, or response_to_concern",
   "case_id": "optional neutral case identifier",
+  "scan_profile": "quick, standard, or deep",
+  "execution_mode": "parallel or sequential",
   "materials_reviewed": ["relative paths or public materials reviewed"],
   "materials_missing": ["materials needed to resolve completeness or integrity questions"],
   "overall_risk": "R0, R1, R2, R3, or R4",
@@ -45,6 +47,19 @@
     "source_tables_screened": 0,
     "detector_failures": ["modules whose detector failed; results are partial"],
     "audit_coverage_gap": false,
+    "scan_profile": "standard",
+    "execution_mode": "parallel",
+    "parallel_workstreams_enabled": true,
+    "workstream_count": 4,
+    "workstreams": [
+      {
+        "phase": "detectors",
+        "name": "image_integrity",
+        "status": "completed",
+        "elapsed_seconds": 1.23,
+        "output_count": 1
+      }
+    ],
     "scope_note": "no findings in a module is not a guarantee of correctness; methodology compliance and exhaustive plagiarism search require human review"
   }
 }

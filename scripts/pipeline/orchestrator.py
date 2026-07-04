@@ -50,6 +50,12 @@ from scripts.pipeline.report import (
     run_report,
     write_start_here,
 )
+from scripts.pipeline.workstreams import (
+    WorkstreamTask,
+    run_many,
+    run_workstream_tasks,
+    write_workstream_report,
+)
 from scripts.submission_qc import (
     build_audit_snapshot,
     build_claim_coverage,
@@ -90,8 +96,11 @@ def run_pipeline(
     compare_to: Path | None = None,
     reference_check_provider: str = "none",
     detector_registry: Path | None = DEFAULT_REGISTRY,
+    execution_mode: str = "parallel",
 ) -> dict[str, Any]:
     output_dir.mkdir(parents=True, exist_ok=True)
+    max_workers = 4
+    workstream_records: list[dict[str, Any]] = []
     package_guardrails = scan_package_guardrails(package)
     package_guardrail_output = write_package_guardrail_candidates(package, output_dir, package_guardrails)
     manifest = build_manifest(package, mode, domains, output_dir)
@@ -119,46 +128,101 @@ def run_pipeline(
     write_json(writing_readiness_path, writing_readiness)
     writing_readiness_csv = output_dir / "writing_readiness.csv"
     write_writing_readiness_csv(writing_readiness_csv, writing_readiness)
-    build_xlsx_structure(package, output_dir)
-    build_prism_project_intake(package, output_dir)
-    build_fcs_metadata_intake(package, output_dir)
-    build_docx_structure(package, output_dir)
-    build_pdf_structure(package, output_dir)
-    build_pdf_embedded_images(package, output_dir)
-    build_pptx_structure(package, output_dir)
-    build_pptx_embedded_images(package, output_dir)
-    build_key_embedded_images(package, output_dir)
-    build_psd_preview_images(package, output_dir)
-    if not package_guardrails.get("image_screening_blocked"):
-        build_image_metadata(package, output_dir)
+    intake_tasks = [
+        WorkstreamTask(
+            "intake",
+            "source_data_and_flow_intake",
+            lambda: run_many(
+                lambda: build_xlsx_structure(package, output_dir),
+                lambda: build_prism_project_intake(package, output_dir),
+                lambda: build_fcs_metadata_intake(package, output_dir),
+            ),
+        ),
+        WorkstreamTask(
+            "intake",
+            "document_pdf_intake",
+            lambda: run_many(
+                lambda: build_docx_structure(package, output_dir),
+                lambda: build_pdf_structure(package, output_dir),
+                lambda: build_pdf_embedded_images(package, output_dir),
+            ),
+        ),
+        WorkstreamTask(
+            "intake",
+            "presentation_container_intake",
+            lambda: run_many(
+                lambda: build_pptx_structure(package, output_dir),
+                lambda: build_pptx_embedded_images(package, output_dir),
+                lambda: build_key_embedded_images(package, output_dir),
+                lambda: build_psd_preview_images(package, output_dir),
+            ),
+        ),
+        WorkstreamTask(
+            "intake",
+            "image_metadata_intake",
+            lambda: [] if package_guardrails.get("image_screening_blocked") else run_many(
+                lambda: build_image_metadata(package, output_dir),
+            ),
+        ),
+    ]
+    _, records = run_workstream_tasks(intake_tasks, execution_mode=execution_mode, max_workers=max_workers)
+    workstream_records.extend(records)
 
     provenance_graph = build_provenance(package, manifest, output_dir)
     detector_outputs = []
     if package_guardrail_output is not None:
         detector_outputs.append(package_guardrail_output)
-    detector_outputs.extend(run_source_detectors(package, output_dir))
-    detector_outputs.extend(run_image_detector(package, output_dir, provenance_graph, scan_profile, package_guardrails))
-    detector_outputs.extend(run_registered_detectors(
-        package,
-        output_dir,
-        mode=mode,
-        scan_profile=scan_profile,
-        registry_path=detector_registry,
-        provenance_graph=provenance_graph,
-    ))
     effective_external_provider = "none" if scan_profile == "quick" else external_literature_provider
-    detector_outputs.extend(run_text_detectors(
-        package,
-        output_dir,
-        mode,
-        effective_external_provider,
-        external_literature_fixture,
-    ))
+    detector_tasks = [
+        WorkstreamTask(
+            "detectors",
+            "statistics_and_source_data",
+            lambda: run_source_detectors(package, output_dir),
+        ),
+        WorkstreamTask(
+            "detectors",
+            "image_integrity",
+            lambda: run_image_detector(package, output_dir, provenance_graph, scan_profile, package_guardrails),
+        ),
+        WorkstreamTask(
+            "detectors",
+            "extension_detectors",
+            lambda: run_registered_detectors(
+                package,
+                output_dir,
+                mode=mode,
+                scan_profile=scan_profile,
+                registry_path=detector_registry,
+                provenance_graph=provenance_graph,
+            ),
+        ),
+        WorkstreamTask(
+            "detectors",
+            "text_and_external_literature",
+            lambda: run_text_detectors(
+                package,
+                output_dir,
+                mode,
+                effective_external_provider,
+                external_literature_fixture,
+            ),
+        ),
+    ]
+    detector_results, records = run_workstream_tasks(detector_tasks, execution_mode=execution_mode, max_workers=max_workers)
+    workstream_records.extend(records)
+    for result in detector_results:
+        detector_outputs.extend(result or [])
     format_coverage = write_format_coverage_gaps(package, output_dir, manifest_payload)
     if format_coverage is not None:
         detector_outputs.append(format_coverage)
     if not detector_outputs:
         detector_outputs.append(write_audit_coverage_gap(package, output_dir))
+    workstreams_path = write_workstream_report(
+        output_dir,
+        execution_mode=execution_mode,
+        max_workers=max_workers,
+        records=workstream_records,
+    )
     calibrated = run_calibrator(detector_outputs, mode, output_dir)
     resolved_provider = resolve_external_literature_provider(
         mode,
@@ -235,6 +299,9 @@ def run_pipeline(
         "package": str(package),
         "mode": mode,
         "scan_profile": scan_profile,
+        "execution_mode": execution_mode,
+        "parallel_workstreams_enabled": execution_mode == "parallel",
+        "workstream_count": len(workstream_records),
         "output_dir": str(output_dir),
         "manifest": str(manifest),
         "audit_snapshot": str(snapshot_path),
@@ -262,6 +329,7 @@ def run_pipeline(
         "overall_risk": audit_summary.get("overall_risk"),
         "external_literature_provider": resolved_provider,
         "detector_registry": str(detector_registry) if detector_registry else None,
+        "workstreams": str(workstreams_path),
         "coverage": str(coverage_path),
         "submission_qc_packet": qc_packet,
         "start_here": str(start_here),

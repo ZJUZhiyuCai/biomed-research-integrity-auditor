@@ -158,6 +158,21 @@ material intake → structured extraction → provenance graph → detectors
 | `standard` | 默认投稿前 QC | 运行平衡检测集合，包括 keypoint 几何图像筛查；导出 submission QC packet。 |
 | `deep` | 回应质疑或重点复核 | 使用更敏感的图像相似度设置，在 coverage 中记录 deep-profile 参数。 |
 
+### 执行模式（Execution mode）
+
+CLI 和本地 Web App 默认使用可迁移的本地并发工作流：
+
+```bash
+biomed-audit /path/to/my_package --execution-mode parallel
+```
+
+Parallel 模式会在本机并发运行互不依赖的 intake 和 detector 工作流
+（`source/statistics`、`image integrity`、`extension detectors`、`text/external literature`），
+随后仍然串行执行风险校准和报告生成，保证 risk caps 与报告措辞可预测。
+如果需要调试、机器资源有限，或需要复现精确耗时，可使用 `--execution-mode sequential`。
+每次运行都会写出 `workstreams.json`，并在 `coverage.json`、`pipeline_summary.json` 和人类报告
+的 Audit Coverage 区显示实际执行模式。
+
 ### 声明-证据清单（Claim manifest）
 
 在材料包根目录放 `claim_manifest.csv`（或传 `--claim-manifest`），每行把论文中的一个 claim 链接到证据链：

@@ -73,9 +73,21 @@ Before running an audit on a user's computer, check that the local runtime can a
    - If files are missing, keep them as R1 completeness gaps before doing deeper analysis.
    - Never imply that an audit is complete when source data or raw records are unavailable.
    - Use `--scan-profile quick` for a first-pass local self-check; it explicitly skips expensive keypoint/local-patch/copy-move/splice-forensics deep image screening and external phrase search. Use `--scan-profile standard` for routine presubmission QC. Use `--scan-profile deep` for focused rechecks or response-to-concern work.
+   - Use `--execution-mode parallel` by default. This runs portable local workstreams concurrently for source/statistics, image integrity, extension detectors, and text/external-literature screening, then serializes calibration and report assembly. Use `--execution-mode sequential` only for debugging, resource-constrained machines, or strict timing reproduction. This is local pipeline concurrency, not a misconduct-verdict agent system.
    - The orchestrator also writes `audit_snapshot.json`, `file_hash_manifest.json`, `claim_coverage.*`, `methodology_checklist.*`, CSV review exports, action trackers, `correction_plan.*`, and `submission_qc_packet/`. The QC packet includes editable `audience_exports/` drafts for PI, co-author, and journal/reviewer communication. When image files are present, it also includes `image_review_packet/`, a target list, `external_tool_handoff.csv`/`.md`, and `image_review_tracker.csv` follow-up sheet for ImageTwin/Proofig/manual figure review. Treat these as versioning/review artifacts and communication aids, not approval certificates or external-search results.
    - If a package includes `claim_manifest.csv`, or the user passes `--claim-manifest`, read Claim Coverage as claim-to-evidence completeness only; it does not prove the claim is true.
    - To compare a repaired package against an earlier audit, use `scripts/compare_audit_runs.py <old_output> <new_output>` or run the new audit with `--compare-to <old_output>`. Read `re_audit_diff.md` for a human-readable view of no-longer-listed, new, still-present, and still-missing items; it is a repair-tracking aid, not a pass/fail score.
+
+## Parallel Audit Workstreams
+
+When running the installed CLI or local web app, expect portable local parallelism rather than hosted LLM subagents. The default `--execution-mode parallel` schedules independent stages as workstreams:
+
+- **Materials/source workstream:** XLSX, Prism, FCS, DOCX/PDF/PPTX/Keynote/PSD intake artifacts.
+- **Image-integrity workstream:** global image similarity, keypoint geometry, local patch/copy-move, weak splice-forensics triage, and image metadata checks when enabled by the scan profile.
+- **Statistics/text workstream:** numerical/source-data screens, pseudoreplication screens, package-internal text overlap, and optional external phrase search.
+- **Extension-detector workstream:** YAML-registered local detectors that emit the standard detector contract.
+
+Calibration, risk caps, action queue construction, and report assembly must remain serialized after those workstreams complete. If a runtime also offers real LLM subagents, they may review these workstreams independently, but their outputs must still be reduced to detector-contract artifacts or neutral review notes before calibration. Never let a subagent or workstream bypass provenance-aware risk calibration.
 
 2. Build the raw record hierarchy.
    - Map each figure panel to its published figure, assembly file, source data, processed data, raw instrument output, protocol/batch/sample map, and notebook/ELN record when available.

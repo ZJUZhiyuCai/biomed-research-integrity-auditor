@@ -222,6 +222,10 @@ def build_coverage(
         "image_screening_boundary": IMAGE_SCREENING_BOUNDARY,
         "external_literature_provider": external_provider,
         "scan_profile": scan_profile,
+        "execution_mode": "sequential",
+        "parallel_workstreams_enabled": False,
+        "workstream_count": 0,
+        "workstreams": [],
         "profile_parameters": (
             {
                 "global_image_hash_threshold": 8,
@@ -256,6 +260,26 @@ def build_coverage(
             coverage["modules_not_executed"].append(
                 "image screening (blocked by package intake resource guardrail; not a clean result)"
             )
+
+    workstream_payload = load_safe("workstreams.json")
+    if workstream_payload:
+        workstreams = workstream_payload.get("workstreams", []) or []
+        coverage["execution_mode"] = str(workstream_payload.get("execution_mode", "sequential"))
+        coverage["parallel_workstreams_enabled"] = bool(workstream_payload.get("parallel_enabled"))
+        coverage["workstream_count"] = len(workstreams)
+        coverage["workstreams"] = [
+            {
+                "phase": str(item.get("phase", "")),
+                "name": str(item.get("name", "")),
+                "status": str(item.get("status", "")),
+                "elapsed_seconds": item.get("elapsed_seconds"),
+                "output_count": item.get("output_count"),
+            }
+            for item in workstreams
+            if isinstance(item, dict)
+        ]
+        coverage["workstream_scope_note"] = str(workstream_payload.get("scope_note", ""))
+        coverage["modules_executed"].append("portable_parallel_workstream_orchestration")
 
     screening_payload = load_safe("image_screening_inputs.json")
     screening_original_images = (screening_payload or {}).get("original_images", []) or []

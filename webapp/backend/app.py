@@ -1564,6 +1564,8 @@ def prepare_job(
         external_literature_provider,
         "--reference-check-provider",
         reference_check_provider,
+        "--execution-mode",
+        "parallel",
         "--case-id",
         package.name,
     ]

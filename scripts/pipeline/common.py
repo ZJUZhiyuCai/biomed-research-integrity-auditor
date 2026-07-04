@@ -38,6 +38,7 @@ OPAQUE_ASSEMBLY_CONTAINER_EXTS = {".ai", ".indd", ".key", ".ppt", ".psd"}
 
 MODES = ("internal_presubmission", "external_public_material", "response_to_concern")
 SCAN_PROFILES = ("quick", "standard", "deep")
+EXECUTION_MODES = ("parallel", "sequential")
 EXTERNAL_LITERATURE_PROVIDERS = ("auto", "none", "fixture", "europepmc", "crossref")
 REFERENCE_CHECK_PROVIDERS = ("none", "crossref")
 EXTERNAL_LITERATURE_FIXTURE_NAMES = (

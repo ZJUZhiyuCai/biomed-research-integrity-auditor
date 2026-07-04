@@ -3,6 +3,10 @@
 ## Unreleased
 
 ### Added
+- Portable local parallel workstreams are now the default audit execution mode. Independent intake
+  and detector workstreams run concurrently, write `workstreams.json`, and surface the effective
+  execution mode in coverage, pipeline summaries, and human reports; `--execution-mode sequential`
+  remains available for debugging and constrained machines.
 - Lu/Xiongbin Lu public-concern benchmark subset with reference-only public status/location labels,
   a local runner that downloads permitted public materials into `tmp/`, and a committed run summary
   that contains no third-party article materials or PubPeer comments.

@@ -10,6 +10,7 @@ from typing import Any
 
 from scripts.pipeline.common import (
     DetectorRunResult,
+    EXECUTION_MODES,
     EXTERNAL_LITERATURE_PROVIDERS,
     MODES,
     REFERENCE_CHECK_PROVIDERS,
@@ -146,6 +147,15 @@ def main() -> int:
             "Use 'none' to disable extension-detector loading."
         ),
     )
+    parser.add_argument(
+        "--execution-mode",
+        choices=EXECUTION_MODES,
+        default="parallel",
+        help=(
+            "Pipeline scheduling. parallel runs independent intake and detector workstreams concurrently "
+            "with deterministic merge order; sequential is a portable debugging/reproducibility fallback."
+        ),
+    )
     args = parser.parse_args()
 
     package = args.package_dir.expanduser().resolve()
@@ -174,6 +184,7 @@ def main() -> int:
         compare_to,
         args.reference_check_provider,
         detector_registry,
+        args.execution_mode,
     )
     print(json.dumps(result, indent=2, ensure_ascii=False))
     return 0

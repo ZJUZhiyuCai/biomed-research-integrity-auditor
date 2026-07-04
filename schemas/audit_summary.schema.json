@@ -18,6 +18,7 @@
     "audit_mode": {"type": "string"},
     "case_id": {"type": ["string", "null"]},
     "scan_profile": {"enum": ["quick", "standard", "deep"]},
+    "execution_mode": {"enum": ["parallel", "sequential"]},
     "materials_reviewed": {"type": "array", "items": {"type": "string"}},
     "materials_missing": {"type": "array", "items": {"type": "string"}},
     "overall_risk": {"enum": ["R0", "R1", "R2", "R3", "R4"]},
@@ -116,6 +117,29 @@
         },
         "tracker_fields": {"type": "array", "items": {"type": "string"}},
         "status_options": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "audit_coverage": {
+      "type": "object",
+      "properties": {
+        "modules_executed": {"type": "array", "items": {"type": "string"}},
+        "modules_not_executed": {"type": "array", "items": {"type": "string"}},
+        "image_panels_screened": {"type": "integer"},
+        "image_files_unreadable": {"type": "integer"},
+        "source_tables_screened": {"type": "integer"},
+        "detector_failures": {"type": "array", "items": {"type": "string"}},
+        "audit_coverage_gap": {"type": "boolean"},
+        "external_literature_provider": {"type": ["string", "null"]},
+        "scan_profile": {"enum": ["quick", "standard", "deep"]},
+        "execution_mode": {"enum": ["parallel", "sequential"]},
+        "parallel_workstreams_enabled": {"type": "boolean"},
+        "workstream_count": {"type": "integer"},
+        "workstreams": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/workstream_record"}
+        },
+        "workstream_scope_note": {"type": "string"},
+        "scope_note": {"type": "string"}
       }
     },
     "claim_coverage": {
@@ -217,6 +241,17 @@
     }
   },
   "$defs": {
+    "workstream_record": {
+      "type": "object",
+      "required": ["phase", "name", "status"],
+      "properties": {
+        "phase": {"type": "string"},
+        "name": {"type": "string"},
+        "status": {"type": "string"},
+        "elapsed_seconds": {"type": ["number", "integer", "null"]},
+        "output_count": {"type": ["integer", "null"]}
+      }
+    },
     "action_item": {
       "type": "object",
       "required": [

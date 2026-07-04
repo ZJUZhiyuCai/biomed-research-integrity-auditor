@@ -84,6 +84,7 @@ MODULE_LABELS = {
     "image_frame_channel_metadata_intake": ("Image frame/channel metadata intake", "图像帧/通道 metadata 读取"),
     "image_channel_metadata_consistency": ("Same-field channel metadata consistency check", "同视野通道 metadata 一致性核验"),
     "methodology_readiness_checklist": ("Methodology readiness checklist", "方法学准备度清单"),
+    "portable_parallel_workstream_orchestration": ("Portable parallel workstream orchestration", "可迁移并发工作流编排"),
 }
 MODULE_EXPLANATIONS = {
     "image_global_near_duplicate": (
@@ -170,11 +171,19 @@ MODULE_EXPLANATIONS = {
         "Flags writing and generic submission-material prompts outside the integrity findings.",
         "提示写作和通用投稿材料准备事项，不并入 integrity findings。",
     ),
+    "portable_parallel_workstream_orchestration": (
+        "Records whether independent intake and detector stages ran as local parallel workstreams or sequentially.",
+        "记录独立 intake 和 detector 阶段是以本地并发工作流还是顺序模式执行。",
+    ),
 }
 SCAN_PROFILE_LABELS = {
     "quick": ("Quick scan", "快速扫描"),
     "standard": ("Standard audit", "标准自查"),
     "deep": ("Deep audit", "深度审查"),
+}
+EXECUTION_MODE_LABELS = {
+    "parallel": ("Parallel workstreams", "并发工作流"),
+    "sequential": ("Sequential fallback", "顺序回退"),
 }
 ACTION_CATEGORY_LABELS = {
     "must_resolve": ("Must resolve before submission", "投稿前必须处理"),
@@ -979,6 +988,7 @@ def build_summary(
         "audit_mode": normalized,
         "case_id": case_id,
         "scan_profile": scan_profile,
+        "execution_mode": (coverage or {}).get("execution_mode", "sequential"),
         "materials_reviewed": reviewed_materials(manifest),
         "materials_missing": missing_materials(manifest, coverage),
         "overall_risk": overall_risk(findings, manifest, coverage),
@@ -1016,6 +1026,8 @@ def render_coverage(coverage: dict[str, Any] | None) -> list[str]:
     lines += [f"- {item}" for item in not_executed]
     lines += ["", table([
         ["Coverage item / 覆盖项", "Value / 数值"],
+        ["Execution mode / 执行模式", label_pair(str(coverage.get("execution_mode", "sequential")), EXECUTION_MODE_LABELS)],
+        ["Workstreams recorded / 已记录工作流", str(coverage.get("workstream_count", 0))],
         ["Image panels screened / 已筛图像面板", str(coverage.get("image_panels_screened", 0))],
         ["Image-screening input files / 图像筛查输入文件", str(coverage.get("image_screening_input_files", 0))],
         ["Derived presentation images included in image screening / 已纳入图像筛查的展示层导出图", str(coverage.get("image_screening_derived_images", 0))],
@@ -1075,6 +1087,28 @@ def render_coverage(coverage: dict[str, Any] | None) -> list[str]:
         ["Raw detector candidates / 原始检测候选", str(coverage.get("raw_detector_candidate_count", 0))],
         ["Positive provenance records / 正向可追溯记录", str(coverage.get("positive_provenance_count", 0))],
     ])]
+    workstreams = coverage.get("workstreams") or []
+    if workstreams:
+        rows = [["Phase / 阶段", "Workstream / 工作流", "Status / 状态", "Seconds / 秒", "Outputs / 输出数"]]
+        for item in workstreams[:12]:
+            if not isinstance(item, dict):
+                continue
+            rows.append([
+                str(item.get("phase", "")),
+                str(item.get("name", "")),
+                str(item.get("status", "")),
+                str(item.get("elapsed_seconds", "")),
+                str(item.get("output_count", "")),
+            ])
+        lines += [
+            "",
+            "**Execution workstreams / 执行工作流**",
+            "",
+            table(rows),
+            "",
+            "> Parallel workstreams change scheduling only; risk calibration and report assembly remain serialized.",
+            "> 并发工作流只改变执行调度；风险校准和报告组装仍按顺序执行。",
+        ]
     xlsx_note = str(coverage.get("xlsx_structure_scope_note", "")).strip()
     xlsx_items = coverage.get("xlsx_structure_review_items") or []
     if xlsx_note or coverage.get("xlsx_files_structurally_read"):
@@ -2113,6 +2147,7 @@ def render_quick_read(
         f"{coverage.get('positive_provenance_count', 0)} positive provenance record(s) -> "
         f"{finding_count} finding(s)"
     )
+    execution_mode = str(coverage.get("execution_mode", summary.get("execution_mode", "sequential")))
     lines = [
         "## Quick Read / 快速结论",
         "",
@@ -2120,6 +2155,7 @@ def render_quick_read(
             ["Item / 项目", "Result / 结果"],
             ["Mode / 模式", label_pair(mode, MODE_LABELS)],
             ["Scan profile / 扫描档位", label_pair(scan_profile, SCAN_PROFILE_LABELS)],
+            ["Execution mode / 执行模式", label_pair(execution_mode, EXECUTION_MODE_LABELS)],
             ["Overall risk / 总体风险", risk_label(summary.get("overall_risk", "R1"))],
             ["Open actions / 待处理行动项", str(open_action_count)],
             ["Candidate findings / 候选发现", str(finding_count)],

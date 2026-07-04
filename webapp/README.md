@@ -64,6 +64,8 @@ Included:
   missing materials, evidence images, local history, delete, and Chinese/English labels.
 - Scan-profile selection (`quick`, `standard`, `deep`) wired through to the CLI. Quick runs are
   explicitly marked as narrower-scope runs when expensive deep image screening is skipped.
+- Local audit jobs invoke the CLI with `--execution-mode parallel`, so independent intake and
+  detector workstreams run concurrently while calibration and report assembly stay serialized.
 - Package prep tools: inspect a local package, create the recommended folder scaffold, and write
   `figure_assembly/assembly_manifest.csv` rows for declared figure-to-source relationships.
 - Claim-manifest prep tools: write package-root `claim_manifest.csv` rows that link manuscript

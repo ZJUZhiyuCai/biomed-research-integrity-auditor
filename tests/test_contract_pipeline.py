@@ -5497,6 +5497,69 @@ class EndToEndTests(unittest.TestCase):
             self.assertTrue(any("local patch" in item for item in coverage["modules_not_executed"]))
             self.assertIn("Quick scan / 快速扫描", (out / "audit-report.md").read_text(encoding="utf-8"))
 
+    def test_parallel_execution_mode_records_portable_workstreams(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "parallel"
+            run([
+                PYTHON,
+                "scripts/audit_package.py",
+                "evals/cases/case_001",
+                "--scan-profile",
+                "quick",
+                "--execution-mode",
+                "parallel",
+                "--output-dir",
+                str(out),
+                "--case-id",
+                "case_001_parallel",
+            ])
+            pipeline = json.loads((out / "pipeline_summary.json").read_text(encoding="utf-8"))
+            self.assertEqual(pipeline["execution_mode"], "parallel")
+            self.assertTrue(pipeline["parallel_workstreams_enabled"])
+            self.assertGreaterEqual(pipeline["workstream_count"], 4)
+            self.assertTrue((out / "workstreams.json").is_file())
+            workstreams = json.loads((out / "workstreams.json").read_text(encoding="utf-8"))
+            self.assertTrue(workstreams["parallel_enabled"])
+            names = {item["name"] for item in workstreams["workstreams"]}
+            self.assertTrue({
+                "statistics_and_source_data",
+                "image_integrity",
+                "extension_detectors",
+                "text_and_external_literature",
+            }.issubset(names))
+            coverage = json.loads((out / "coverage.json").read_text(encoding="utf-8"))
+            self.assertEqual(coverage["execution_mode"], "parallel")
+            self.assertTrue(coverage["parallel_workstreams_enabled"])
+            summary = json.loads((out / "AUDIT_JSON_SUMMARY.json").read_text(encoding="utf-8"))
+            self.assertEqual(summary["execution_mode"], "parallel")
+            report = (out / "audit-report.md").read_text(encoding="utf-8")
+            self.assertIn("Parallel workstreams / 并发工作流", report)
+            self.assertIn("Execution workstreams / 执行工作流", report)
+
+    def test_sequential_execution_mode_remains_available(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "sequential"
+            run([
+                PYTHON,
+                "scripts/audit_package.py",
+                "examples/minimal_package",
+                "--scan-profile",
+                "quick",
+                "--execution-mode",
+                "sequential",
+                "--output-dir",
+                str(out),
+                "--case-id",
+                "minimal_sequential",
+            ])
+            pipeline = json.loads((out / "pipeline_summary.json").read_text(encoding="utf-8"))
+            self.assertEqual(pipeline["execution_mode"], "sequential")
+            self.assertFalse(pipeline["parallel_workstreams_enabled"])
+            workstreams = json.loads((out / "workstreams.json").read_text(encoding="utf-8"))
+            self.assertFalse(workstreams["parallel_enabled"])
+            coverage = json.loads((out / "coverage.json").read_text(encoding="utf-8"))
+            self.assertEqual(coverage["execution_mode"], "sequential")
+
     def test_coverage_reports_unreadable_image_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             package = Path(tmp) / "pkg"

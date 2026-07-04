@@ -158,6 +158,21 @@ Use `--scan-profile` to control speed and depth:
 | `standard` | Default pre-submission QC | Balanced detector set, including keypoint geometric image screening; exports submission QC packet. |
 | `deep` | Focused recheck or response-to-concern | More sensitive image similarity settings; records deep-profile parameters in coverage. |
 
+### Execution mode
+
+The CLI and local web app default to portable parallel workstreams:
+
+```bash
+biomed-audit /path/to/my_package --execution-mode parallel
+```
+
+Parallel mode runs independent intake and detector workstreams concurrently on the local machine
+(`source/statistics`, `image integrity`, `extension detectors`, and `text/external literature`),
+then serializes calibration and report assembly so risk caps and report wording remain deterministic.
+Use `--execution-mode sequential` for debugging, resource-constrained machines, or strict timing
+reproduction. Every run writes `workstreams.json`, records the mode in `coverage.json` and
+`pipeline_summary.json`, and shows it in the human report's Audit Coverage section.
+
 ### Claim-to-evidence manifest
 
 For a stronger review, add `claim_manifest.csv` at the package root (or pass `--claim-manifest`). Each row links a manuscript claim to its evidence chain:

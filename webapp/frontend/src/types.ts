@@ -356,7 +356,21 @@ export interface Coverage {
   audit_coverage_gap?: boolean;
   external_literature_provider?: string | null;
   scan_profile?: string;
+  execution_mode?: string;
+  parallel_workstreams_enabled?: boolean;
+  workstream_count?: number;
+  workstreams?: WorkstreamRecord[];
+  workstream_scope_note?: string;
   scope_note?: string;
+  [key: string]: unknown;
+}
+
+export interface WorkstreamRecord {
+  phase?: string;
+  name?: string;
+  status?: string;
+  elapsed_seconds?: number | null;
+  output_count?: number | null;
   [key: string]: unknown;
 }
 

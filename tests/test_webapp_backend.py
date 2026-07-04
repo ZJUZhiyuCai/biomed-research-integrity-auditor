@@ -611,6 +611,8 @@ class WebappBackendTests(unittest.TestCase):
                 self.assertIn("writing_submission_readiness", payload["coverage"]["modules_executed"])
                 self.assertEqual(payload["pipeline_summary"]["overall_risk"], artifact_summary["overall_risk"])
                 self.assertEqual(payload["pipeline_summary"]["scan_profile"], "quick")
+                self.assertEqual(payload["pipeline_summary"]["execution_mode"], "parallel")
+                self.assertEqual(payload["coverage"]["execution_mode"], "parallel")
                 self.assertIn("claim_coverage", payload)
                 self.assertIn("unresolved", payload["action_trackers"])
                 self.assertIn("correction_plan", payload)

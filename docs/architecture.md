@@ -40,6 +40,13 @@ Use `--scan-profile quick|standard|deep` to control runtime depth:
 - `standard`: default pre-submission QC profile.
 - `deep`: focused recheck/response profile. It currently preserves all standard screens and gives future detector tuning a stable profile name.
 
+Use `--execution-mode parallel|sequential` to control scheduling. The default `parallel` mode runs
+independent local intake and detector workstreams concurrently, then merges outputs in deterministic
+order before calibration. The four detector workstreams are source/statistics, image integrity,
+extension detectors, and text/external-literature screening. Calibration, risk caps, action queues,
+QC packet generation, and report assembly remain serialized. Every run writes `workstreams.json` and
+records the effective mode in `coverage.json`, `pipeline_summary.json`, and the human report.
+
 For a first-time, non-developer walkthrough see `docs/self-audit-guide.md`, and the runnable `examples/minimal_package` and `examples/full_presubmission_package` packages.
 
 ## Provenance-First Negative Calibration
