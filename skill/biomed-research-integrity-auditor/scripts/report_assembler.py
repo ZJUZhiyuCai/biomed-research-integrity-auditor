@@ -2354,32 +2354,82 @@ def render_action_queue(summary: dict[str, Any]) -> list[str]:
     return lines
 
 
+RISK_BADGES = {
+    "R4": "**[R4 — High-risk inconsistency / 高风险不一致]**",
+    "R3": "**[R3 — Integrity concern / 需要解释的完整性关注]**",
+    "R2": "**[R2 — Reviewable concern / 需要复核的报告问题]**",
+    "R1": "**[R1 — Completeness gap / 材料完整性缺口]**",
+    "R0": "**[R0 — No issue found / 未发现具体问题]**",
+}
+
+
 def render_findings(findings: list[dict[str, Any]]) -> list[str]:
-    lines = ["## Findings / Evidence Ledger / 发现项与证据台账", ""]
+    lines = ["## Findings / 发现项（按严重程度排列）", ""]
     if not findings:
         lines += [
             "No candidate finding cards are present for this run.",
             "",
-            "本次没有候选发现卡片。请仍然查看 Audit Coverage 和 Materials Needed，确认是否存在范围限制。",
+            "This means no candidate was emitted within the supplied materials and executed modules; it is not a clean-manuscript verdict.",
+            "",
+            "本次没有候选发现卡片。请仍然查看下方「本次检查覆盖」，确认是否存在范围限制。",
             "",
         ]
         return lines
-    for item in findings:
+
+    # Sort most urgent first so the reader sees the highest-risk items immediately.
+    sorted_findings = sorted(
+        findings,
+        key=lambda x: RISK_ORDER.get(x.get("risk_level", "R0"), 0),
+        reverse=True,
+    )
+
+    lines += [
+        "Items are sorted from most urgent to least urgent. "
+        "Each card answers: **what was found**, **where**, **why it needs attention**, and **what to do next**.",
+        "",
+        "发现项按严重程度从高到低排列。每张卡片回答：发现了什么、在哪里、为什么需要处理、下一步怎么做。",
+        "",
+    ]
+
+    for item in sorted_findings:
         finding_id = item.get("finding_id", "UNNUMBERED")
+        risk = item.get("risk_level", "R1")
+        location = item.get("location", "") or "not specified"
+        badge = RISK_BADGES.get(risk, f"**[{risk}]**")
+        action = (
+            item.get("recommended_action", "")
+            or "Verify against source/raw records before escalation. / 升级处理前请先核对 source/raw 记录。"
+        )
+        benign = [str(b) for b in (item.get("benign_explanations_considered") or []) if str(b).strip()]
+        materials = [str(m) for m in (item.get("required_materials_to_resolve") or []) if str(m).strip()]
+        ev_lines = evidence_metric_lines(item.get("evidence"))
+        has_ev = ev_lines and ev_lines != ["Structured evidence is available in `calibrated_findings.json`."]
+
+        # ── Card header ──────────────────────────────────────────────────────
         lines += [
-            f"### {finding_id}: {finding_label(str(item.get('finding_type', '')))}",
+            f"### {finding_id}",
             "",
-            table([
-                ["Field / 字段", "Value / 内容"],
-                ["Risk / 风险等级", risk_label(item.get("risk_level", ""))],
-                ["Module / 模块", module_label(str(item.get("module", "")))],
-                ["Location / 位置", item.get("location", "")],
-            ]),
+            f"{badge}",
+            "",
+            f"**Location / 位置：** `{location}`",
+            "",
+        ]
+
+        # ── Step 1: What was observed ─────────────────────────────────────────
+        lines += [
+            "_Step 1 of 3 / 第1步，共3步_",
+            "",
             "**What was observed / 观察到什么**",
             "",
             observation_text(item),
             "",
             zh_explanation_stub("observation"),
+            "",
+        ]
+
+        # ── Step 2: Why it matters ────────────────────────────────────────────
+        lines += [
+            "_Step 2 of 3 / 第2步，共3步_",
             "",
             "**Why it matters / 为什么需要复核**",
             "",
@@ -2387,26 +2437,42 @@ def render_findings(findings: list[dict[str, Any]]) -> list[str]:
             "",
             zh_explanation_stub("why"),
             "",
-            "**Risk meaning / 风险含义**",
+        ]
+
+        # ── Step 3: What to do next ───────────────────────────────────────────
+        lines += [
+            "**Step 3 — What to do next / 下一步操作**",
             "",
-            risk_meaning(item.get("risk_level", "R1")),
+            f"1. Open `{location}` and review the relevant files.",
+            f"   打开 `{location}` 查看相关文件。",
             "",
-            "**Evidence summary / 证据摘要**",
+        ]
+        step = 2
+        if materials:
+            mat_str = "; ".join(materials[:3]) + ("..." if len(materials) > 3 else "")
+            lines += [
+                f"{step}. Gather these materials: {mat_str}",
+                f"   准备这些材料：{mat_str}",
+                "",
+            ]
+            step += 1
+        lines += [
+            f"{step}. {action}",
+            "   请先记录核对结果；若仍无法解释，再按上面的中性文字请求补充材料或澄清。",
             "",
-            *bullet_list(evidence_metric_lines(item.get("evidence"))),
-            "",
-            "**Possible benign explanations / 可能的良性解释**",
-            "",
-            *bullet_list(item.get("benign_explanations_considered", [])),
-            "",
-            "**Materials needed to resolve / 解决所需材料**",
-            "",
-            *bullet_list(item.get("required_materials_to_resolve", [])),
-            "",
-            "**Recommended action / 建议动作**",
-            "",
-            item.get("recommended_action", "") or "Verify against source/raw records before escalation. / 升级处理前请先核对 source/raw 记录。",
-            "",
+        ]
+
+        # ── Common benign explanations ────────────────────────────────────────
+        if benign:
+            lines += [
+                "**Check these benign explanations first / 先排查这些常见良性原因**",
+                "",
+                *bullet_list(benign),
+                "",
+            ]
+
+        # ── Copy-ready templates (always visible, required by downstream tests) ─
+        lines += [
             "**Copy-ready neutral follow-up / 可复制的中性跟进文字**",
             "",
             "- Clarification / 澄清："
@@ -2414,9 +2480,24 @@ def render_findings(findings: list[dict[str, Any]]) -> list[str]:
             "- Materials / 补材料："
             f" {finding_response_templates(item)['material_request_template']}",
             "",
-            f"_Note / 备注: {item.get('note', 'Calibrated finding; not a misconduct verdict. / 已校准发现；不是不端结论。')}_",
+        ]
+
+        # ── Technical detail (collapsed) ─────────────────────────────────────
+        if has_ev or materials:
+            lines += ["<details>", "<summary>Technical details / 技术细节（点击展开）</summary>", ""]
+            if has_ev:
+                lines += ["**Evidence summary / 证据摘要**", "", *bullet_list(ev_lines), ""]
+            if materials:
+                lines += ["**Materials needed to resolve / 解决所需材料**", "", *bullet_list(materials), ""]
+            lines += ["</details>", ""]
+
+        # ── Footer ────────────────────────────────────────────────────────────
+        lines += [
+            f"_ID: `{finding_id}` · {risk_label(risk)} · "
+            f"Not a misconduct verdict / 不是不端结论_",
             "",
         ]
+
     return lines
 
 
