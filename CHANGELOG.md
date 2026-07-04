@@ -3,6 +3,14 @@
 ## Unreleased
 
 ### Added
+- Local webapp hardening: explicit local-development CORS allowlist, bounded concurrent audit
+  starts, and per-file zip extraction that avoids `extractall` while preserving zip-slip and
+  symlink rejection.
+- Documentation now calls out the local webapp's single-trusted-user security boundary, clarifies
+  `requirements.txt` versus Python 3.11 `requirements-lock.txt`, and makes Chinese onboarding
+  links more visible.
+- Regression tests now cover webapp CORS behavior, safe zip extraction, concurrent-audit limits,
+  and report-language guardrails against accusation-style phrases.
 - YAML-backed extension detector registry (`schemas/detector_registry.yaml`) for contributed
   detectors that already emit the detector-output contract, with a CLI switch to disable
   extension loading when reproducibility requires a fixed built-in detector set.

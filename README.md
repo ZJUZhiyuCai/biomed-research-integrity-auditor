@@ -28,6 +28,8 @@ Current status is tracked in the source, tests, and changelog. Internal review n
 
 ## Quick start
 
+> **中文用户:** see [README.zh-CN.md](README.zh-CN.md) and the [中文自查指南](docs/self-audit-guide.zh-CN.md).
+
 Requires Python 3.10+. The local web UI also needs Node.js 20.19+ or 22.12+ when building from a source checkout.
 
 ```bash
@@ -39,7 +41,7 @@ python -m pip install -e ".[webapp,ocr]"
 make preflight PYTHON=.venv/bin/python
 ```
 
-For CLI-only use, `python -m pip install -e .` is enough. Add extras only when needed: `.[webapp]` for the local web UI, `.[ocr]` for scanned-PDF OCR Python bindings, and `.[dev]` for contributor tools. The `requirements.txt` file remains the all-features development/CI convenience install; `requirements-lock.txt` is the Python 3.11 reproducible lock file for bug reproduction and deployment audits.
+For CLI-only use, `python -m pip install -e .` is enough. Add extras only when needed: `.[webapp]` for the local web UI, `.[ocr]` for scanned-PDF OCR Python bindings, and `.[dev]` for contributor tools. Use `requirements.txt` for normal development and Python 3.10-3.12 CI-style installs. Use `requirements-lock.txt` when you need a Python 3.11 reproducible install for bug reproduction or deployment audits.
 
 For a repeatable deployment that also links commands into `~/.local/bin`:
 
@@ -198,6 +200,8 @@ biomed-audit-web
 ```
 
 The web app wraps the same pipeline as the CLI, keeps Audit Coverage visible, and provides local package-prep tools for folder layout, filename-based manifest starter suggestions, `assembly_manifest.csv`, and `claim_manifest.csv` creation. Filename suggestions normalize simple zero-padding and separator differences such as `Fig 02-A` versus `F2A`, but remain typing aids only; ambiguous matches are shown as warnings instead of being auto-linked. See [`webapp/README.md`](webapp/README.md).
+
+Security note: the local web app is intended for a single trusted local user on `127.0.0.1`. It does not provide multi-user authentication or remote deployment hardening. Do not expose it through a public tunnel, reverse proxy, or shared server without adding your own access control and institutional data-governance review.
 
 PPTX figure-assembly files are also useful when slide text, speaker notes, or shape alt text explicitly name figure panels and raw/source records. The pipeline writes `pptx_structure.json` with those text layers, path mentions, and explicit path pairs for manifest preparation; those text-level links can become traceability evidence only after the provenance parser and calibrator handle them. Embedded PPTX and zip-based Keynote images are exported for intake review under `pptx_embedded_images/` or `key_embedded_images/`, and decodable PSD files can export flattened previews under `psd_preview_images/`. These preview/export artifacts are not automatically treated as exported figure panels, raw records, layer provenance, or provenance proof. PSD layers/masks/history and opaque assembly containers such as `.ai`, `.indd`, and legacy `.ppt` are inventoried as R1 coverage gaps requiring panel exports and manual review.
 

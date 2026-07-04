@@ -28,6 +28,8 @@
 
 ## 快速开始
 
+> **中文用户：**请优先阅读本文件和 [中文自查指南](docs/self-audit-guide.zh-CN.md)。
+
 需要 Python 3.10+。如果从源码构建本地 Web UI，还需要 Node.js 20.19+ 或 22.12+。
 
 ```bash
@@ -39,7 +41,7 @@ python -m pip install -e ".[webapp,ocr]"
 make preflight PYTHON=.venv/bin/python
 ```
 
-如果只用 CLI，`python -m pip install -e .` 即可。按需添加 extras：`.[webapp]` 用于本地 Web UI，`.[ocr]` 用于 scanned-PDF OCR 的 Python 依赖，`.[dev]` 用于贡献者工具。`requirements.txt` 仍作为全功能开发/CI 环境的 convenience 安装文件；`requirements-lock.txt` 是 Python 3.11 可复现安装锁文件，用于 bug 复现和部署审计。
+如果只用 CLI，`python -m pip install -e .` 即可。按需添加 extras：`.[webapp]` 用于本地 Web UI，`.[ocr]` 用于 scanned-PDF OCR 的 Python 依赖，`.[dev]` 用于贡献者工具。日常开发和 Python 3.10-3.12 CI 风格安装请用 `requirements.txt`；需要复现 bug 或做部署审计时，用 `requirements-lock.txt` 获得 Python 3.11 可复现安装。
 
 如果想一键部署并把命令链接到 `~/.local/bin`：
 
@@ -198,6 +200,8 @@ biomed-audit-web
 ```
 
 Web App 包装了与 CLI 相同的流水线，固定显示 Audit Coverage，并提供本地材料准备工具：目录结构、基于文件名的 manifest 草稿建议、`assembly_manifest.csv` 和 `claim_manifest.csv` 生成。文件名建议会归一化简单的零填充和分隔符差异，例如 `Fig 02-A` 与 `F2A`，但仍只是录入辅助；如果出现多个同样合理的候选，界面会显示提示而不会自动建链接。详见 [`webapp/README.md`](webapp/README.md)。
+
+安全提示：本地 Web App 面向 `127.0.0.1` 上的单个可信本机用户，不提供多用户认证或远程部署加固。不要在没有额外访问控制和机构数据治理审查的情况下，通过公网隧道、反向代理或共享服务器暴露它。
 
 PPTX 组图文件也可以作为辅助材料：如果 slide 文本、speaker notes 或 shape 替代文本中明确写出 figure panel 路径和 raw/source 路径，流水线会写出 `pptx_structure.json`，记录这些文本层、路径提及和显式路径对，帮助准备 manifest；这些文字层链接只有经过 provenance parser 和 calibrator 处理后才可能成为 traceability evidence。PPTX 和 zip 格式 Keynote 内嵌图片会分别导出到 `pptx_embedded_images/` 或 `key_embedded_images/` 供 intake 复核；可解码 PSD 文件会导出扁平预览到 `psd_preview_images/`。这些导出/预览不会自动等同于已导出的图像 panel、raw record、图层 provenance 或 provenance 证明。PSD 图层/mask/历史，以及 `.ai`、`.indd` 和旧 `.ppt` 这类不透明组图工程文件仍会被记录为 R1 coverage gap，需要导出面板并人工复核。
 

@@ -58,8 +58,18 @@ REFERENCE_CHECK_PROVIDERS = {"none", "crossref"}
 MAX_ZIP_BYTES = 250 * 1024 * 1024
 MAX_ZIP_MEMBERS = 5000
 MAX_ATTACHMENT_BYTES = 50 * 1024 * 1024
+MAX_CONCURRENT_AUDIT_JOBS = 2
 INVENTORY_MAX_FILES = 5000
 INVENTORY_MAX_DEPTH = 12
+ACTIVE_AUDIT_STATUSES = {"queued", "running", "cancel_requested"}
+LOCAL_DEV_CORS_ORIGINS = [
+    "http://127.0.0.1:5173",
+    "http://localhost:5173",
+    "http://127.0.0.1:8765",
+    "http://localhost:8765",
+]
+LOCAL_DEV_CORS_METHODS = ["GET", "POST", "PATCH", "DELETE", "OPTIONS"]
+LOCAL_DEV_CORS_HEADERS = ["authorization", "content-type"]
 RECOMMENDED_PACKAGE_DIRS = [
     "figures",
     "raw_images",
@@ -242,12 +252,13 @@ def create_app(output_root: Optional[Path] = None) -> FastAPI:
         description="Local-first wrapper around scripts/audit_package.py.",
     )
     app.state.settings = settings
+    app.state.job_start_lock = threading.Lock()
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["http://127.0.0.1:5173", "http://localhost:5173"],
+        allow_origins=LOCAL_DEV_CORS_ORIGINS,
         allow_credentials=False,
-        allow_methods=["*"],
-        allow_headers=["*"],
+        allow_methods=LOCAL_DEV_CORS_METHODS,
+        allow_headers=LOCAL_DEV_CORS_HEADERS,
     )
 
     @app.get("/api/health")
@@ -277,18 +288,20 @@ def create_app(output_root: Optional[Path] = None) -> FastAPI:
         if not package.exists() or not package.is_dir():
             raise HTTPException(status_code=404, detail=f"Package directory not found: {package}")
         compare_to = resolve_compare_to(settings, request.compare_to_audit_id)
-        job = prepare_job(
-            settings,
-            package,
-            request.mode,
-            request.scan_profile,
-            request.domains,
-            request.external_literature_provider,
-            request.reference_check_provider,
-            compare_to=compare_to,
-        )
-        save_job(settings, job)
-        threading.Thread(target=run_job, args=(settings, job.audit_id), daemon=True).start()
+        with app.state.job_start_lock:
+            ensure_can_start_audit(settings)
+            job = prepare_job(
+                settings,
+                package,
+                request.mode,
+                request.scan_profile,
+                request.domains,
+                request.external_literature_provider,
+                request.reference_check_provider,
+                compare_to=compare_to,
+            )
+            save_job(settings, job)
+            threading.Thread(target=run_job, args=(settings, job.audit_id), daemon=True).start()
         return job_response(settings, job)
 
     @app.post("/api/audits/upload")
@@ -323,20 +336,26 @@ def create_app(output_root: Optional[Path] = None) -> FastAPI:
             shutil.rmtree(upload_root, ignore_errors=True)
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         compare_to = resolve_compare_to(settings, compare_to_audit_id)
-        job = prepare_job(
-            settings,
-            package,
-            mode,
-            scan_profile,
-            domains,
-            external_literature_provider,
-            reference_check_provider,
-            audit_id=audit_id,
-            uploaded_package_dir=upload_root,
-            compare_to=compare_to,
-        )
-        save_job(settings, job)
-        threading.Thread(target=run_job, args=(settings, job.audit_id), daemon=True).start()
+        try:
+            with app.state.job_start_lock:
+                ensure_can_start_audit(settings)
+                job = prepare_job(
+                    settings,
+                    package,
+                    mode,
+                    scan_profile,
+                    domains,
+                    external_literature_provider,
+                    reference_check_provider,
+                    audit_id=audit_id,
+                    uploaded_package_dir=upload_root,
+                    compare_to=compare_to,
+                )
+                save_job(settings, job)
+                threading.Thread(target=run_job, args=(settings, job.audit_id), daemon=True).start()
+        except HTTPException:
+            shutil.rmtree(upload_root, ignore_errors=True)
+            raise
         return job_response(settings, job)
 
     @app.post("/api/packages/inspect")
@@ -1606,6 +1625,28 @@ def require_job(settings: WebappSettings, audit_id: str) -> AuditJob:
     return job
 
 
+def active_audit_count(settings: WebappSettings) -> int:
+    count = 0
+    for audit_dir in sorted(settings.audits_dir.iterdir()):
+        if not audit_dir.is_dir():
+            continue
+        job = load_job(settings, audit_dir.name)
+        if job is not None and job.status in ACTIVE_AUDIT_STATUSES:
+            count += 1
+    return count
+
+
+def ensure_can_start_audit(settings: WebappSettings) -> None:
+    if active_audit_count(settings) >= MAX_CONCURRENT_AUDIT_JOBS:
+        raise HTTPException(
+            status_code=429,
+            detail=(
+                "Too many local audits are already queued or running. "
+                "Wait for one to finish or cancel an existing audit before starting another."
+            ),
+        )
+
+
 def mark_orphaned_jobs(settings: WebappSettings) -> None:
     for audit_dir in sorted(settings.audits_dir.iterdir()):
         if not audit_dir.is_dir():
@@ -2298,6 +2339,7 @@ def is_relative_to(path: Path, base: Path) -> bool:
 
 def extract_zip_safely(zip_path: Path, destination: Path) -> None:
     destination.mkdir(parents=True, exist_ok=False)
+    destination_root = destination.resolve()
     with zipfile.ZipFile(zip_path) as archive:
         infos = archive.infolist()
         if len(infos) > MAX_ZIP_MEMBERS:
@@ -2314,9 +2356,17 @@ def extract_zip_safely(zip_path: Path, destination: Path) -> None:
             if mode == stat.S_IFLNK:
                 raise ValueError("Uploaded zip contains a symlink, which is not accepted for local audit packages")
             target = (destination / member).resolve()
-            if not is_relative_to(target, destination.resolve()):
+            if not is_relative_to(target, destination_root):
                 raise ValueError("Uploaded zip contains a path outside the package")
-        archive.extractall(destination)
+            if info.is_dir():
+                target.mkdir(parents=True, exist_ok=True)
+                continue
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with archive.open(info) as source, target.open("wb") as handle:
+                shutil.copyfileobj(source, handle)
+            extracted = (destination / member).resolve()
+            if not is_relative_to(extracted, destination_root) or extracted.is_symlink():
+                raise ValueError("Uploaded zip extracted an unsafe path")
 
 
 def text_tail(value: str, limit: int = 8000) -> str:

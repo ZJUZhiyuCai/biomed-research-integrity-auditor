@@ -4438,6 +4438,17 @@ class EndToEndTests(unittest.TestCase):
                 report = (out / "audit-report.md").read_text(encoding="utf-8")
                 self.assertIn("## Audit Coverage", report)
                 self.assertIn("## Methodology Readiness", report)
+                report_lower = report.lower()
+                for forbidden_phrase in (
+                    "the authors cheated",
+                    "proven misconduct",
+                    "intentional falsification",
+                    "smoking gun",
+                    "guilty of",
+                    "fake data",
+                    "fabricated data",
+                ):
+                    self.assertNotIn(forbidden_phrase, report_lower)
                 start_here = (out / "START_HERE.md").read_text(encoding="utf-8")
                 self.assertIn("audit-report.md", start_here)
                 self.assertIn("submission_qc_packet", start_here)

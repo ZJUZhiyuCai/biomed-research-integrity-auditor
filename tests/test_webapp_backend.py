@@ -724,6 +724,77 @@ class WebappBackendTests(unittest.TestCase):
             self.assertEqual(response.status_code, 400)
             self.assertIn("symlink", response.text)
 
+    def test_zip_extraction_writes_members_without_extractall(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            zip_path = tmp_path / "safe.zip"
+            destination = tmp_path / "package"
+            with zipfile.ZipFile(zip_path, "w") as archive:
+                archive.writestr("source_data/table.csv", "group,mean\ncontrol,1.0\n")
+                archive.writestr("figures/", "")
+
+            with mock.patch.object(zipfile.ZipFile, "extractall", side_effect=AssertionError("extractall should not be used")):
+                webapp_app.extract_zip_safely(zip_path, destination)
+
+            self.assertEqual((destination / "source_data" / "table.csv").read_text(encoding="utf-8"), "group,mean\ncontrol,1.0\n")
+            self.assertTrue((destination / "figures").is_dir())
+
+    def test_webapp_cors_allows_only_local_dev_origins(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with TestClient(create_app(output_root=Path(tmp) / "runs")) as client:
+                allowed = client.options(
+                    "/api/health",
+                    headers={
+                        "Origin": "http://127.0.0.1:5173",
+                        "Access-Control-Request-Method": "GET",
+                    },
+                )
+                self.assertEqual(allowed.headers.get("access-control-allow-origin"), "http://127.0.0.1:5173")
+
+                rejected = client.options(
+                    "/api/health",
+                    headers={
+                        "Origin": "https://example.invalid",
+                        "Access-Control-Request-Method": "GET",
+                    },
+                )
+                self.assertNotEqual(rejected.headers.get("access-control-allow-origin"), "https://example.invalid")
+
+    def test_webapp_rejects_new_audits_when_concurrency_limit_is_reached(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            app = create_app(output_root=tmp_path / "runs")
+            settings = app.state.settings
+            for idx in range(webapp_app.MAX_CONCURRENT_AUDIT_JOBS):
+                audit_id = f"20260704-running-{idx}"
+                output_dir = settings.audits_dir / audit_id
+                output_dir.mkdir(parents=True)
+                webapp_app.save_job(settings, webapp_app.AuditJob(
+                    audit_id=audit_id,
+                    status="running",
+                    package_path=str(ROOT / "examples" / "minimal_package"),
+                    mode="internal_presubmission",
+                    scan_profile="quick",
+                    domains="wetlab,animal,cell",
+                    external_literature_provider="none",
+                    reference_check_provider="none",
+                    output_dir=str(output_dir),
+                    created_at=time.time(),
+                    updated_at=time.time(),
+                    command=[],
+                ))
+
+            with TestClient(app) as client:
+                response = client.post("/api/audits", json={
+                    "package_path": str(ROOT / "examples" / "minimal_package"),
+                    "mode": "internal_presubmission",
+                    "scan_profile": "quick",
+                    "domains": "wetlab,animal,cell",
+                    "external_literature_provider": "none",
+                })
+                self.assertEqual(response.status_code, 429)
+                self.assertIn("Too many local audits", response.text)
+
     def test_package_prep_scaffold_inspect_and_manifest_round_trip(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
