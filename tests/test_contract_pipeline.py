@@ -486,6 +486,67 @@ def write_same_image_copy_move_package(package: Path) -> None:
     )
 
 
+def write_repeated_chart_axis_package(package: Path) -> None:
+    (package / "figures").mkdir(parents=True)
+    write_minimal_source(package)
+    image = Image.new("RGB", (704, 384), (255, 255, 255))
+    draw = ImageDraw.Draw(image)
+
+    def draw_chart(origin_x: int, origin_y: int) -> None:
+        x0, y0 = origin_x, origin_y
+        width, height = 260, 220
+        draw.rectangle(
+            (x0, y0, x0 + width, y0 + height),
+            fill=(255, 255, 255),
+            outline=(230, 230, 230),
+        )
+        axis_left = x0 + 44
+        axis_bottom = y0 + 176
+        axis_right = x0 + 226
+        axis_top = y0 + 24
+        draw.line(
+            (axis_left, axis_top, axis_left, axis_bottom, axis_right, axis_bottom),
+            fill=(20, 20, 20),
+            width=2,
+        )
+        for idx in range(6):
+            tick_x = axis_left + idx * 36
+            draw.line((tick_x, axis_bottom, tick_x, axis_bottom + 7), fill=(25, 25, 25), width=1)
+            draw.text((tick_x - 5, axis_bottom + 12), str(idx), fill=(20, 20, 20))
+        for idx in range(5):
+            tick_y = axis_bottom - idx * 34
+            draw.line((axis_left - 7, tick_y, axis_left, tick_y), fill=(25, 25, 25), width=1)
+            draw.text((x0 + 8, tick_y - 6), str(idx * 20), fill=(20, 20, 20))
+        red_points = [
+            (axis_left + 6 + idx * 34, axis_bottom - value)
+            for idx, value in enumerate([16, 36, 70, 96, 118, 144])
+        ]
+        blue_points = [
+            (axis_left + 6 + idx * 34, axis_bottom - value)
+            for idx, value in enumerate([12, 28, 42, 58, 74, 86])
+        ]
+        draw.line(red_points, fill=(190, 28, 28), width=3)
+        draw.line(blue_points, fill=(35, 86, 160), width=3)
+        for point in red_points + blue_points:
+            draw.ellipse(
+                (point[0] - 3, point[1] - 3, point[0] + 3, point[1] + 3),
+                fill=(255, 255, 255),
+                outline=(30, 30, 30),
+            )
+        draw.text((x0 + 78, y0 + 6), "Mean signal", fill=(30, 30, 30))
+        draw.text((x0 + 96, y0 + 202), "Days", fill=(30, 30, 30))
+
+    draw_chart(36, 44)
+    draw_chart(376, 44)
+    draw.text((36, 16), "Fig. 3c", fill=(20, 20, 20))
+    draw.text((376, 16), "Fig. 3d", fill=(20, 20, 20))
+    write_png(package / "figures/Figure_repeated_chart_axes.png", image)
+    (package / "manuscript.pdf").write_text(
+        "Figure 3c and 3d are chart panels. Axis and label repetition should not be treated as biological copy-move evidence.\n",
+        encoding="utf-8",
+    )
+
+
 def low_contrast_noise_image(seed: int, size: tuple[int, int] = (576, 576)) -> Image.Image:
     from random import Random
 
@@ -1618,6 +1679,38 @@ class ContractPipelineTests(unittest.TestCase):
             self.assertGreaterEqual(edge["tile_hit_count"], 2)
             self.assertTrue(Path(edge["evidence_crops"]["side_by_side"]).exists())
 
+    def test_local_patch_detector_suppresses_repeated_chart_axis_tiles(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "pkg"
+            write_repeated_chart_axis_package(package)
+            output = Path(tmp) / "local_patch.json"
+            run([
+                PYTHON,
+                "detectors/image/local_patch_reuse.py",
+                str(package),
+                "--output",
+                str(output),
+            ])
+            payload = json.loads(output.read_text(encoding="utf-8"))
+            validate_instance(
+                payload,
+                ROOT / "schemas" / "detector_output.schema.json",
+                "chart-axis suppression detector",
+            )
+            self.assertEqual(payload["same_image_candidate_count"], 0)
+            self.assertFalse([
+                item for item in payload["candidates"] if item["candidate_type"] == "same_image_copy_move"
+            ])
+            self.assertGreater(payload["graphic_tiles_suppressed"], 0)
+            records = payload["graphic_tile_suppression_records"]
+            self.assertTrue(any(item["path"] == "figures/Figure_repeated_chart_axes.png" for item in records))
+            reasons = {
+                reason
+                for item in records
+                for reason in (item.get("reasons") or {})
+            }
+            self.assertIn("chart_text_axis_region", reasons)
+
     def test_local_patch_detector_finds_low_contrast_same_image_copy_move(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             package = Path(tmp) / "pkg"
@@ -2223,6 +2316,29 @@ class ContractPipelineTests(unittest.TestCase):
             report = (out / "audit-report.md").read_text(encoding="utf-8")
             self.assertIn("Panels excluded from deep image screening", report)
             self.assertIn("figures/Figure_schematic.png", report)
+
+    def test_pipeline_coverage_records_chart_text_axis_tile_suppression(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "pkg"
+            write_repeated_chart_axis_package(package)
+            out = Path(tmp) / "out"
+            run([
+                PYTHON,
+                "scripts/audit_package.py",
+                str(package),
+                "--output-dir",
+                str(out),
+                "--case-id",
+                "chart_axis_suppression_case",
+            ])
+            summary = json.loads((out / "AUDIT_JSON_SUMMARY.json").read_text(encoding="utf-8"))
+            coverage = summary["audit_coverage"]
+            self.assertGreater(coverage.get("local_patch_chart_text_axis_tiles_suppressed", 0), 0)
+            self.assertTrue(coverage.get("local_patch_chart_text_axis_suppression_note"))
+            self.assertFalse(any(item["finding_type"] == "same_image_copy_move" for item in summary["findings"]))
+            report = (out / "audit-report.md").read_text(encoding="utf-8")
+            self.assertIn("Chart/text/axis tile suppression", report)
+            self.assertIn("figures/Figure_repeated_chart_axes.png", report)
 
     def test_local_patch_detector_skips_low_information_compression_artifact(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

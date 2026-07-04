@@ -335,6 +335,8 @@ def build_coverage(
                 excluded = local_payload.get("panels_excluded_from_deep_scan", []) or []
                 conflicts = local_payload.get("modality_conflicts", []) or []
                 local_limits = local_payload.get("tile_limit_records", []) or []
+                graphic_tiles_suppressed = int(local_payload.get("graphic_tiles_suppressed", 0) or 0)
+                graphic_suppression_records = local_payload.get("graphic_tile_suppression_records", []) or []
                 if conflicts:
                     coverage["modality_conflicts"] = conflicts
                     coverage["modality_conflict_note"] = (
@@ -351,6 +353,15 @@ def build_coverage(
                     coverage["modules_not_executed"].append(
                         "local patch / same-image copy-move screening on "
                         f"{len(excluded)} schematic/chart panel(s) (modality-aware exclusion; not a clean result)"
+                    )
+                if graphic_tiles_suppressed:
+                    coverage["local_patch_chart_text_axis_tiles_suppressed"] = graphic_tiles_suppressed
+                    coverage["local_patch_chart_text_axis_suppression_records"] = graphic_suppression_records[:20]
+                    coverage["local_patch_chart_text_axis_suppression_note"] = (
+                        "Local patch / same-image copy-move screening suppressed sparse chart/text/axis/blank "
+                        "presentation tiles in figure-panel exports before biological-image tile comparison. "
+                        "This is a false-positive control and a scope disclosure, not clearance of the chart "
+                        "or the surrounding figure panel."
                     )
                 if local_limits:
                     coverage["local_patch_screening_limits"] = local_limits

@@ -21,6 +21,7 @@ from provenance.panel_modality import resolve_panel_modality_routing
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp"}
 DEFAULT_MAX_TILES_PER_IMAGE = 2000
 DEFAULT_MAX_TOTAL_TILE_COMPARISONS = 20_000_000
+GRAPHIC_TILE_SUPPRESSION_SCOPE = "figure_panels_only"
 FIGURE_SOURCE_TRACEABILITY_RELATIONS = {
     "declared_derived_from",
     "declared_same_source",
@@ -250,6 +251,67 @@ def contrast_enhanced_luma(img: Any) -> Any:
     return ImageOps.autocontrast(img.convert("L"))
 
 
+def graphic_tile_profile(tile_rgb: Any) -> dict[str, float]:
+    rgb = np.asarray(tile_rgb.convert("RGB"), dtype=np.float32)
+    if rgb.size == 0:
+        return {
+            "near_white_share": 0.0,
+            "ink_share": 0.0,
+            "dark_share": 0.0,
+            "colored_share": 0.0,
+            "edge_share": 0.0,
+            "edge_to_ink_ratio": 0.0,
+        }
+    luma = (0.299 * rgb[:, :, 0]) + (0.587 * rgb[:, :, 1]) + (0.114 * rgb[:, :, 2])
+    near_white_share = float(np.mean(luma >= 238.0))
+    ink_share = float(np.mean(luma < 238.0))
+    dark_share = float(np.mean(luma <= 96.0))
+    channel_range = np.max(rgb, axis=2) - np.min(rgb, axis=2)
+    colored_share = float(np.mean(channel_range >= 35.0))
+    if luma.shape[0] < 2 or luma.shape[1] < 2:
+        edge_share = 0.0
+    else:
+        horizontal = np.abs(np.diff(luma, axis=1))
+        vertical = np.abs(np.diff(luma, axis=0))
+        edge_pixels = (
+            int(np.count_nonzero(horizontal >= 38.0))
+            + int(np.count_nonzero(vertical >= 38.0))
+        )
+        edge_denominator = horizontal.size + vertical.size
+        edge_share = float(edge_pixels / max(1, edge_denominator))
+    return {
+        "near_white_share": near_white_share,
+        "ink_share": ink_share,
+        "dark_share": dark_share,
+        "colored_share": colored_share,
+        "edge_share": edge_share,
+        "edge_to_ink_ratio": edge_share / max(ink_share, 0.001),
+    }
+
+
+def chart_text_axis_suppression_reason(tile_rgb: Any, stddev: float) -> str | None:
+    """Identify presentation-layer tiles before local biological-image reuse screening.
+
+    This intentionally targets sparse white-background chart/text/axis regions in exported
+    figure panels. Broad dark content is retained so white-background blots are less likely
+    to be suppressed.
+    """
+
+    profile = graphic_tile_profile(tile_rgb)
+    if profile["near_white_share"] >= 0.98 and profile["ink_share"] <= 0.04:
+        return "blank_or_sparse_presentation_region"
+    if (
+        profile["near_white_share"] >= 0.72
+        and profile["ink_share"] <= 0.30
+        and profile["dark_share"] <= 0.12
+        and profile["colored_share"] <= 0.18
+        and profile["edge_to_ink_ratio"] >= 0.10
+        and stddev <= 85.0
+    ):
+        return "chart_text_axis_region"
+    return None
+
+
 def generate_tiles(
     img: Any,
     tile_size: int,
@@ -257,6 +319,8 @@ def generate_tiles(
     hash_size: int,
     min_stddev: float,
     view_name: str = "luma",
+    suppress_graphic_tiles: bool = False,
+    suppression_stats: dict[str, int] | None = None,
 ) -> list[dict[str, Any]]:
     width, height = img.size
     if width < tile_size or height < tile_size:
@@ -271,11 +335,21 @@ def generate_tiles(
     for y in y_values:
         for x in x_values:
             bounds = (x, y, x + tile_size, y + tile_size)
-            tile = img.crop(bounds).convert("L")
+            tile_rgb = img.crop(bounds).convert("RGB")
+            tile = tile_rgb.convert("L")
             tile_array = luma_array(tile)
             _, stddev = float(np.mean(tile_array)), float(np.std(tile_array))
             if stddev < min_stddev:
                 continue
+            if suppress_graphic_tiles:
+                suppression_reason = chart_text_axis_suppression_reason(tile_rgb, stddev)
+                if suppression_reason:
+                    if suppression_stats is not None:
+                        suppression_stats["total"] = int(suppression_stats.get("total", 0)) + 1
+                        suppression_stats[suppression_reason] = (
+                            int(suppression_stats.get(suppression_reason, 0)) + 1
+                        )
+                    continue
             tiles.append({
                 "bounds": bounds,
                 "image": tile,
@@ -700,6 +774,28 @@ def scan(
     comparison_budget = ComparisonBudget(max_total_tile_comparisons)
     panels_excluded_from_deep_scan = list(routing.excluded_panels)
     modality_conflicts = list(routing.modality_conflicts)
+    graphic_tile_suppression_records: list[dict[str, Any]] = []
+    graphic_tiles_suppressed = 0
+
+    def record_graphic_suppression(path_label: str, view: str, stats: dict[str, int]) -> None:
+        nonlocal graphic_tiles_suppressed
+        suppressed = int(stats.get("total", 0) or 0)
+        if suppressed <= 0:
+            return
+        reasons = {
+            key: int(value)
+            for key, value in sorted(stats.items())
+            if key != "total" and int(value) > 0
+        }
+        graphic_tiles_suppressed += suppressed
+        graphic_tile_suppression_records.append({
+            "path": path_label,
+            "view": view,
+            "suppressed_tiles": suppressed,
+            "reasons": reasons,
+            "scope": GRAPHIC_TILE_SUPPRESSION_SCOPE,
+        })
+
     for path in image_paths:
         rel_path = str(path.relative_to(root))
         if rel_path.startswith("figures/") and rel_path in excluded_panel_paths:
@@ -707,12 +803,25 @@ def scan(
         try:
             with Image.open(path) as img:
                 for frame_label, base in iter_normalized_frames(img):
-                    tiles = generate_tiles(base, tile_size, stride, hash_size, min_stddev)
+                    path_label = f"{rel_path}{frame_label}"
+                    suppress_graphic_tiles = rel_path.startswith("figures/")
+                    luma_suppression_stats: dict[str, int] = {}
+                    tiles = generate_tiles(
+                        base,
+                        tile_size,
+                        stride,
+                        hash_size,
+                        min_stddev,
+                        "luma",
+                        suppress_graphic_tiles,
+                        luma_suppression_stats,
+                    )
+                    record_graphic_suppression(path_label, "luma", luma_suppression_stats)
                     original_tile_count = len(tiles)
                     tiles, tiles_limited = limit_tiles(tiles, max_tiles_per_image)
                     if tiles_limited:
                         limit_records.append({
-                            "path": f"{rel_path}{frame_label}",
+                            "path": path_label,
                             "limit_type": "max_tiles_per_image",
                             "view": "luma",
                             "available_tiles": original_tile_count,
@@ -722,6 +831,7 @@ def scan(
                     _, image_stddev = luma_stats(base)
                     low_contrast_tiles = []
                     if image_stddev < low_contrast_stddev_threshold:
+                        low_contrast_suppression_stats: dict[str, int] = {}
                         low_contrast_tiles = generate_tiles(
                             contrast_enhanced_luma(base),
                             tile_size,
@@ -729,6 +839,13 @@ def scan(
                             hash_size,
                             low_contrast_min_stddev,
                             "low_contrast_autocontrast",
+                            suppress_graphic_tiles,
+                            low_contrast_suppression_stats,
+                        )
+                        record_graphic_suppression(
+                            path_label,
+                            "low_contrast_autocontrast",
+                            low_contrast_suppression_stats,
                         )
                         original_low_contrast_tile_count = len(low_contrast_tiles)
                         low_contrast_tiles, low_contrast_limited = limit_tiles(
@@ -737,7 +854,7 @@ def scan(
                         )
                         if low_contrast_limited:
                             limit_records.append({
-                                "path": f"{rel_path}{frame_label}",
+                                "path": path_label,
                                 "limit_type": "max_tiles_per_image",
                                 "view": "low_contrast_autocontrast",
                                 "available_tiles": original_low_contrast_tile_count,
@@ -745,7 +862,7 @@ def scan(
                                 "max_tiles_per_image": max_tiles_per_image,
                             })
                     images.append({
-                        "path": f"{rel_path}{frame_label}",
+                        "path": path_label,
                         "source_file": rel_path,
                         "frame_label": frame_label or None,
                         "image": base.copy(),
@@ -848,11 +965,13 @@ def scan(
 
     return {
         "detector_name": "image.local_patch_reuse",
-        "detector_version": "0.5.0",
+        "detector_version": "0.5.1",
         "input": {
             "root": str(root),
             "provenance_graph": str(provenance_path) if provenance_path else None,
             "modality_routing_enabled": True,
+            "chart_text_axis_tile_suppression_enabled": True,
+            "chart_text_axis_tile_suppression_scope": GRAPHIC_TILE_SUPPRESSION_SCOPE,
             "tile_size": tile_size,
             "stride": stride,
             "hash_size": hash_size,
@@ -875,6 +994,8 @@ def scan(
         "images_screened": len(images),
         "panels_excluded_from_deep_scan": panels_excluded_from_deep_scan,
         "modality_conflicts": modality_conflicts,
+        "graphic_tiles_suppressed": graphic_tiles_suppressed,
+        "graphic_tile_suppression_records": graphic_tile_suppression_records,
         "candidate_pair_count": len(candidates),
         "same_image_candidate_count": same_image_candidate_count,
         "excluded_expected_traceability_pairs": excluded_pair_count,
@@ -941,6 +1062,7 @@ def main() -> int:
         "candidates": len(result["candidates"]),
         "same_image_candidates": result["same_image_candidate_count"],
         "excluded_expected_traceability_pairs": result["excluded_expected_traceability_pairs"],
+        "graphic_tiles_suppressed": result["graphic_tiles_suppressed"],
         "errors": len(result["errors"]),
     }, indent=2))
     return 0

@@ -1022,6 +1022,10 @@ def render_coverage(coverage: dict[str, Any] | None) -> list[str]:
         ["Splice-forensics triage signals / 弱拼接取证提示", str(coverage.get("splice_forensics_candidates", 0))],
         ["Keypoint image pairs screened / 已筛 keypoint 图像对", str(coverage.get("keypoint_pairs_screened", 0))],
         ["Keypoint geometric candidates / Keypoint 几何候选", str(coverage.get("keypoint_candidates", 0))],
+        [
+            "Chart/text/axis tiles suppressed before local patch screening / local patch 前抑制的图表/文字/坐标轴 tile",
+            str(coverage.get("local_patch_chart_text_axis_tiles_suppressed", 0)),
+        ],
         ["Source-data tables screened / 已筛 source-data 表", str(coverage.get("source_tables_screened", 0))],
         ["XLSX workbooks structurally read / 已结构读取 XLSX", str(coverage.get("xlsx_files_structurally_read", 0))],
         ["XLSX sheets indexed / 已索引 XLSX sheet", str(coverage.get("xlsx_sheets_indexed", 0))],
@@ -1740,6 +1744,36 @@ def render_coverage(coverage: dict[str, Any] | None) -> list[str]:
                 "",
                 f"> {conflict_note}",
                 "> 中文提示：同一 panel 同时声明实验图与 schematic/chart 时，系统默认继续深扫，而不是整张跳过。",
+            ]
+    suppressed_tiles = int(coverage.get("local_patch_chart_text_axis_tiles_suppressed", 0) or 0)
+    suppression_records = coverage.get("local_patch_chart_text_axis_suppression_records") or []
+    if suppressed_tiles:
+        lines += [
+            "",
+            "**Chart/text/axis tile suppression / 图表文字坐标轴 tile 抑制**",
+            "",
+            table([
+                ["Path / 路径", "View / 视图", "Suppressed tiles / 已抑制 tile", "Reasons / 原因"],
+                *[
+                    [
+                        str(item.get("path", "")),
+                        str(item.get("view", "")),
+                        str(item.get("suppressed_tiles", "")),
+                        ", ".join(
+                            f"{key}: {value}"
+                            for key, value in sorted((item.get("reasons") or {}).items())
+                        ),
+                    ]
+                    for item in suppression_records
+                ],
+            ]),
+        ]
+        suppression_note = coverage.get("local_patch_chart_text_axis_suppression_note")
+        if suppression_note:
+            lines += [
+                "",
+                f"> {suppression_note}",
+                "> 中文提示：这是为了减少整版图表、文字、坐标轴和留白造成的局部相似误报；它不是图表或整张 panel 的通过结论。",
             ]
     local_limits = coverage.get("local_patch_screening_limits") or []
     if local_limits:

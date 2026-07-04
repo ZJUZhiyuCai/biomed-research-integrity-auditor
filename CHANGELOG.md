@@ -3,6 +3,9 @@
 ## Unreleased
 
 ### Added
+- Local patch / same-image copy-move screening now suppresses sparse chart/text/axis/blank
+  presentation tiles in exported figure panels before tile comparison, and reports the suppression
+  in audit coverage as a false-positive control rather than a clean result.
 - Statistical screening now compares row-oriented source tables for preserved decimal digits and
   integer-offset patterns across paired treatment/group rows, while keeping the result capped as a
   weak R2 triage signal.
