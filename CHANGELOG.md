@@ -3,6 +3,9 @@
 ## Unreleased
 
 ### Added
+- Local patch / same-image copy-move screening now cuts exported composite figures into image-like
+  subpanels before deep scanning, preserves the original figure path for provenance calibration,
+  and reports skipped chart/text/axis presentation regions in audit coverage.
 - Local patch / same-image copy-move screening now suppresses sparse chart/text/axis/blank
   presentation tiles in exported figure panels before tile comparison, and reports the suppression
   in audit coverage as a false-positive control rather than a clean result.

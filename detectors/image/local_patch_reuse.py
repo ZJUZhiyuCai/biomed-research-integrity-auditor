@@ -22,6 +22,8 @@ IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp"}
 DEFAULT_MAX_TILES_PER_IMAGE = 2000
 DEFAULT_MAX_TOTAL_TILE_COMPARISONS = 20_000_000
 GRAPHIC_TILE_SUPPRESSION_SCOPE = "figure_panels_only"
+COMPOSITE_PANEL_CUTTER_SCOPE = "figure_panels_only"
+DEFAULT_MAX_COMPOSITE_SUBPANELS = 64
 FIGURE_SOURCE_TRACEABILITY_RELATIONS = {
     "declared_derived_from",
     "declared_same_source",
@@ -90,6 +92,10 @@ def collect_images(root: Path) -> list[Path]:
 def undirected_pair(left: str, right: str) -> tuple[str, str]:
     first, second = sorted((left, right))
     return first, second
+
+
+def provenance_comparison_path(image: dict[str, Any]) -> str:
+    return str(image.get("provenance_path") or image.get("path") or "")
 
 
 def bounds_to_region(bounds: tuple[int, int, int, int]) -> dict[str, int]:
@@ -251,7 +257,7 @@ def contrast_enhanced_luma(img: Any) -> Any:
     return ImageOps.autocontrast(img.convert("L"))
 
 
-def graphic_tile_profile(tile_rgb: Any) -> dict[str, float]:
+def graphic_tile_profile(tile_rgb: Any, include_texture: bool = False) -> dict[str, float]:
     rgb = np.asarray(tile_rgb.convert("RGB"), dtype=np.float32)
     if rgb.size == 0:
         return {
@@ -261,6 +267,8 @@ def graphic_tile_profile(tile_rgb: Any) -> dict[str, float]:
             "colored_share": 0.0,
             "edge_share": 0.0,
             "edge_to_ink_ratio": 0.0,
+            "quantized_unique_colors": 0.0,
+            "vertical_stripe_ratio": 0.0,
         }
     luma = (0.299 * rgb[:, :, 0]) + (0.587 * rgb[:, :, 1]) + (0.114 * rgb[:, :, 2])
     near_white_share = float(np.mean(luma >= 238.0))
@@ -268,6 +276,15 @@ def graphic_tile_profile(tile_rgb: Any) -> dict[str, float]:
     dark_share = float(np.mean(luma <= 96.0))
     channel_range = np.max(rgb, axis=2) - np.min(rgb, axis=2)
     colored_share = float(np.mean(channel_range >= 35.0))
+    quantized_unique_colors = 0.0
+    vertical_stripe_ratio = 0.0
+    if include_texture:
+        quantized = (rgb.astype(np.uint32) // 32).reshape(-1, 3)
+        packed = (quantized[:, 0] * 64) + (quantized[:, 1] * 8) + quantized[:, 2]
+        quantized_unique_colors = float(np.unique(packed).size)
+        col_variance = float(np.var(np.mean(luma, axis=0)))
+        row_variance = float(np.var(np.mean(luma, axis=1)))
+        vertical_stripe_ratio = col_variance / max(row_variance, 1.0)
     if luma.shape[0] < 2 or luma.shape[1] < 2:
         edge_share = 0.0
     else:
@@ -286,6 +303,8 @@ def graphic_tile_profile(tile_rgb: Any) -> dict[str, float]:
         "colored_share": colored_share,
         "edge_share": edge_share,
         "edge_to_ink_ratio": edge_share / max(ink_share, 0.001),
+        "quantized_unique_colors": quantized_unique_colors,
+        "vertical_stripe_ratio": vertical_stripe_ratio,
     }
 
 
@@ -297,7 +316,22 @@ def chart_text_axis_suppression_reason(tile_rgb: Any, stddev: float) -> str | No
     to be suppressed.
     """
 
-    profile = graphic_tile_profile(tile_rgb)
+    profile = graphic_tile_profile(tile_rgb, include_texture=True)
+    if (
+        profile["quantized_unique_colors"] <= 10
+        and profile["edge_share"] <= 0.07
+        and profile["vertical_stripe_ratio"] >= 6.0
+        and stddev >= 32.0
+    ):
+        return "solid_vertical_color_bar_region"
+    if (
+        profile["near_white_share"] >= 0.60
+        and profile["colored_share"] >= 0.12
+        and profile["quantized_unique_colors"] <= 48
+        and profile["edge_share"] <= 0.08
+        and stddev >= 30.0
+    ):
+        return "solid_color_legend_region"
     if profile["near_white_share"] >= 0.98 and profile["ink_share"] <= 0.04:
         return "blank_or_sparse_presentation_region"
     if (
@@ -310,6 +344,378 @@ def chart_text_axis_suppression_reason(tile_rgb: Any, stddev: float) -> str | No
     ):
         return "chart_text_axis_region"
     return None
+
+
+def rounded_profile(profile: dict[str, float]) -> dict[str, float]:
+    return {key: round(float(value), 4) for key, value in sorted(profile.items())}
+
+
+def region_profile(img: Any, include_texture: bool = True) -> dict[str, float]:
+    profile = graphic_tile_profile(img, include_texture=include_texture)
+    _, stddev = luma_stats(img)
+    profile["stddev"] = float(stddev)
+    return profile
+
+
+def region_is_image_like(img: Any, min_dimension: int) -> tuple[bool, str, dict[str, float]]:
+    width, height = img.size
+    profile = region_profile(img)
+    if width < min_dimension or height < min_dimension:
+        return False, "too_small_for_local_patch_screening", profile
+    suppression_reason = chart_text_axis_suppression_reason(img, profile["stddev"])
+    if suppression_reason in {"solid_vertical_color_bar_region", "solid_color_legend_region"}:
+        return False, suppression_reason, profile
+    if suppression_reason:
+        if profile["dark_share"] < 0.06 and profile["colored_share"] < 0.14:
+            return False, "presentation_like_chart_text_axis_region", profile
+    if profile["near_white_share"] < 0.72 and profile["ink_share"] >= 0.22:
+        return True, "dense_image_like_region", profile
+    if profile["colored_share"] >= 0.18 and profile["ink_share"] >= 0.10:
+        return True, "colored_image_like_region", profile
+    if profile["dark_share"] >= 0.06 and profile["ink_share"] >= 0.08:
+        return True, "dark_band_or_photo_region", profile
+    if (
+        profile["stddev"] >= 24.0
+        and profile["ink_share"] >= 0.16
+        and profile["edge_to_ink_ratio"] <= 0.45
+    ):
+        return True, "textured_image_like_region", profile
+    return False, "presentation_or_low_information_region", profile
+
+
+def block_has_image_content(block: Any) -> bool:
+    profile = region_profile(block, include_texture=False)
+    if profile["near_white_share"] < 0.68 and profile["ink_share"] >= 0.24:
+        return True
+    if profile["colored_share"] >= 0.20 and profile["ink_share"] >= 0.08:
+        return True
+    if profile["dark_share"] >= 0.10 and profile["ink_share"] >= 0.10:
+        return True
+    return (
+        profile["stddev"] >= 28.0
+        and profile["ink_share"] >= 0.16
+        and profile["edge_to_ink_ratio"] <= 0.45
+    )
+
+
+def dilate_mask(mask: np.ndarray, iterations: int = 1) -> np.ndarray:
+    result = mask.astype(bool)
+    for _ in range(iterations):
+        padded = np.pad(result, 1, mode="constant", constant_values=False)
+        expanded = np.zeros_like(result, dtype=bool)
+        for y_offset in range(3):
+            for x_offset in range(3):
+                expanded |= padded[y_offset:y_offset + result.shape[0], x_offset:x_offset + result.shape[1]]
+        result = expanded
+    return result
+
+
+def connected_components(mask: np.ndarray) -> list[tuple[int, int, int, int, int]]:
+    visited = np.zeros_like(mask, dtype=bool)
+    components: list[tuple[int, int, int, int, int]] = []
+    rows, cols = mask.shape
+    for row in range(rows):
+        for col in range(cols):
+            if visited[row, col] or not mask[row, col]:
+                continue
+            stack = [(row, col)]
+            visited[row, col] = True
+            min_row = max_row = row
+            min_col = max_col = col
+            count = 0
+            while stack:
+                current_row, current_col = stack.pop()
+                count += 1
+                min_row = min(min_row, current_row)
+                max_row = max(max_row, current_row)
+                min_col = min(min_col, current_col)
+                max_col = max(max_col, current_col)
+                for next_row in range(max(0, current_row - 1), min(rows, current_row + 2)):
+                    for next_col in range(max(0, current_col - 1), min(cols, current_col + 2)):
+                        if visited[next_row, next_col] or not mask[next_row, next_col]:
+                            continue
+                        visited[next_row, next_col] = True
+                        stack.append((next_row, next_col))
+            components.append((min_col, min_row, max_col + 1, max_row + 1, count))
+    return components
+
+
+def expand_bounds(
+    bounds: tuple[int, int, int, int],
+    padding: int,
+    image_size: tuple[int, int],
+) -> tuple[int, int, int, int]:
+    width, height = image_size
+    return (
+        max(0, bounds[0] - padding),
+        max(0, bounds[1] - padding),
+        min(width, bounds[2] + padding),
+        min(height, bounds[3] + padding),
+    )
+
+
+def bounds_close_or_overlap(
+    left: tuple[int, int, int, int],
+    right: tuple[int, int, int, int],
+    padding: int,
+) -> bool:
+    return bounds_overlap(left, right, padding)
+
+
+def merge_nearby_bounds(
+    bounds_list: list[tuple[int, int, int, int]],
+    padding: int,
+) -> list[tuple[int, int, int, int]]:
+    merged = list(bounds_list)
+    changed = True
+    while changed:
+        changed = False
+        next_bounds: list[tuple[int, int, int, int]] = []
+        while merged:
+            current = merged.pop(0)
+            match_index = None
+            for idx, other in enumerate(merged):
+                if bounds_close_or_overlap(current, other, padding):
+                    match_index = idx
+                    break
+            if match_index is None:
+                next_bounds.append(current)
+                continue
+            other = merged.pop(match_index)
+            merged.append((
+                min(current[0], other[0]),
+                min(current[1], other[1]),
+                max(current[2], other[2]),
+                max(current[3], other[3]),
+            ))
+            changed = True
+        merged = next_bounds
+    return sorted(merged, key=lambda item: (item[1], item[0], item[3] - item[1], item[2] - item[0]))
+
+
+def low_signal_runs(values: np.ndarray, threshold: float, min_run: int) -> list[tuple[int, int]]:
+    runs = []
+    start: int | None = None
+    for idx, value in enumerate(values):
+        if float(value) <= threshold:
+            if start is None:
+                start = idx
+        elif start is not None:
+            if idx - start >= min_run:
+                runs.append((start, idx))
+            start = None
+    if start is not None and len(values) - start >= min_run:
+        runs.append((start, len(values)))
+    return runs
+
+
+def split_bounds_once_by_gutter(
+    img: Any,
+    bounds: tuple[int, int, int, int],
+    min_dimension: int,
+) -> list[tuple[int, int, int, int]]:
+    crop = img.crop(bounds).convert("RGB")
+    rgb = np.asarray(crop, dtype=np.float32)
+    if rgb.size == 0:
+        return [bounds]
+    luma = (0.299 * rgb[:, :, 0]) + (0.587 * rgb[:, :, 1]) + (0.114 * rgb[:, :, 2])
+    channel_range = np.max(rgb, axis=2) - np.min(rgb, axis=2)
+    foreground = (luma < 245.0) | (channel_range >= 35.0)
+    col_density = np.mean(foreground, axis=0)
+    row_density = np.mean(foreground, axis=1)
+    width, height = crop.size
+    min_gutter = max(10, min_dimension // 4)
+    vertical_runs = [
+        run for run in low_signal_runs(col_density, 0.012, min_gutter)
+        if run[0] >= min_dimension and width - run[1] >= min_dimension
+    ]
+    horizontal_runs = [
+        run for run in low_signal_runs(row_density, 0.012, min_gutter)
+        if run[0] >= min_dimension and height - run[1] >= min_dimension
+    ]
+    best_vertical = max(vertical_runs, key=lambda item: item[1] - item[0], default=None)
+    best_horizontal = max(horizontal_runs, key=lambda item: item[1] - item[0], default=None)
+    vertical_width = (best_vertical[1] - best_vertical[0]) if best_vertical else 0
+    horizontal_height = (best_horizontal[1] - best_horizontal[0]) if best_horizontal else 0
+    if vertical_width <= 0 and horizontal_height <= 0:
+        return [bounds]
+    if vertical_width >= horizontal_height:
+        assert best_vertical is not None
+        split_x = bounds[0] + ((best_vertical[0] + best_vertical[1]) // 2)
+        return [(bounds[0], bounds[1], split_x, bounds[3]), (split_x, bounds[1], bounds[2], bounds[3])]
+    assert best_horizontal is not None
+    split_y = bounds[1] + ((best_horizontal[0] + best_horizontal[1]) // 2)
+    return [(bounds[0], bounds[1], bounds[2], split_y), (bounds[0], split_y, bounds[2], bounds[3])]
+
+
+def split_bounds_by_gutters(
+    img: Any,
+    bounds: tuple[int, int, int, int],
+    min_dimension: int,
+    max_parts: int = 16,
+) -> list[tuple[int, int, int, int]]:
+    pending = [bounds]
+    changed = True
+    while changed and len(pending) < max_parts:
+        changed = False
+        next_bounds: list[tuple[int, int, int, int]] = []
+        for item in pending:
+            parts = split_bounds_once_by_gutter(img, item, min_dimension)
+            if len(parts) > 1:
+                changed = True
+            next_bounds.extend(parts)
+        pending = next_bounds
+    return sorted(pending, key=lambda item: (item[1], item[0]))
+
+
+def trim_bounds_to_foreground(
+    img: Any,
+    bounds: tuple[int, int, int, int],
+    padding: int,
+) -> tuple[int, int, int, int]:
+    crop = img.crop(bounds).convert("RGB")
+    rgb = np.asarray(crop, dtype=np.float32)
+    if rgb.size == 0:
+        return bounds
+    luma = (0.299 * rgb[:, :, 0]) + (0.587 * rgb[:, :, 1]) + (0.114 * rgb[:, :, 2])
+    channel_range = np.max(rgb, axis=2) - np.min(rgb, axis=2)
+    foreground = (luma < 245.0) | (channel_range >= 35.0)
+    coords = np.argwhere(foreground)
+    if coords.size == 0:
+        return bounds
+    min_y, min_x = coords.min(axis=0)
+    max_y, max_x = coords.max(axis=0) + 1
+    trimmed = (
+        bounds[0] + int(min_x),
+        bounds[1] + int(min_y),
+        bounds[0] + int(max_x),
+        bounds[1] + int(max_y),
+    )
+    return expand_bounds(trimmed, padding, img.size)
+
+
+def block_size_for_panel_cut(width: int, height: int) -> int:
+    return max(12, min(32, max(1, min(width, height) // 48)))
+
+
+def cut_image_like_subpanels(
+    img: Any,
+    tile_size: int,
+    max_panels: int = DEFAULT_MAX_COMPOSITE_SUBPANELS,
+) -> dict[str, Any]:
+    width, height = img.size
+    min_dimension = max(64, min(tile_size, min(width, height)))
+    whole_ok, whole_reason, whole_profile = region_is_image_like(img, min_dimension)
+    block_size = block_size_for_panel_cut(width, height)
+    rows = math.ceil(height / block_size)
+    cols = math.ceil(width / block_size)
+    mask = np.zeros((rows, cols), dtype=bool)
+    for row in range(rows):
+        for col in range(cols):
+            bounds = (
+                col * block_size,
+                row * block_size,
+                min(width, (col + 1) * block_size),
+                min(height, (row + 1) * block_size),
+            )
+            if block_has_image_content(img.crop(bounds)):
+                mask[row, col] = True
+    mask = dilate_mask(mask, 1)
+    component_bounds = []
+    for min_col, min_row, max_col, max_row, count in connected_components(mask):
+        if count < 2:
+            continue
+        bounds = (
+            min_col * block_size,
+            min_row * block_size,
+            min(width, max_col * block_size),
+            min(height, max_row * block_size),
+        )
+        component_bounds.append(expand_bounds(bounds, block_size, (width, height)))
+    merged_bounds = merge_nearby_bounds(component_bounds, max(4, block_size // 2))
+    split_bounds: list[tuple[int, int, int, int]] = []
+    for bounds in merged_bounds:
+        split_bounds.extend(split_bounds_by_gutters(img, bounds, min_dimension))
+    merged_bounds = sorted(split_bounds, key=lambda item: (item[1], item[0]))
+
+    panels: list[dict[str, Any]] = []
+    skipped_regions: list[dict[str, Any]] = []
+    for bounds in merged_bounds:
+        bounds = trim_bounds_to_foreground(img, bounds, max(4, block_size // 2))
+        crop = img.crop(bounds)
+        ok, reason, profile = region_is_image_like(crop, min_dimension)
+        record = {
+            "bounds": bounds_to_region(bounds),
+            "classification": reason,
+            "profile": rounded_profile(profile),
+        }
+        if ok:
+            panels.append({
+                **record,
+                "image": crop,
+                "is_full_image": False,
+            })
+        else:
+            skipped_regions.append(record)
+
+    whole_area = max(1, width * height)
+    if len(panels) == 1:
+        panel_area = region_area(panels[0]["bounds"])
+        if whole_ok and panel_area / whole_area >= 0.72:
+            panels = [{
+                "bounds": bounds_to_region((0, 0, width, height)),
+                "classification": f"whole_figure_{whole_reason}",
+                "profile": rounded_profile(whole_profile),
+                "image": img.copy(),
+                "is_full_image": True,
+            }]
+    elif not panels and whole_ok:
+        panels = [{
+            "bounds": bounds_to_region((0, 0, width, height)),
+            "classification": f"whole_figure_{whole_reason}",
+            "profile": rounded_profile(whole_profile),
+            "image": img.copy(),
+            "is_full_image": True,
+        }]
+
+    truncated = False
+    if len(panels) > max_panels:
+        truncated = True
+        panels = sorted(panels, key=lambda item: region_area(item["bounds"]), reverse=True)[:max_panels]
+        panels = sorted(panels, key=lambda item: (item["bounds"]["y"], item["bounds"]["x"]))
+
+    if not panels and not skipped_regions:
+        skipped_regions.append({
+            "bounds": bounds_to_region((0, 0, width, height)),
+            "classification": "no_image_like_regions_detected",
+            "profile": rounded_profile(whole_profile),
+        })
+
+    serializable_panels = [
+        {
+            "panel_id": f"panel_{idx:03d}",
+            "bounds": panel["bounds"],
+            "classification": panel["classification"],
+            "profile": panel["profile"],
+            "is_full_image": bool(panel.get("is_full_image")),
+        }
+        for idx, panel in enumerate(panels, start=1)
+    ]
+    for idx, panel in enumerate(panels, start=1):
+        panel["panel_id"] = f"panel_{idx:03d}"
+
+    return {
+        "panels": panels,
+        "record": {
+            "block_size": block_size,
+            "image_like_panels": len(panels),
+            "presentation_regions_skipped": len(skipped_regions),
+            "regions": serializable_panels,
+            "skipped_regions": skipped_regions[:20],
+            "truncated": truncated,
+            "scope": COMPOSITE_PANEL_CUTTER_SCOPE,
+        },
+    }
 
 
 def generate_tiles(
@@ -692,6 +1098,16 @@ def candidate_from_hits(
     edge = {
         "left": left["path"],
         "right": right["path"],
+        "left_provenance_path": provenance_comparison_path(left),
+        "right_provenance_path": provenance_comparison_path(right),
+        "left_source_file": left.get("source_file"),
+        "right_source_file": right.get("source_file"),
+        "left_panel_id": left.get("panel_id"),
+        "right_panel_id": right.get("panel_id"),
+        "left_panel_region": left.get("panel_region"),
+        "right_panel_region": right.get("panel_region"),
+        "left_panel_classification": left.get("panel_classification"),
+        "right_panel_classification": right.get("panel_classification"),
         "similarity_scope": similarity_scope,
         "same_image": same_image,
         "region_a": region_a,
@@ -776,6 +1192,9 @@ def scan(
     modality_conflicts = list(routing.modality_conflicts)
     graphic_tile_suppression_records: list[dict[str, Any]] = []
     graphic_tiles_suppressed = 0
+    composite_panel_cut_records: list[dict[str, Any]] = []
+    composite_image_like_panels_screened = 0
+    composite_presentation_regions_skipped = 0
 
     def record_graphic_suppression(path_label: str, view: str, stats: dict[str, int]) -> None:
         nonlocal graphic_tiles_suppressed
@@ -803,73 +1222,115 @@ def scan(
         try:
             with Image.open(path) as img:
                 for frame_label, base in iter_normalized_frames(img):
-                    path_label = f"{rel_path}{frame_label}"
+                    source_label = f"{rel_path}{frame_label}"
                     suppress_graphic_tiles = rel_path.startswith("figures/")
-                    luma_suppression_stats: dict[str, int] = {}
-                    tiles = generate_tiles(
-                        base,
-                        tile_size,
-                        stride,
-                        hash_size,
-                        min_stddev,
-                        "luma",
-                        suppress_graphic_tiles,
-                        luma_suppression_stats,
-                    )
-                    record_graphic_suppression(path_label, "luma", luma_suppression_stats)
-                    original_tile_count = len(tiles)
-                    tiles, tiles_limited = limit_tiles(tiles, max_tiles_per_image)
-                    if tiles_limited:
-                        limit_records.append({
-                            "path": path_label,
-                            "limit_type": "max_tiles_per_image",
-                            "view": "luma",
-                            "available_tiles": original_tile_count,
-                            "screened_tiles": len(tiles),
-                            "max_tiles_per_image": max_tiles_per_image,
+                    screening_units: list[dict[str, Any]] = []
+                    if rel_path.startswith("figures/"):
+                        cut_result = cut_image_like_subpanels(base, tile_size)
+                        record = {
+                            "source_path": source_label,
+                            **cut_result["record"],
+                        }
+                        composite_panel_cut_records.append(record)
+                        composite_image_like_panels_screened += int(record["image_like_panels"])
+                        composite_presentation_regions_skipped += int(record["presentation_regions_skipped"])
+                        for panel in cut_result["panels"]:
+                            is_full_image = bool(panel.get("is_full_image"))
+                            panel_id = str(panel["panel_id"])
+                            screening_units.append({
+                                "path": source_label if is_full_image else f"{source_label}::{panel_id}",
+                                "provenance_path": rel_path,
+                                "source_file": rel_path,
+                                "frame_label": frame_label or None,
+                                "panel_id": None if is_full_image else panel_id,
+                                "panel_region": None if is_full_image else panel["bounds"],
+                                "panel_classification": panel["classification"],
+                                "image": panel["image"],
+                            })
+                    else:
+                        screening_units.append({
+                            "path": source_label,
+                            "provenance_path": source_label,
+                            "source_file": rel_path,
+                            "frame_label": frame_label or None,
+                            "panel_id": None,
+                            "panel_region": None,
+                            "panel_classification": "full_non_figure_image",
+                            "image": base,
                         })
-                    _, image_stddev = luma_stats(base)
-                    low_contrast_tiles = []
-                    if image_stddev < low_contrast_stddev_threshold:
-                        low_contrast_suppression_stats: dict[str, int] = {}
-                        low_contrast_tiles = generate_tiles(
-                            contrast_enhanced_luma(base),
+
+                    for unit in screening_units:
+                        path_label = str(unit["path"])
+                        unit_image = unit["image"]
+                        luma_suppression_stats: dict[str, int] = {}
+                        tiles = generate_tiles(
+                            unit_image,
                             tile_size,
                             stride,
                             hash_size,
-                            low_contrast_min_stddev,
-                            "low_contrast_autocontrast",
+                            min_stddev,
+                            "luma",
                             suppress_graphic_tiles,
-                            low_contrast_suppression_stats,
+                            luma_suppression_stats,
                         )
-                        record_graphic_suppression(
-                            path_label,
-                            "low_contrast_autocontrast",
-                            low_contrast_suppression_stats,
-                        )
-                        original_low_contrast_tile_count = len(low_contrast_tiles)
-                        low_contrast_tiles, low_contrast_limited = limit_tiles(
-                            low_contrast_tiles,
-                            max_tiles_per_image,
-                        )
-                        if low_contrast_limited:
+                        record_graphic_suppression(path_label, "luma", luma_suppression_stats)
+                        original_tile_count = len(tiles)
+                        tiles, tiles_limited = limit_tiles(tiles, max_tiles_per_image)
+                        if tiles_limited:
                             limit_records.append({
                                 "path": path_label,
                                 "limit_type": "max_tiles_per_image",
-                                "view": "low_contrast_autocontrast",
-                                "available_tiles": original_low_contrast_tile_count,
-                                "screened_tiles": len(low_contrast_tiles),
+                                "view": "luma",
+                                "available_tiles": original_tile_count,
+                                "screened_tiles": len(tiles),
                                 "max_tiles_per_image": max_tiles_per_image,
                             })
-                    images.append({
-                        "path": path_label,
-                        "source_file": rel_path,
-                        "frame_label": frame_label or None,
-                        "image": base.copy(),
-                        "tiles": tiles,
-                        "low_contrast_tiles": low_contrast_tiles,
-                        "stddev": round(image_stddev, 3),
-                    })
+                        _, image_stddev = luma_stats(unit_image)
+                        low_contrast_tiles = []
+                        if image_stddev < low_contrast_stddev_threshold:
+                            low_contrast_suppression_stats: dict[str, int] = {}
+                            low_contrast_tiles = generate_tiles(
+                                contrast_enhanced_luma(unit_image),
+                                tile_size,
+                                stride,
+                                hash_size,
+                                low_contrast_min_stddev,
+                                "low_contrast_autocontrast",
+                                suppress_graphic_tiles,
+                                low_contrast_suppression_stats,
+                            )
+                            record_graphic_suppression(
+                                path_label,
+                                "low_contrast_autocontrast",
+                                low_contrast_suppression_stats,
+                            )
+                            original_low_contrast_tile_count = len(low_contrast_tiles)
+                            low_contrast_tiles, low_contrast_limited = limit_tiles(
+                                low_contrast_tiles,
+                                max_tiles_per_image,
+                            )
+                            if low_contrast_limited:
+                                limit_records.append({
+                                    "path": path_label,
+                                    "limit_type": "max_tiles_per_image",
+                                    "view": "low_contrast_autocontrast",
+                                    "available_tiles": original_low_contrast_tile_count,
+                                    "screened_tiles": len(low_contrast_tiles),
+                                    "max_tiles_per_image": max_tiles_per_image,
+                                })
+                        images.append({
+                            "path": path_label,
+                            "provenance_path": str(unit["provenance_path"]),
+                            "source_file": str(unit["source_file"]),
+                            "frame_label": unit["frame_label"],
+                            "panel_id": unit["panel_id"],
+                            "panel_region": unit["panel_region"],
+                            "panel_classification": unit["panel_classification"],
+                            "image": unit_image.copy(),
+                            "tiles": tiles,
+                            "low_contrast_tiles": low_contrast_tiles,
+                            "stddev": round(image_stddev, 3),
+                        })
         except Exception as exc:  # noqa: BLE001 - unreadable files should not abort an audit.
             errors.append({"path": str(path.relative_to(root)), "error": str(exc)})
 
@@ -882,7 +1343,7 @@ def scan(
         for right in images[i + 1:]:
             if comparison_budget.exhausted:
                 break
-            if undirected_pair(left["path"], right["path"]) in excluded_pairs:
+            if undirected_pair(provenance_comparison_path(left), provenance_comparison_path(right)) in excluded_pairs:
                 excluded_pair_count += 1
                 continue
             if not left["tiles"] or not right["tiles"]:
@@ -965,11 +1426,13 @@ def scan(
 
     return {
         "detector_name": "image.local_patch_reuse",
-        "detector_version": "0.5.1",
+        "detector_version": "0.6.0",
         "input": {
             "root": str(root),
             "provenance_graph": str(provenance_path) if provenance_path else None,
             "modality_routing_enabled": True,
+            "composite_panel_cutter_enabled": True,
+            "composite_panel_cutter_scope": COMPOSITE_PANEL_CUTTER_SCOPE,
             "chart_text_axis_tile_suppression_enabled": True,
             "chart_text_axis_tile_suppression_scope": GRAPHIC_TILE_SUPPRESSION_SCOPE,
             "tile_size": tile_size,
@@ -994,6 +1457,9 @@ def scan(
         "images_screened": len(images),
         "panels_excluded_from_deep_scan": panels_excluded_from_deep_scan,
         "modality_conflicts": modality_conflicts,
+        "composite_image_like_panels_screened": composite_image_like_panels_screened,
+        "composite_presentation_regions_skipped": composite_presentation_regions_skipped,
+        "composite_panel_cut_records": composite_panel_cut_records,
         "graphic_tiles_suppressed": graphic_tiles_suppressed,
         "graphic_tile_suppression_records": graphic_tile_suppression_records,
         "candidate_pair_count": len(candidates),
@@ -1062,6 +1528,8 @@ def main() -> int:
         "candidates": len(result["candidates"]),
         "same_image_candidates": result["same_image_candidate_count"],
         "excluded_expected_traceability_pairs": result["excluded_expected_traceability_pairs"],
+        "composite_image_like_panels_screened": result["composite_image_like_panels_screened"],
+        "composite_presentation_regions_skipped": result["composite_presentation_regions_skipped"],
         "graphic_tiles_suppressed": result["graphic_tiles_suppressed"],
         "errors": len(result["errors"]),
     }, indent=2))

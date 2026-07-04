@@ -177,7 +177,7 @@ def disclosure_window(text: str, left: str, right: str, radius: int = 500) -> st
 
 def edge_disclosure_tags(edge: dict[str, Any], context: dict[str, Any]) -> list[str]:
     text = str(context.get("package_text", ""))
-    left, right = edge_paths(edge)
+    left, right = edge_provenance_paths(edge)
     if not left or not right:
         return []
     window = disclosure_window(text, left, right)
@@ -262,6 +262,13 @@ def edge_paths(edge: dict[str, Any]) -> tuple[str, str]:
     return str(edge.get("left", "")), str(edge.get("right", ""))
 
 
+def edge_provenance_paths(edge: dict[str, Any]) -> tuple[str, str]:
+    return (
+        str(edge.get("left_provenance_path") or edge.get("left", "")),
+        str(edge.get("right_provenance_path") or edge.get("right", "")),
+    )
+
+
 def is_same_image_copy_move_edge(edge: dict[str, Any]) -> bool:
     left, right = edge_paths(edge)
     return bool(left and left == right) and (
@@ -285,8 +292,9 @@ def classify_similarity_edge(
     declared_pairs: dict[tuple[str, str], dict[str, Any]],
 ) -> dict[str, Any]:
     left, right = edge_paths(edge)
-    left_role = role_from_path(left, provenance)
-    right_role = role_from_path(right, provenance)
+    left_provenance_path, right_provenance_path = edge_provenance_paths(edge)
+    left_role = role_from_path(left_provenance_path, provenance)
+    right_role = role_from_path(right_provenance_path, provenance)
     classified = dict(edge)
     classified["left_role"] = left_role
     classified["right_role"] = right_role
@@ -307,8 +315,8 @@ def classify_similarity_edge(
         })
         return classified
 
-    pair = undirected_pair(left, right)
-    provenance_edge = provenance_edge_for_pair(left, right, provenance)
+    pair = undirected_pair(left_provenance_path, right_provenance_path)
+    provenance_edge = provenance_edge_for_pair(left_provenance_path, right_provenance_path, provenance)
     if pair in declared_pairs:
         declared_edge = declared_pairs[pair]
         figure_figure_declared = left_role == "figure_panel" and right_role == "figure_panel"

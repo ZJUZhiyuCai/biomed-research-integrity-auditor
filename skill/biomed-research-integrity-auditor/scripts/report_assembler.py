@@ -1023,6 +1023,14 @@ def render_coverage(coverage: dict[str, Any] | None) -> list[str]:
         ["Keypoint image pairs screened / 已筛 keypoint 图像对", str(coverage.get("keypoint_pairs_screened", 0))],
         ["Keypoint geometric candidates / Keypoint 几何候选", str(coverage.get("keypoint_candidates", 0))],
         [
+            "Composite image-like panels screened by local patch / local patch 已筛 composite image-like 子面板",
+            str(coverage.get("local_patch_composite_image_like_panels_screened", 0)),
+        ],
+        [
+            "Composite presentation regions skipped / composite 中跳过的展示层区域",
+            str(coverage.get("local_patch_composite_presentation_regions_skipped", 0)),
+        ],
+        [
             "Chart/text/axis tiles suppressed before local patch screening / local patch 前抑制的图表/文字/坐标轴 tile",
             str(coverage.get("local_patch_chart_text_axis_tiles_suppressed", 0)),
         ],
@@ -1744,6 +1752,40 @@ def render_coverage(coverage: dict[str, Any] | None) -> list[str]:
                 "",
                 f"> {conflict_note}",
                 "> 中文提示：同一 panel 同时声明实验图与 schematic/chart 时，系统默认继续深扫，而不是整张跳过。",
+            ]
+    composite_records = coverage.get("local_patch_composite_panel_cut_records") or []
+    if composite_records:
+        lines += [
+            "",
+            "**Composite panel cutter / 整版 composite figure 子面板切分**",
+            "",
+            table([
+                [
+                    "Source / 来源图",
+                    "Image-like panels / image-like 子面板",
+                    "Presentation regions skipped / 跳过展示层区域",
+                    "Example regions / 示例区域",
+                ],
+                *[
+                    [
+                        str(item.get("source_path", "")),
+                        str(item.get("image_like_panels", 0)),
+                        str(item.get("presentation_regions_skipped", 0)),
+                        "; ".join(
+                            f"{region.get('panel_id', 'region')} {region.get('bounds', {})}"
+                            for region in (item.get("regions") or [])[:3]
+                        ),
+                    ]
+                    for item in composite_records
+                ],
+            ]),
+        ]
+        cutter_note = coverage.get("local_patch_composite_panel_cutter_note")
+        if cutter_note:
+            lines += [
+                "",
+                f"> {cutter_note}",
+                "> 中文提示：系统先把整版 figure 中像 microscopy/blot/animal image 的子面板切出来再深扫；chart、文字、坐标轴等展示层区域跳过不等于通过。",
             ]
     suppressed_tiles = int(coverage.get("local_patch_chart_text_axis_tiles_suppressed", 0) or 0)
     suppression_records = coverage.get("local_patch_chart_text_axis_suppression_records") or []

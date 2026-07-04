@@ -335,6 +335,11 @@ def build_coverage(
                 excluded = local_payload.get("panels_excluded_from_deep_scan", []) or []
                 conflicts = local_payload.get("modality_conflicts", []) or []
                 local_limits = local_payload.get("tile_limit_records", []) or []
+                composite_panel_records = local_payload.get("composite_panel_cut_records", []) or []
+                composite_image_like_panels = int(local_payload.get("composite_image_like_panels_screened", 0) or 0)
+                composite_presentation_skipped = int(
+                    local_payload.get("composite_presentation_regions_skipped", 0) or 0
+                )
                 graphic_tiles_suppressed = int(local_payload.get("graphic_tiles_suppressed", 0) or 0)
                 graphic_suppression_records = local_payload.get("graphic_tile_suppression_records", []) or []
                 if conflicts:
@@ -353,6 +358,19 @@ def build_coverage(
                     coverage["modules_not_executed"].append(
                         "local patch / same-image copy-move screening on "
                         f"{len(excluded)} schematic/chart panel(s) (modality-aware exclusion; not a clean result)"
+                    )
+                if composite_panel_records:
+                    coverage["local_patch_composite_panel_cutter_enabled"] = bool(
+                        (local_payload.get("input") or {}).get("composite_panel_cutter_enabled")
+                    )
+                    coverage["local_patch_composite_image_like_panels_screened"] = composite_image_like_panels
+                    coverage["local_patch_composite_presentation_regions_skipped"] = composite_presentation_skipped
+                    coverage["local_patch_composite_panel_cut_records"] = composite_panel_records[:20]
+                    coverage["local_patch_composite_panel_cutter_note"] = (
+                        "Exported composite figure panels were split into image-like subpanels before local "
+                        "patch / same-image copy-move screening. Sparse chart/text/axis presentation regions "
+                        "were not treated as biological image panels. This is routing and scope disclosure, "
+                        "not clearance of skipped presentation regions."
                     )
                 if graphic_tiles_suppressed:
                     coverage["local_patch_chart_text_axis_tiles_suppressed"] = graphic_tiles_suppressed

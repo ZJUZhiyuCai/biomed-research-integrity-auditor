@@ -547,6 +547,58 @@ def write_repeated_chart_axis_package(package: Path) -> None:
     )
 
 
+def write_composite_microscopy_chart_package(package: Path) -> None:
+    (package / "figures").mkdir(parents=True)
+    write_minimal_source(package)
+    canvas = Image.new("RGB", (960, 420), (255, 255, 255))
+    draw = ImageDraw.Draw(canvas)
+    left = textured_image(1808, size=(256, 256))
+    right = textured_image(1809, size=(256, 256))
+    right.paste(left.crop((64, 64, 192, 192)), (64, 64))
+    canvas.paste(left, (48, 92))
+    canvas.paste(right, (360, 92))
+    draw.text((48, 62), "A", fill=(20, 20, 20))
+    draw.text((360, 62), "B", fill=(20, 20, 20))
+
+    chart_x, chart_y = 700, 118
+    draw.text((700, 62), "C", fill=(20, 20, 20))
+    draw.line((chart_x, chart_y, chart_x, chart_y + 180, chart_x + 200, chart_y + 180), fill=(20, 20, 20), width=2)
+    points = [(chart_x + 14 + idx * 34, chart_y + 170 - value) for idx, value in enumerate([18, 35, 50, 72, 86, 110])]
+    draw.line(points, fill=(190, 28, 28), width=3)
+    for point in points:
+        draw.ellipse(
+            (point[0] - 3, point[1] - 3, point[0] + 3, point[1] + 3),
+            fill=(255, 255, 255),
+            outline=(30, 30, 30),
+        )
+    draw.text((chart_x + 60, chart_y + 198), "Days", fill=(30, 30, 30))
+    write_png(package / "figures/Figure_composite_microscopy_chart.png", canvas)
+    (package / "manuscript.pdf").write_text(
+        "Figure composite contains microscopy panels A and B plus a chart panel C.\n",
+        encoding="utf-8",
+    )
+
+
+def write_traceable_composite_subpanel_package(package: Path) -> None:
+    (package / "figures").mkdir(parents=True)
+    (package / "raw_images").mkdir()
+    write_minimal_source(package)
+    canvas = Image.new("RGB", (640, 360), (255, 255, 255))
+    draw = ImageDraw.Draw(canvas)
+    raw = textured_image(1908, size=(256, 256))
+    canvas.paste(raw, (48, 72))
+    chart_x, chart_y = 380, 96
+    draw.line((chart_x, chart_y, chart_x, chart_y + 160, chart_x + 180, chart_y + 160), fill=(20, 20, 20), width=2)
+    chart_points = [(chart_x + 12 + idx * 32, chart_y + 150 - value) for idx, value in enumerate([18, 36, 54, 68, 82])]
+    draw.line(chart_points, fill=(190, 28, 28), width=3)
+    write_png(package / "figures/Figure_traceable_composite.png", canvas)
+    write_png(package / "raw_images/raw_traceable_panel.png", raw)
+    (package / "manuscript.pdf").write_text(
+        "Figure traceable composite includes one microscopy panel and one chart panel.\n",
+        encoding="utf-8",
+    )
+
+
 def low_contrast_noise_image(seed: int, size: tuple[int, int] = (576, 576)) -> Image.Image:
     from random import Random
 
@@ -1701,15 +1753,91 @@ class ContractPipelineTests(unittest.TestCase):
             self.assertFalse([
                 item for item in payload["candidates"] if item["candidate_type"] == "same_image_copy_move"
             ])
-            self.assertGreater(payload["graphic_tiles_suppressed"], 0)
-            records = payload["graphic_tile_suppression_records"]
-            self.assertTrue(any(item["path"] == "figures/Figure_repeated_chart_axes.png" for item in records))
-            reasons = {
-                reason
+            self.assertEqual(payload["composite_image_like_panels_screened"], 0)
+            self.assertGreaterEqual(payload["composite_presentation_regions_skipped"], 1)
+            records = payload["composite_panel_cut_records"]
+            self.assertTrue(any(item["source_path"] == "figures/Figure_repeated_chart_axes.png" for item in records))
+            classifications = {
+                region.get("classification")
                 for item in records
-                for reason in (item.get("reasons") or {})
+                for region in (item.get("skipped_regions") or [])
             }
-            self.assertIn("chart_text_axis_region", reasons)
+            self.assertIn("presentation_like_chart_text_axis_region", classifications)
+
+    def test_local_patch_detector_cuts_composite_to_image_like_panels(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "pkg"
+            write_composite_microscopy_chart_package(package)
+            output = Path(tmp) / "local_patch.json"
+            evidence_dir = Path(tmp) / "evidence"
+            run([
+                PYTHON,
+                "detectors/image/local_patch_reuse.py",
+                str(package),
+                "--tile-size",
+                "96",
+                "--stride",
+                "48",
+                "--hash-threshold",
+                "5",
+                "--evidence-dir",
+                str(evidence_dir),
+                "--output",
+                str(output),
+            ])
+            payload = json.loads(output.read_text(encoding="utf-8"))
+            validate_instance(payload, ROOT / "schemas" / "detector_output.schema.json", "composite panel cutter")
+            self.assertGreaterEqual(payload["composite_image_like_panels_screened"], 2)
+            self.assertGreaterEqual(payload["composite_presentation_regions_skipped"], 1)
+            local_patch = [item for item in payload["candidates"] if item["candidate_type"] == "local_patch_reuse"]
+            self.assertTrue(local_patch)
+            edge = local_patch[0]["evidence"]["representative_edge"]
+            self.assertIn("::panel_", edge["left"])
+            self.assertIn("::panel_", edge["right"])
+            self.assertEqual(edge["left_provenance_path"], "figures/Figure_composite_microscopy_chart.png")
+            self.assertEqual(edge["right_provenance_path"], "figures/Figure_composite_microscopy_chart.png")
+            self.assertTrue(edge["left_panel_region"])
+            self.assertTrue(edge["right_panel_region"])
+
+    def test_composite_subpanel_traceability_uses_original_figure_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "pkg"
+            write_traceable_composite_subpanel_package(package)
+            provenance = Path(tmp) / "provenance.json"
+            provenance.write_text(json.dumps({
+                "edges": [
+                    {
+                        "source_path": "figures/Figure_traceable_composite.png",
+                        "target_path": "raw_images/raw_traceable_panel.png",
+                        "relation_type": "declared_derived_from",
+                        "risk_effect": "expected_traceability",
+                        "modality": "microscopy",
+                    },
+                ]
+            }), encoding="utf-8")
+            output = Path(tmp) / "local_patch.json"
+            run([
+                PYTHON,
+                "detectors/image/local_patch_reuse.py",
+                str(package),
+                "--provenance",
+                str(provenance),
+                "--tile-size",
+                "96",
+                "--stride",
+                "48",
+                "--hash-threshold",
+                "5",
+                "--output",
+                str(output),
+            ])
+            payload = json.loads(output.read_text(encoding="utf-8"))
+            self.assertGreaterEqual(payload["composite_image_like_panels_screened"], 1)
+            self.assertGreaterEqual(payload["excluded_expected_traceability_pairs"], 1)
+            self.assertFalse([
+                item for item in payload["candidates"]
+                if "raw_images/raw_traceable_panel.png" in item.get("locations", [])
+            ])
 
     def test_local_patch_detector_finds_low_contrast_same_image_copy_move(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -2333,11 +2461,12 @@ class ContractPipelineTests(unittest.TestCase):
             ])
             summary = json.loads((out / "AUDIT_JSON_SUMMARY.json").read_text(encoding="utf-8"))
             coverage = summary["audit_coverage"]
-            self.assertGreater(coverage.get("local_patch_chart_text_axis_tiles_suppressed", 0), 0)
-            self.assertTrue(coverage.get("local_patch_chart_text_axis_suppression_note"))
+            self.assertEqual(coverage.get("local_patch_composite_image_like_panels_screened", 0), 0)
+            self.assertGreaterEqual(coverage.get("local_patch_composite_presentation_regions_skipped", 0), 1)
+            self.assertTrue(coverage.get("local_patch_composite_panel_cutter_note"))
             self.assertFalse(any(item["finding_type"] == "same_image_copy_move" for item in summary["findings"]))
             report = (out / "audit-report.md").read_text(encoding="utf-8")
-            self.assertIn("Chart/text/axis tile suppression", report)
+            self.assertIn("Composite panel cutter", report)
             self.assertIn("figures/Figure_repeated_chart_axes.png", report)
 
     def test_local_patch_detector_skips_low_information_compression_artifact(self) -> None:
