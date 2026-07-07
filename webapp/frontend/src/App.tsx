@@ -37,12 +37,19 @@ import type {
 } from "./types";
 
 const THEME_KEY = "biomed-self-audit-theme";
+const LANGUAGE_KEY = "biomed-self-audit-language";
 const MAX_ZIP_BYTES = 250 * 1024 * 1024;
 
 function getInitialTheme(): Theme {
   const saved = localStorage.getItem(THEME_KEY);
   if (saved === "light" || saved === "dark") return saved;
   return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
+
+function getInitialLanguage(): Language {
+  const saved = localStorage.getItem(LANGUAGE_KEY);
+  if (saved === "zh" || saved === "en") return saved;
+  return navigator.language.toLowerCase().startsWith("zh") ? "zh" : "en";
 }
 
 interface LightboxState {
@@ -53,7 +60,7 @@ interface LightboxState {
 
 function AppInner() {
   const toast = useToast();
-  const [language, setLanguage] = useState<Language>("zh");
+  const [language, setLanguage] = useState<Language>(getInitialLanguage);
   const [theme, setTheme] = useState<Theme>(getInitialTheme);
   const [audits, setAudits] = useState<AuditJob[]>([]);
   const [auditsLoading, setAuditsLoading] = useState(true);
@@ -64,7 +71,7 @@ function AppInner() {
   const [packagePath, setPackagePath] = useState("");
   const [examplePackages, setExamplePackages] = useState<ExamplePackage[]>([]);
   const [mode, setMode] = useState("internal_presubmission");
-  const [scanProfile, setScanProfile] = useState("standard");
+  const [scanProfile, setScanProfile] = useState("quick");
   const [domains, setDomains] = useState("wetlab,animal,cell");
   const [provider, setProvider] = useState("auto");
   const [referenceProvider, setReferenceProvider] = useState("none");
@@ -83,14 +90,22 @@ function AppInner() {
 
   useEffect(() => {
     document.documentElement.lang = language;
+    localStorage.setItem(LANGUAGE_KEY, language);
   }, [language]);
 
   const selectedAudit = audits.find((a) => a.audit_id === selectedId) || null;
   const selectedAuditId = selectedAudit?.audit_id;
+  const prepPackagePath = selectedAudit?.package_path || packagePath;
   const isLive =
     selectedAudit?.status === "queued" ||
     selectedAudit?.status === "running" ||
     selectedAudit?.status === "cancel_requested";
+
+  useEffect(() => {
+    if (packageInventory && prepPackagePath.trim() && packageInventory.package_path !== prepPackagePath) {
+      setPackageInventory(null);
+    }
+  }, [packageInventory, prepPackagePath]);
 
   async function loadAudits() {
     setAuditsLoading(true);
@@ -225,13 +240,13 @@ function AppInner() {
   }
 
   async function handleInspectPackage() {
-    if (!packagePath.trim()) {
+    if (!prepPackagePath.trim()) {
       toast("error", t.invalidPath);
       return;
     }
     setPackagePrepLoading(true);
     try {
-      const payload = await inspectPackage(packagePath);
+      const payload = await inspectPackage(prepPackagePath);
       setPackageInventory(payload.inventory);
       toast("success", t.packageInspected);
     } catch (err) {
@@ -243,13 +258,13 @@ function AppInner() {
   }
 
   async function handleScaffoldPackage() {
-    if (!packagePath.trim()) {
+    if (!prepPackagePath.trim()) {
       toast("error", t.invalidPath);
       return;
     }
     setPackagePrepLoading(true);
     try {
-      const payload = await scaffoldPackage(packagePath);
+      const payload = await scaffoldPackage(prepPackagePath);
       setPackageInventory(payload.inventory);
       toast("success", t.scaffolded);
     } catch (err) {
@@ -261,12 +276,12 @@ function AppInner() {
   }
 
   async function handleSaveManifest(rows: ManifestRow[]) {
-    if (!packagePath.trim()) {
+    if (!prepPackagePath.trim()) {
       toast("error", t.invalidPath);
       return;
     }
     try {
-      const payload = await saveAssemblyManifest(packagePath, rows);
+      const payload = await saveAssemblyManifest(prepPackagePath, rows);
       setPackageInventory(payload.inventory);
       toast("success", t.manifestSaved);
     } catch (err) {
@@ -276,12 +291,12 @@ function AppInner() {
   }
 
   async function handleSaveClaimManifest(rows: ClaimManifestRow[]) {
-    if (!packagePath.trim()) {
+    if (!prepPackagePath.trim()) {
       toast("error", t.invalidPath);
       return;
     }
     try {
-      const payload = await saveClaimManifest(packagePath, rows);
+      const payload = await saveClaimManifest(prepPackagePath, rows);
       setPackageInventory(payload.inventory);
       toast("success", t.claimManifestSaved);
     } catch (err) {
@@ -292,6 +307,7 @@ function AppInner() {
 
   async function handleDelete() {
     if (!selectedAuditId) return;
+    if (!window.confirm(t.confirmDelete)) return;
     try {
       await deleteAudit(selectedAuditId);
       setAudits((items) => items.filter((i) => i.audit_id !== selectedAuditId));
@@ -307,6 +323,7 @@ function AppInner() {
 
   async function handleCancel() {
     if (!selectedAuditId) return;
+    if (!window.confirm(t.confirmCancel)) return;
     try {
       const job = await cancelAudit(selectedAuditId);
       setAudits((items) => [job, ...items.filter((i) => i.audit_id !== selectedAuditId)]);
@@ -401,7 +418,7 @@ function AppInner() {
         report={report}
         loading={detailLoading}
         error={error}
-        packagePath={packagePath}
+        packagePath={prepPackagePath}
         examples={examplePackages}
         packageInventory={packageInventory}
         packagePrepLoading={packagePrepLoading}

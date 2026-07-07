@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import shutil
 from typing import Any
 
 from scripts.methodology_checklist import (
@@ -83,6 +84,88 @@ from scripts.writing_readiness_check import (
 )
 
 
+RUN_ARTIFACTS = (
+    "manifest.json",
+    "audit_snapshot.json",
+    "file_hash_manifest.json",
+    "claim_coverage.json",
+    "claim_coverage.csv",
+    "methodology_checklist.json",
+    "methodology_checklist.csv",
+    "writing_readiness.json",
+    "writing_readiness.csv",
+    "xlsx_structure.json",
+    "prism_project_intake.json",
+    "fcs_metadata_intake.json",
+    "docx_structure.json",
+    "pdf_structure.json",
+    "pdf_embedded_images.json",
+    "pptx_structure.json",
+    "pptx_embedded_images.json",
+    "key_embedded_images.json",
+    "psd_preview_images.json",
+    "image_metadata.json",
+    "package_guardrail_candidates.json",
+    "provenance_graph.json",
+    "global_image_candidates.json",
+    "contextual_image_candidates.json",
+    "channel_metadata_candidates.json",
+    "splice_forensics_candidates.json",
+    "keypoint_image_candidates.json",
+    "keypoint_contextual_candidates.json",
+    "local_patch_candidates.json",
+    "local_patch_contextual_candidates.json",
+    "text_overlap_candidates.json",
+    "external_literature_candidates.json",
+    "format_coverage_candidates.json",
+    "audit_coverage_candidates.json",
+    "contextual_image_failure_candidates.json",
+    "keypoint_contextual_failure_candidates.json",
+    "local_patch_contextual_failure_candidates.json",
+    "stats_consistency_candidates.json",
+    "pseudoreplication_candidates.json",
+    "calibrated_findings.json",
+    "coverage.json",
+    "audit-report.md",
+    "AUDIT_JSON_SUMMARY.json",
+    "missing_materials.csv",
+    "verified_traceability.csv",
+    "unresolved_actions.csv",
+    "correction_plan.csv",
+    "correction_plan.md",
+    "resolved_actions.csv",
+    "accepted_with_reason.csv",
+    "re_audit_diff.json",
+    "re_audit_diff.csv",
+    "re_audit_diff.md",
+    "pipeline_summary.json",
+    "workstreams.json",
+    "START_HERE.md",
+    "submission_qc_packet.zip",
+)
+RUN_DIRECTORIES = (
+    ".cache",
+    "evidence",
+    "pdf_embedded_images",
+    "pptx_embedded_images",
+    "key_embedded_images",
+    "psd_preview_images",
+    "image_screening_package",
+    "submission_qc_packet",
+)
+
+
+def clean_previous_run_artifacts(output_dir: Path) -> None:
+    for name in RUN_ARTIFACTS:
+        path = output_dir / name
+        if path.is_file() or path.is_symlink():
+            path.unlink()
+    for name in RUN_DIRECTORIES:
+        path = output_dir / name
+        if path.exists():
+            shutil.rmtree(path)
+
+
 def run_pipeline(
     package: Path,
     mode: str,
@@ -99,6 +182,7 @@ def run_pipeline(
     execution_mode: str = "parallel",
 ) -> dict[str, Any]:
     output_dir.mkdir(parents=True, exist_ok=True)
+    clean_previous_run_artifacts(output_dir)
     max_workers = 4
     workstream_records: list[dict[str, Any]] = []
     package_guardrails = scan_package_guardrails(package)

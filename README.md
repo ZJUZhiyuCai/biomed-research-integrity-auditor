@@ -387,7 +387,7 @@ make release-artifacts
 
 Builds the frontend, Python wheel/sdist, source bundle, and SHA-256 manifest under `dist/release/`. GitHub Actions templates are at `packaging/github-workflows/`; enabling them requires a maintainer token with workflow permission. PyPI and Homebrew publication require maintainer credentials; see [`packaging/README.md`](packaging/README.md).
 
-The active validation workflow is in [`.github/workflows/validate.yml`](.github/workflows/validate.yml). It installs Python, Node, OCR runtime, and frontend dependencies, then runs `make validate` plus key synthetic audit regressions.
+The active validation workflow is in [`.github/workflows/validate.yml`](.github/workflows/validate.yml). It installs Python and OCR runtime, uses the runner's Node/npm for frontend dependency installation through `make validate`, then runs key synthetic audit regressions.
 
 ### Install as a Codex skill
 

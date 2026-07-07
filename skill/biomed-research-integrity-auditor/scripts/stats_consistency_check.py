@@ -41,6 +41,25 @@ ROW_LABEL_COLUMNS = (
     "comparison",
     "id",
 )
+IDENTIFIER_COLUMN_HINTS = {
+    "animal_id",
+    "mouse_id",
+    "rat_id",
+    "subject_id",
+    "patient_id",
+    "participant_id",
+    "donor_id",
+    "sample_number",
+    "specimen_id",
+    "well",
+    "well_id",
+    "lane",
+    "lane_id",
+    "replicate_id",
+    "technical_replicate_id",
+    "biological_replicate_id",
+    "record_id",
+}
 MISSING_NUMERIC_TEXT = {"na", "n/a", "nan", "null", "-"}
 FORMAT_DECIMAL_COMMA = "decimal_comma"
 FORMAT_DECIMAL_POINT = "decimal_point"
@@ -146,6 +165,10 @@ def normalized_numeric_text(value: Any, numeric_format: str | None = None) -> st
     text = raw_numeric_text(value)
     if text is None:
         return None
+    if text.endswith("%"):
+        text = text[:-1].strip()
+        if not text:
+            return None
     if numeric_format == FORMAT_MIXED:
         if "," in text:
             return None
@@ -191,6 +214,25 @@ def parse_float(value: Any, numeric_format: str | None = None) -> float | None:
 
 def normalize_header(header: str) -> str:
     return header.strip().lower().replace(" ", "_").replace("-", "_")
+
+
+def row_value_by_normalized_key(row: dict[str, str], normalized_keys: set[str] | tuple[str, ...]) -> str:
+    normalized_set = set(normalized_keys)
+    for key, value in row.items():
+        if normalize_header(str(key)) in normalized_set:
+            text = str(value).strip()
+            if text:
+                return text
+    return ""
+
+
+def is_identifier_column(header: str) -> bool:
+    normalized = normalize_header(str(header))
+    if normalized in SUMMARY_COLUMNS:
+        return False
+    if normalized in IDENTIFIER_COLUMN_HINTS:
+        return True
+    return normalized in {"id", "sample_id"} or normalized.endswith("_id")
 
 
 def cell_to_text(value: Any) -> str:
@@ -365,14 +407,14 @@ def source_table_extraction_gap(path: Path, error: str) -> dict[str, Any]:
         "risk_suggestion": "R1_max",
         "risk_cap_tags": ["audit_coverage_gap", "completeness_gap", "source_table_extraction_failed"],
         "benign_explanations": [
-            "the Prism/GraphPad project may contain valid data in a layout not supported by this lightweight XML extractor",
-            "equivalent CSV/XLSX exports may exist outside the supplied package",
+            "the file may contain valid data in a layout, encoding, workbook feature, or vendor container not supported by this lightweight extractor",
+            "equivalent CSV/XLSX exports or raw analysis files may exist outside the supplied package",
         ],
         "required_materials": [
-            "GraphPad Prism source table exported to CSV or XLSX",
-            "or a PZFX file containing parseable XML column tables",
+            "source-data tables exported to plain CSV/XLSX with machine-readable rows and columns",
+            "or the original analysis/source file plus a reviewer-readable export of the same values",
         ],
-        "recommended_action": "Export Prism source tables and plotted values to CSV/XLSX, or provide a parseable PZFX source table, then re-run statistical screening.",
+        "recommended_action": "Export source tables and plotted values to machine-readable CSV/XLSX, then re-run statistical screening; do not treat this table as screened.",
         "requires_contextual_calibration": True,
     }
 
@@ -664,6 +706,8 @@ def numeric_columns(
     profiles = numeric_profiles or infer_numeric_format_profiles(rows)
     for idx, row in enumerate(rows, start=2):
         for key, raw in row.items():
+            if is_identifier_column(key):
+                continue
             normalized = normalized_numeric_text(raw, profiles.get(key))
             value = parse_float(raw, profiles.get(key))
             if value is not None:
@@ -672,10 +716,9 @@ def numeric_columns(
 
 
 def row_vector_label(row: dict[str, str], idx: int) -> str:
-    for key in ROW_LABEL_COLUMNS:
-        value = str(row.get(key, "")).strip()
-        if value:
-            return value
+    value = row_value_by_normalized_key(row, ROW_LABEL_COLUMNS)
+    if value:
+        return value
     return f"row{idx}"
 
 
@@ -688,7 +731,10 @@ def numeric_row_vectors(
     for idx, row in enumerate(rows, start=2):
         values = []
         for column, raw in row.items():
-            if column in SUMMARY_COLUMNS or column in TERMINAL_DIGIT_SKIP_COLUMNS:
+            normalized_column = normalize_header(column)
+            if is_identifier_column(column) or normalized_column in ROW_LABEL_COLUMNS:
+                continue
+            if normalized_column in SUMMARY_COLUMNS or normalized_column in TERMINAL_DIGIT_SKIP_COLUMNS:
                 continue
             normalized = normalized_numeric_text(raw, numeric_profiles.get(column))
             value = parse_float(raw, numeric_profiles.get(column))
@@ -1555,7 +1601,7 @@ def main() -> int:
                 ))
         except Exception as exc:  # noqa: BLE001 - report unreadable data without aborting.
             errors.append({"path": str(file_path), "error": str(exc)})
-            if file_path.suffix.lower() in PZFX_EXTS:
+            if file_path.suffix.lower() in TABLE_EXTS:
                 candidates.append(source_table_extraction_gap(file_path, str(exc)))
     candidates.extend(check_cross_file_sequence_reuse(tables, args.min_pairs))
     for idx, item in enumerate(candidates, start=1):

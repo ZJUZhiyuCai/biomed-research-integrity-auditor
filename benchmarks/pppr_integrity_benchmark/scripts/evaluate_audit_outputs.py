@@ -22,6 +22,32 @@ BOUNDARY_TERMS = (
     "fabricated the data",
     "intentional falsification",
 )
+GENERIC_LOCATION_TERMS = {
+    "and",
+    "article",
+    "fig",
+    "figure",
+    "panel",
+    "paragraph",
+    "supp",
+    "supplemental",
+    "supplementary",
+    "table",
+}
+ISSUE_FAMILY_TERMS = {
+    "image_global_similarity": {"global", "near duplicate", "duplicate", "image similarity", "whole image"},
+    "image_local_reuse": {"local", "patch", "reuse", "copy", "image reuse", "local similarity"},
+    "same_image_copy_move": {"same image", "copy move", "copy-move", "self reuse"},
+    "same_section_overlap": {"same section", "section overlap", "text overlap", "phrase overlap"},
+    "western_blot_or_gel": {"western", "blot", "gel", "lane"},
+    "microscopy_reuse": {"microscopy", "micrograph", "histology", "image reuse", "patch"},
+    "statistics_or_numeric": {"stat", "numeric", "digit", "p value", "p-value", "sd", "sem", "mean"},
+    "text_overlap": {"text", "overlap", "phrase", "similarity"},
+    "reporting_gap": {"reporting", "gap", "missing", "coverage", "materials"},
+    "methodological_concern": {"method", "methodology", "checklist", "reporting"},
+    "publication_status": {"publication", "status", "retraction", "correction", "metadata"},
+    "metadata_status": {"metadata", "status", "retraction", "correction"},
+}
 
 
 def load_labels(path: Path) -> list[dict[str, Any]]:
@@ -53,14 +79,69 @@ def output_paths(outputs_root: Path, case_id: str) -> tuple[Path, Path]:
     return case_dir / "AUDIT_JSON_SUMMARY.json", case_dir / "audit-report.md"
 
 
-def label_tokens(label: dict[str, Any]) -> set[str]:
-    tokens = {str(label.get("issue_type", "")).lower().replace("_", " ")}
+def normalized_text(value: Any) -> str:
+    return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9]+", " ", str(value).lower())).strip()
+
+
+def compact_text(value: Any) -> str:
+    return re.sub(r"[^a-z0-9]+", "", str(value).lower())
+
+
+def finding_full_text(finding: dict[str, Any]) -> str:
+    try:
+        evidence = json.dumps(finding.get("evidence", {}), ensure_ascii=False)
+    except TypeError:
+        evidence = str(finding.get("evidence", ""))
+    return normalized_text(" ".join(
+        str(finding.get(key, ""))
+        for key in (
+            "finding_id",
+            "finding_type",
+            "location",
+            "evidence_type",
+            "module",
+            "recommended_action",
+            "source_candidate_tags",
+        )
+    ) + " " + evidence)
+
+
+def label_issue_compatible(label: dict[str, Any], finding: dict[str, Any]) -> bool:
+    issue_type = str(label.get("issue_type", "") or "")
+    if not issue_type:
+        return True
+    text = finding_full_text(finding)
+    terms = ISSUE_FAMILY_TERMS.get(issue_type, {issue_type.replace("_", " ")})
+    return any(normalized_text(term) in text for term in terms)
+
+
+def label_location_terms(label: dict[str, Any]) -> set[str]:
     location = label.get("paper_location", {}) or {}
+    terms: set[str] = set()
     for key in ("figure", "panel", "table", "paragraph"):
-        value = str(location.get(key, "") or "").lower()
-        if value:
-            tokens.add(value)
-    return {token for token in tokens if token}
+        value = str(location.get(key, "") or "")
+        if not value:
+            continue
+        compact = compact_text(value)
+        if len(compact) >= 3:
+            terms.add(compact)
+        for token in normalized_text(value).split():
+            if token not in GENERIC_LOCATION_TERMS and len(token) >= 2:
+                terms.add(token)
+        for match in re.findall(r"(?:fig(?:ure)?|table|panel|supp(?:lemental|lementary)?\s*fig(?:ure)?)?\s*(s?\d+[a-z]?)", value, flags=re.I):
+            normalized = normalized_text(match)
+            if len(normalized) >= 2:
+                terms.add(normalized)
+    return {term for term in terms if term}
+
+
+def label_location_compatible(label: dict[str, Any], finding: dict[str, Any]) -> bool:
+    terms = label_location_terms(label)
+    if not terms:
+        return True
+    full_text = finding_full_text(finding)
+    compact = compact_text(full_text)
+    return any(term in full_text or compact_text(term) in compact for term in terms)
 
 
 def finding_text(finding: dict[str, Any]) -> str:
@@ -70,15 +151,12 @@ def finding_text(finding: dict[str, Any]) -> str:
     ).lower()
 
 
+def label_matches_finding(label: dict[str, Any], finding: dict[str, Any]) -> bool:
+    return label_issue_compatible(label, finding) and label_location_compatible(label, finding)
+
+
 def label_hit(label: dict[str, Any], findings: list[dict[str, Any]]) -> bool:
-    tokens = label_tokens(label)
-    if not tokens:
-        return bool(findings)
-    for finding in findings:
-        text = finding_text(finding)
-        if any(token in text for token in tokens):
-            return True
-    return False
+    return any(label_matches_finding(label, finding) for finding in findings)
 
 
 def is_recall_label(label: dict[str, Any]) -> bool:
@@ -125,7 +203,7 @@ def evaluate(labels: list[dict[str, Any]], outputs_root: Path) -> dict[str, Any]
         case_cap_violations = 0
         for label in case_labels:
             max_risk = expected_max_risk(str(label.get("expected_risk", "")))
-            for finding in findings:
+            for finding in [item for item in findings if label_matches_finding(label, item)]:
                 risk = finding.get("risk_level", "R0")
                 if RISK_ORDER.get(risk, 0) > RISK_ORDER[max_risk]:
                     case_cap_violations += 1

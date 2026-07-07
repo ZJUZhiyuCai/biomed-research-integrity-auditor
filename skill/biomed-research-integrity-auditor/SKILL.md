@@ -52,9 +52,9 @@ Before running an audit on a user's computer, check that the local runtime can a
   - `python3 -m venv .venv`
   - `.venv/bin/python -m pip install --upgrade pip`
   - `.venv/bin/python -m pip install -r requirements.txt`
-- Required Python runtime is Python 3.10 or newer. If the active `python3` is older or lacks dependencies such as `numpy`, `cv2`, `PIL`, `jsonschema`, `openpyxl`, `pypdf`, `fitz`, `pytesseract`, `fastapi`, or `uvicorn`, stop and surface an environment setup step before running or trusting the audit.
+- Required Python runtime is Python 3.10 or newer. For the core CLI audit, if the active `python3` is older or lacks required dependencies such as `numpy`, `cv2`, `PIL`, `jsonschema`, `openpyxl`, `pypdf`, or `fitz`, stop and surface an environment setup step before running or trusting the audit.
+- Optional capabilities have their own environment checks: the local webapp needs `fastapi`, `uvicorn`, `python-multipart`, and frontend dependencies; scanned-PDF OCR needs `pytesseract` plus a local `tesseract` binary. If those optional pieces are missing, ask the user to install/configure them before using that capability, or record the affected module as unavailable rather than implying it was screened.
 - For the webapp, ensure frontend dependencies exist before building or launching: `npm --prefix webapp/frontend install` if `node_modules` is absent, then `npm --prefix webapp/frontend run build` or `make run PYTHON=.venv/bin/python`.
-- OCR for scanned PDFs also needs a local `tesseract` binary. If it is missing, report scanned-PDF OCR as unavailable and ask the user to install/configure it rather than implying those pages were screened.
 - Do not treat dependency errors, missing OpenCV/NumPy, missing frontend packages, or unavailable OCR as scientific findings. They are environment blockers or R1 audit-coverage gaps only after the user chooses to run with that reduced scope.
 - Do not silently fall back from a configured `.venv` to system Python. A system Python that imports less than the project environment can make image detectors or schema validation appear to "pass" while actually not running.
 

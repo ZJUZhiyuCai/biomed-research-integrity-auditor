@@ -7,13 +7,14 @@ standard detector-output contract.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
 import yaml
 
 from scripts.pipeline.common import PYTHON, ROOT, has_files
-from scripts.pipeline.detectors import run_detector
+from scripts.pipeline.detectors import run_detector, write_detector_failure
 
 
 DEFAULT_REGISTRY = ROOT / "schemas" / "detector_registry.yaml"
@@ -24,6 +25,45 @@ ALLOWED_KEYS = {
     "profiles",
     "modes",
     "run_if_any_suffix",
+}
+PLACEHOLDER_RE = re.compile(r"{([A-Za-z_][A-Za-z0-9_]*)}")
+RESERVED_OUTPUT_PATHS = {
+    "audit-report.md",
+    "audit_snapshot.json",
+    "AUDIT_JSON_SUMMARY.json",
+    "calibrated_findings.json",
+    "claim_coverage.csv",
+    "claim_coverage.json",
+    "correction_plan.csv",
+    "correction_plan.md",
+    "detector_failures_candidates.json",
+    "file_hash_manifest.json",
+    "format_coverage_gap_candidates.json",
+    "global_duplicate_candidates.json",
+    "image_metadata.json",
+    "intake_completeness_gap_candidates.json",
+    "keypoint_duplicate_candidates.json",
+    "local_patch_candidates.json",
+    "manifest.json",
+    "methodology_checklist.csv",
+    "methodology_checklist.json",
+    "missing_materials.csv",
+    "package_guardrail_candidates.json",
+    "package_internal_text_overlap_candidates.json",
+    "pipeline_summary.json",
+    "provenance_graph.json",
+    "re_audit_diff.csv",
+    "re_audit_diff.json",
+    "re_audit_diff.md",
+    "same_image_copy_move_candidates.json",
+    "START_HERE.md",
+    "stats_consistency_findings.json",
+    "submission_qc_packet.zip",
+    "unresolved_action_tracker.csv",
+    "verified_traceability.csv",
+    "workstream_report.json",
+    "writing_readiness.csv",
+    "writing_readiness.json",
 }
 
 
@@ -62,6 +102,10 @@ def normalized_output_path(output_dir: Path, value: str) -> Path:
     return output_dir / candidate
 
 
+def normalized_output_relpath(value: str) -> str:
+    return Path(value).as_posix()
+
+
 def detector_enabled(detector: dict[str, Any], package: Path, mode: str, scan_profile: str) -> bool:
     modes = detector.get("modes")
     if modes and mode not in {str(item) for item in modes}:
@@ -97,7 +141,36 @@ def expand_command(
         "scan_profile": scan_profile,
         "provenance_graph": str(provenance_graph or ""),
     }
-    return [part.format(**mapping) for part in command]
+    def replace(match: re.Match[str]) -> str:
+        key = match.group(1)
+        if key not in mapping:
+            raise ValueError(
+                f"Unsupported command placeholder {{{key}}}; supported placeholders are: "
+                f"{', '.join(sorted(mapping))}"
+            )
+        return str(mapping[key])
+
+    return [PLACEHOLDER_RE.sub(replace, part) for part in command]
+
+
+def detector_registry_failure(
+    package: Path,
+    output_dir: Path,
+    registry_path: Path,
+    reason: str,
+    suffix: str = "",
+) -> Path:
+    stage = "registered_detector_registry"
+    if suffix:
+        stage = f"{stage}_{suffix}"
+    return write_detector_failure(
+        stage,
+        package,
+        output_dir,
+        [str(registry_path)],
+        output_dir / "registered_detector_registry_candidates.json",
+        reason,
+    )
 
 
 def run_registered_detectors(
@@ -112,21 +185,58 @@ def run_registered_detectors(
     if registry_path is None:
         return []
     outputs: list[Path] = []
-    for detector in load_detector_registry(registry_path):
+    failure_count = 0
+
+    def add_failure(reason: str) -> Path:
+        nonlocal failure_count
+        failure_count += 1
+        return detector_registry_failure(package, output_dir, registry_path, reason, f"{failure_count:02d}")
+
+    try:
+        detectors = load_detector_registry(registry_path)
+    except Exception as exc:  # noqa: BLE001 - registry problems are audit coverage gaps.
+        return [add_failure(str(exc))]
+
+    enabled: list[tuple[dict[str, Any], Path, str]] = []
+    seen_relpaths: set[str] = set()
+    for detector in detectors:
         if not detector_enabled(detector, package, mode, scan_profile):
             continue
+        try:
+            output = normalized_output_path(output_dir, str(detector["output"]))
+        except Exception as exc:  # noqa: BLE001 - path validation errors are coverage gaps.
+            outputs.append(add_failure(str(exc)))
+            continue
+        relpath = normalized_output_relpath(str(detector["output"]))
+        if relpath in RESERVED_OUTPUT_PATHS:
+            outputs.append(add_failure(
+                f"Registered detector output collides with a reserved pipeline artifact: {relpath}",
+            ))
+            continue
+        if relpath in seen_relpaths:
+            outputs.append(add_failure(
+                f"Registered detector output is duplicated in the registry: {relpath}",
+            ))
+            continue
+        seen_relpaths.add(relpath)
+        enabled.append((detector, output, relpath))
+
+    for detector, output, _relpath in enabled:
         name = str(detector["name"])
-        output = normalized_output_path(output_dir, str(detector["output"]))
         output.parent.mkdir(parents=True, exist_ok=True)
-        cmd = expand_command(
-            list(detector["command"]),
-            package=package,
-            output_dir=output_dir,
-            output=output,
-            mode=mode,
-            scan_profile=scan_profile,
-            provenance_graph=provenance_graph,
-        )
+        try:
+            cmd = expand_command(
+                list(detector["command"]),
+                package=package,
+                output_dir=output_dir,
+                output=output,
+                mode=mode,
+                scan_profile=scan_profile,
+                provenance_graph=provenance_graph,
+            )
+        except ValueError as exc:
+            outputs.append(add_failure(str(exc)))
+            continue
         result = run_detector(f"registered_{name}", package, output_dir, cmd, output)
         outputs.append(result.output)
     return outputs

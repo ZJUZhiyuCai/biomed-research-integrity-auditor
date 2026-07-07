@@ -726,6 +726,61 @@ class WebappBackendTests(unittest.TestCase):
             self.assertEqual(response.status_code, 400)
             self.assertIn("symlink", response.text)
 
+    def test_zip_upload_rejects_invalid_zip_and_cleans_package_dir(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            app = create_app(output_root=Path(tmp) / "runs")
+            with TestClient(app) as client:
+                response = client.post(
+                    "/api/audits/upload",
+                    files={"file": ("broken.zip", b"this is not a zip", "application/zip")},
+                )
+                self.assertEqual(response.status_code, 400)
+                self.assertFalse(any(app.state.settings.packages_dir.iterdir()))
+
+    def test_webapp_rejects_cross_origin_write_requests(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with TestClient(create_app(output_root=Path(tmp) / "runs")) as client:
+                response = client.post(
+                    "/api/packages/inspect",
+                    headers={"Origin": "https://example.invalid"},
+                    json={"package_path": str(ROOT / "examples" / "minimal_package")},
+                )
+                self.assertEqual(response.status_code, 403)
+                self.assertIn("Cross-origin", response.text)
+
+    def test_attachment_artifacts_are_served_as_downloads(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            app = create_app(output_root=tmp_path / "runs")
+            settings = app.state.settings
+            audit_id = "20260704-attachment-test"
+            output_dir = settings.audits_dir / audit_id
+            attachment = output_dir / "submission_qc_packet" / "attachments" / "action" / "A-001" / "poc.html"
+            attachment.parent.mkdir(parents=True)
+            attachment.write_text("<script>window.__ran=true</script>", encoding="utf-8")
+            webapp_app.save_job(settings, webapp_app.AuditJob(
+                audit_id=audit_id,
+                status="completed",
+                package_path=str(ROOT / "examples" / "minimal_package"),
+                mode="internal_presubmission",
+                scan_profile="quick",
+                domains="wetlab,animal,cell",
+                external_literature_provider="none",
+                reference_check_provider="none",
+                output_dir=str(output_dir),
+                created_at=time.time(),
+                updated_at=time.time(),
+                command=[],
+            ))
+            with TestClient(app) as client:
+                response = client.get(
+                    f"/api/audits/{audit_id}/artifact/submission_qc_packet/attachments/action/A-001/poc.html"
+                )
+                response.raise_for_status()
+                self.assertEqual(response.headers.get("x-content-type-options"), "nosniff")
+                self.assertIn("attachment", response.headers.get("content-disposition", ""))
+                self.assertEqual(response.headers.get("content-type"), "application/octet-stream")
+
     def test_zip_extraction_writes_members_without_extractall(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)

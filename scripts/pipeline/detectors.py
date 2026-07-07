@@ -102,6 +102,8 @@ def write_detector_failure(
 
 
 def run_detector(stage: str, package: Path, output_dir: Path, cmd: list[str], expected_output: Path) -> DetectorRunResult:
+    expected_output.parent.mkdir(parents=True, exist_ok=True)
+    expected_output.unlink(missing_ok=True)
     result = subprocess.run(cmd, cwd=ROOT, check=False, capture_output=True, text=True)
     if result.returncode != 0:
         return DetectorRunResult(
@@ -151,6 +153,18 @@ def run_detector(stage: str, package: Path, output_dir: Path, cmd: list[str], ex
             False,
         )
     return DetectorRunResult(expected_output, True)
+
+
+def append_contextual_or_raw(
+    outputs: list[Path],
+    raw_result: DetectorRunResult,
+    contextual_result: DetectorRunResult,
+) -> None:
+    if contextual_result.ok:
+        outputs.append(contextual_result.output)
+        return
+    outputs.append(raw_result.output)
+    outputs.append(contextual_result.output)
 
 
 def supplementary_source_table_candidates(package: Path) -> list[Path]:
@@ -344,7 +358,7 @@ def run_image_detector(
             "--output",
             str(contextual_output),
         ], contextual_output)
-        outputs.append(contextual_result.output)
+        append_contextual_or_raw(outputs, global_result, contextual_result)
     else:
         outputs.append(global_result.output)
 
@@ -422,7 +436,7 @@ def run_image_detector(
             "--output",
             str(keypoint_contextual_output),
         ], keypoint_contextual_output)
-        outputs.append(keypoint_contextual_result.output)
+        append_contextual_or_raw(outputs, keypoint_result, keypoint_contextual_result)
     else:
         outputs.append(keypoint_result.output)
 
@@ -463,7 +477,7 @@ def run_image_detector(
             "--output",
             str(local_patch_contextual_output),
         ], local_patch_contextual_output)
-        outputs.append(local_patch_contextual_result.output)
+        append_contextual_or_raw(outputs, local_patch_result, local_patch_contextual_result)
     else:
         outputs.append(local_patch_result.output)
     return outputs

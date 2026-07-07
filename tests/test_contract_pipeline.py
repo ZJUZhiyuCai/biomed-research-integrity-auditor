@@ -30,6 +30,9 @@ from calibrators.risk_cap_engine import calibrate_payload, load_rules
 from detectors.image.image_io import iter_normalized_frames, normalized_rgb
 from provenance.panel_modality import normalize_modality, resolve_panel_modality_routing
 from scripts.pipeline.detector_registry import run_registered_detectors
+from scripts.pipeline.common import DetectorRunResult
+from scripts.pipeline.detectors import append_contextual_or_raw, run_detector
+from scripts.pipeline.orchestrator import clean_previous_run_artifacts
 from scripts.pipeline.guardrails import (
     PackageGuardrailLimits,
     scan_package_guardrails,
@@ -60,6 +63,15 @@ def load_report_assembler():
 def load_stats_consistency_check():
     path = ROOT / "skill" / "biomed-research-integrity-auditor" / "scripts" / "stats_consistency_check.py"
     spec = importlib.util.spec_from_file_location("stats_consistency_check", path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec and spec.loader
+    spec.loader.exec_module(module)
+    return module
+
+
+def load_pppr_evaluator():
+    path = ROOT / "benchmarks" / "pppr_integrity_benchmark" / "scripts" / "evaluate_audit_outputs.py"
+    spec = importlib.util.spec_from_file_location("pppr_evaluator", path)
     module = importlib.util.module_from_spec(spec)
     assert spec and spec.loader
     spec.loader.exec_module(module)
@@ -1398,6 +1410,21 @@ class ContractPipelineTests(unittest.TestCase):
         messages = [item["finding_type"] for item in stats.check_rows(Path("decimal_comma.csv"), rows, 1e-3, numeric_profiles=profiles)]
         self.assertNotIn("p value is outside [0, 1]", messages)
 
+    def test_stats_detector_parses_percent_values_and_ignores_identifier_columns(self) -> None:
+        stats = load_stats_consistency_check()
+        self.assertEqual(stats.parse_float("10%"), 10.0)
+        self.assertEqual(stats.parse_float("1,5%", stats.FORMAT_DECIMAL_COMMA), 1.5)
+        rows = [
+            {"sample_id": "101", "animal_id": "1001", "response_pct": "10%", "day_1": "12.5%"},
+            {"sample_id": "102", "animal_id": "1002", "response_pct": "15%", "day_1": "18.5%"},
+        ]
+        profiles = stats.infer_numeric_format_profiles(rows)
+        columns = stats.numeric_columns(rows, profiles)
+        self.assertNotIn("sample_id", columns)
+        self.assertNotIn("animal_id", columns)
+        self.assertEqual(columns["response_pct"][0][2], 10.0)
+        self.assertEqual(columns["day_1"][1][2], 18.5)
+
     def test_stats_detector_reports_ambiguous_comma_numeric_format_gap(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             source_dir = Path(tmp) / "source_data"
@@ -1422,6 +1449,24 @@ class ContractPipelineTests(unittest.TestCase):
             self.assertTrue(gaps)
             self.assertEqual(gaps[0]["risk_suggestion"], "R1_possible")
             self.assertIn("audit_coverage_gap", gaps[0]["risk_cap_tags"])
+
+    def test_stats_detector_reports_unparseable_supported_table_as_coverage_gap(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            source_dir = Path(tmp) / "source_data"
+            source_dir.mkdir()
+            (source_dir / "broken.xlsx").write_bytes(b"not an xlsx workbook")
+            output = Path(tmp) / "stats.json"
+            run([
+                PYTHON,
+                "skill/biomed-research-integrity-auditor/scripts/stats_consistency_check.py",
+                str(source_dir),
+                "--output",
+                str(output),
+            ])
+            payload = json.loads(output.read_text(encoding="utf-8"))
+            gaps = [item for item in payload["candidates"] if item["finding_type"] == "source data extraction gap"]
+            self.assertTrue(gaps)
+            self.assertIn("source_table_extraction_failed", gaps[0]["risk_cap_tags"])
 
     def test_stats_detector_reads_semicolon_csv_with_decimal_comma(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -3250,6 +3295,20 @@ class RiskCapTests(unittest.TestCase):
             self.assertEqual(len(result["findings"]), 1)
             self.assertEqual(result["findings"][0]["calibrated_risk_level"], "R3")
 
+    def test_duplicate_candidate_ids_are_namespaced_before_calibration(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            first = tmp_path / "first.json"
+            second = tmp_path / "second.json"
+            first.write_text(json.dumps(self.detector_payload("R2_possible")), encoding="utf-8")
+            second.write_text(json.dumps(self.detector_payload("R2_possible")), encoding="utf-8")
+            result = calibrate_payload([first, second], "internal_presubmission", ROOT / "schemas" / "risk_rules.yaml")
+            finding_ids = [finding["finding_id"] for finding in result["findings"]]
+            self.assertEqual(len(finding_ids), 2)
+            self.assertEqual(len(set(finding_ids)), 2)
+            self.assertEqual(finding_ids[0], "UNIT-0001")
+            self.assertTrue(finding_ids[1].startswith("UNIT-0001__dup02_second_"))
+
     def test_calibrator_rejects_legacy_findings_input(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             legacy = Path(tmp) / "legacy.json"
@@ -4910,6 +4969,7 @@ class EndToEndTests(unittest.TestCase):
                                 "{package}",
                                 "--output",
                                 "{output}",
+                                "--config={\"threshold\":1}",
                             ],
                         }
                     ]
@@ -4936,6 +4996,93 @@ class EndToEndTests(unittest.TestCase):
             self.assertEqual([path.name for path in outputs], ["extension_fixture_candidates.json"])
             payload = json.loads(outputs[0].read_text(encoding="utf-8"))
             validate_instance(payload, ROOT / "schemas" / "detector_output.schema.json", "extension detector")
+
+    def test_detector_registry_reports_output_collisions_as_coverage_gaps(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            package = tmp_path / "pkg"
+            package.mkdir()
+            write_minimal_source(package)
+            output_dir = tmp_path / "out"
+            output_dir.mkdir()
+            registry = tmp_path / "detectors.yaml"
+            registry.write_text(
+                yaml.safe_dump({
+                    "detectors": [
+                        {
+                            "name": "reserved",
+                            "output": "calibrated_findings.json",
+                            "command": ["{python}", "-c", "print('reserved')"],
+                        },
+                        {
+                            "name": "unknown_placeholder",
+                            "output": "extension_unknown_placeholder.json",
+                            "command": ["{python}", "-c", "print('{unknown}')"],
+                        },
+                    ]
+                }),
+                encoding="utf-8",
+            )
+            outputs = run_registered_detectors(
+                package,
+                output_dir,
+                mode="internal_presubmission",
+                scan_profile="quick",
+                registry_path=registry,
+            )
+            failure_payloads = [json.loads(path.read_text(encoding="utf-8")) for path in outputs]
+            reasons = [
+                error.get("reason", "")
+                for payload in failure_payloads
+                for error in payload.get("errors", [])
+            ]
+            self.assertTrue(any("reserved pipeline artifact" in reason for reason in reasons))
+            self.assertTrue(any("Unsupported command placeholder" in reason for reason in reasons))
+
+    def test_run_detector_unlinks_stale_expected_output_before_command(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            package = tmp_path / "pkg"
+            package.mkdir()
+            output_dir = tmp_path / "out"
+            output_dir.mkdir()
+            expected = output_dir / "stale_candidates.json"
+            expected.write_text(json.dumps({
+                "detector_name": "stale.detector",
+                "detector_version": "old",
+                "input": {},
+                "candidates": [],
+                "errors": [],
+            }), encoding="utf-8")
+            result = run_detector("unit_stale", package, output_dir, [PYTHON, "-c", "pass"], expected)
+            self.assertFalse(result.ok)
+            self.assertNotEqual(result.output, expected)
+            payload = json.loads(result.output.read_text(encoding="utf-8"))
+            self.assertEqual(payload["detector_name"], "audit.detector_failure")
+            self.assertFalse(expected.exists())
+
+    def test_raw_image_detector_output_is_preserved_when_contextual_joiner_fails(self) -> None:
+        outputs: list[Path] = []
+        raw = Path("raw_candidates.json")
+        failure = Path("contextual_failure_candidates.json")
+        append_contextual_or_raw(
+            outputs,
+            DetectorRunResult(output=raw, ok=True),
+            DetectorRunResult(output=failure, ok=False),
+        )
+        self.assertEqual(outputs, [raw, failure])
+
+    def test_clean_previous_run_artifacts_removes_known_outputs_and_work_dirs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            output_dir = Path(tmp) / "out"
+            (output_dir / ".cache").mkdir(parents=True)
+            (output_dir / ".cache" / "old.txt").write_text("old", encoding="utf-8")
+            (output_dir / "calibrated_findings.json").write_text("stale", encoding="utf-8")
+            (output_dir / "unrelated_note.txt").write_text("keep", encoding="utf-8")
+            clean_previous_run_artifacts(output_dir)
+            self.assertFalse((output_dir / ".cache").exists())
+            self.assertFalse((output_dir / "calibrated_findings.json").exists())
+            self.assertTrue((output_dir / "unrelated_note.txt").is_file())
 
     def test_submission_qc_artifacts_snapshot_and_claim_coverage(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -5884,6 +6031,78 @@ class EndToEndTests(unittest.TestCase):
             self.assertLessEqual(max(levels), "R3")
             tags = [tag for item in calibrated["findings"] for tag in item.get("source_candidate_tags", [])]
             self.assertIn("disclosed_unjustified_reuse", tags)
+
+
+class PPPRBenchmarkEvaluatorTests(unittest.TestCase):
+    def test_label_matching_requires_issue_and_location_compatibility(self) -> None:
+        evaluator = load_pppr_evaluator()
+        label = {
+            "issue_type": "statistics_or_numeric",
+            "paper_location": {"table": "Table 2"},
+            "expected_risk": "R2",
+        }
+        wrong_location = {
+            "finding_type": "Digit positions are preserved across paired rows",
+            "location": "Table 4",
+            "evidence_type": "weak_statistical_signal",
+            "recommended_action": "check source records",
+            "risk_level": "R2",
+        }
+        wrong_issue = {
+            "finding_type": "Local patch reuse candidate",
+            "location": "Table 2",
+            "evidence_type": "image_reuse_cluster",
+            "recommended_action": "check source images",
+            "risk_level": "R3",
+        }
+        matching = {
+            "finding_type": "Digit positions are preserved across paired rows",
+            "location": "Table 2",
+            "evidence_type": "weak_statistical_signal",
+            "recommended_action": "check source records",
+            "risk_level": "R2",
+        }
+        self.assertFalse(evaluator.label_hit(label, [wrong_location]))
+        self.assertFalse(evaluator.label_hit(label, [wrong_issue]))
+        self.assertTrue(evaluator.label_hit(label, [matching]))
+
+    def test_risk_cap_violations_only_count_matched_findings(self) -> None:
+        evaluator = load_pppr_evaluator()
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            labels = [
+                {
+                    "case_id": "case_a",
+                    "issue_type": "statistics_or_numeric",
+                    "paper_location": {"table": "Table 2"},
+                    "expected_risk": "R2",
+                    "evaluation_role": "recall_label",
+                }
+            ]
+            case_dir = tmp_path / "case_a"
+            case_dir.mkdir()
+            (case_dir / "AUDIT_JSON_SUMMARY.json").write_text(json.dumps({
+                "findings": [
+                    {
+                        "finding_type": "Local patch reuse candidate",
+                        "location": "Figure 1A",
+                        "evidence_type": "image_reuse_cluster",
+                        "recommended_action": "check source images",
+                        "risk_level": "R4",
+                    },
+                    {
+                        "finding_type": "Digit positions are preserved across paired rows",
+                        "location": "Table 2",
+                        "evidence_type": "weak_statistical_signal",
+                        "recommended_action": "check source records",
+                        "risk_level": "R2",
+                    },
+                ]
+            }), encoding="utf-8")
+            (case_dir / "audit-report.md").write_text("neutral report", encoding="utf-8")
+            result = evaluator.evaluate(labels, tmp_path)
+            self.assertEqual(result["label_hits"], 1)
+            self.assertEqual(result["risk_cap_violations"], 0)
 
 
 if __name__ == "__main__":

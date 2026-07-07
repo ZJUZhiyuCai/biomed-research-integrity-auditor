@@ -80,6 +80,7 @@ export function FindingCard({
                 className="evidence-thumb"
                 onClick={() => onEvidence(crops, i)}
                 type="button"
+                aria-label={`${t.evidence}: ${path}`}
               >
                 <img src={evidenceUrl(auditId, path)} alt={path} loading="lazy" />
               </button>

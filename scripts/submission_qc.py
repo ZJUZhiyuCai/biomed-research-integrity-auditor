@@ -1502,6 +1502,8 @@ def export_submission_qc_packet(
     re_audit_diff: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     packet_dir = output_dir / "submission_qc_packet"
+    if packet_dir.exists():
+        shutil.rmtree(packet_dir)
     packet_dir.mkdir(parents=True, exist_ok=True)
 
     copied = []

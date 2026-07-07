@@ -24,9 +24,9 @@ from typing import Any, Optional
 from uuid import uuid4
 import zipfile
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -59,6 +59,7 @@ MAX_ZIP_BYTES = 250 * 1024 * 1024
 MAX_ZIP_MEMBERS = 5000
 MAX_ATTACHMENT_BYTES = 50 * 1024 * 1024
 MAX_CONCURRENT_AUDIT_JOBS = 2
+MAX_PROCESS_LOG_CHARS = 256_000
 INVENTORY_MAX_FILES = 5000
 INVENTORY_MAX_DEPTH = 12
 ACTIVE_AUDIT_STATUSES = {"queued", "running", "cancel_requested"}
@@ -70,6 +71,7 @@ LOCAL_DEV_CORS_ORIGINS = [
 ]
 LOCAL_DEV_CORS_METHODS = ["GET", "POST", "PATCH", "DELETE", "OPTIONS"]
 LOCAL_DEV_CORS_HEADERS = ["authorization", "content-type"]
+LOCAL_ALLOWED_HOSTS = {"127.0.0.1", "localhost", "testserver"}
 RECOMMENDED_PACKAGE_DIRS = [
     "figures",
     "raw_images",
@@ -253,6 +255,24 @@ def create_app(output_root: Optional[Path] = None) -> FastAPI:
     )
     app.state.settings = settings
     app.state.job_start_lock = threading.Lock()
+
+    @app.middleware("http")
+    async def reject_cross_origin_writes(request: Request, call_next: Any) -> Any:
+        if request.method in {"POST", "PATCH", "DELETE"}:
+            origin = request.headers.get("origin")
+            if origin and origin not in LOCAL_DEV_CORS_ORIGINS:
+                return JSONResponse(
+                    {"detail": "Cross-origin write requests are not accepted by the local app"},
+                    status_code=403,
+                )
+            host = (request.headers.get("host") or "").split(":", 1)[0].lower()
+            if host and host not in LOCAL_ALLOWED_HOSTS:
+                return JSONResponse(
+                    {"detail": "Unexpected Host header for local app write request"},
+                    status_code=403,
+                )
+        return await call_next(request)
+
     app.add_middleware(
         CORSMiddleware,
         allow_origins=LOCAL_DEV_CORS_ORIGINS,
@@ -332,7 +352,7 @@ def create_app(output_root: Optional[Path] = None) -> FastAPI:
         package = upload_root / "package"
         try:
             extract_zip_safely(zip_path, package)
-        except ValueError as exc:
+        except (ValueError, zipfile.BadZipFile, zipfile.LargeZipFile, RuntimeError, OSError) as exc:
             shutil.rmtree(upload_root, ignore_errors=True)
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         compare_to = resolve_compare_to(settings, compare_to_audit_id)
@@ -528,7 +548,7 @@ def create_app(output_root: Optional[Path] = None) -> FastAPI:
         evidence_path = safe_join(evidence_base, relpath)
         if not evidence_path.is_file():
             raise HTTPException(status_code=404, detail="Evidence file not found for this audit")
-        return FileResponse(evidence_path)
+        return secure_file_response(evidence_path, inline=True)
 
     @app.get("/api/audits/{audit_id}/artifact/{relpath:path}")
     def get_artifact(audit_id: str, relpath: str) -> FileResponse:
@@ -538,7 +558,7 @@ def create_app(output_root: Optional[Path] = None) -> FastAPI:
         artifact_path = safe_artifact(Path(job.output_dir), relpath)
         if not artifact_path.is_file():
             raise HTTPException(status_code=404, detail="Artifact file not found for this audit")
-        return FileResponse(artifact_path)
+        return secure_file_response(artifact_path, filename=artifact_path.name)
 
     @app.get("/api/audits/{audit_id}/submission-qc-packet.zip")
     def get_submission_qc_packet(audit_id: str) -> FileResponse:
@@ -549,7 +569,7 @@ def create_app(output_root: Optional[Path] = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="Submission QC packet has not been generated yet")
         zip_path = output_dir / "submission_qc_packet.zip"
         write_packet_zip(packet_dir, zip_path)
-        return FileResponse(zip_path, filename=f"{audit_id}-submission-qc-packet.zip")
+        return secure_file_response(zip_path, filename=f"{audit_id}-submission-qc-packet.zip")
 
     @app.delete("/api/audits/{audit_id}")
     def delete_audit(audit_id: str) -> dict[str, Any]:
@@ -1680,11 +1700,15 @@ def resolve_compare_to(settings: WebappSettings, audit_id: Optional[str]) -> Pat
 def read_process_stream(stream: Any, chunks: list[str]) -> None:
     if stream is None:
         return
+    total_chars = sum(len(chunk) for chunk in chunks)
     try:
         for line in iter(stream.readline, ""):
             if not line:
                 break
             chunks.append(line)
+            total_chars += len(line)
+            while total_chars > MAX_PROCESS_LOG_CHARS and len(chunks) > 1:
+                total_chars -= len(chunks.pop(0))
     finally:
         stream.close()
 
@@ -2310,11 +2334,29 @@ def artifact_download_allowed(relpath: str) -> bool:
     return False
 
 
+def secure_file_response(path: Path, *, filename: str | None = None, inline: bool = False) -> FileResponse:
+    headers = {"X-Content-Type-Options": "nosniff"}
+    if inline:
+        return FileResponse(path, headers=headers)
+    return FileResponse(
+        path,
+        filename=filename or path.name,
+        media_type="application/octet-stream",
+        content_disposition_type="attachment",
+        headers=headers,
+    )
+
+
 def write_packet_zip(packet_dir: Path, zip_path: Path) -> None:
+    packet_root = packet_dir.resolve()
     with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         for path in sorted(packet_dir.rglob("*"), key=lambda item: item.relative_to(packet_dir).as_posix().lower()):
-            if path.is_file():
-                archive.write(path, arcname=path.relative_to(packet_dir).as_posix())
+            if path.is_symlink() or not path.is_file():
+                continue
+            resolved = path.resolve()
+            if not is_relative_to(resolved, packet_root):
+                continue
+            archive.write(resolved, arcname=path.relative_to(packet_dir).as_posix())
 
 
 def safe_artifact(output_dir: Path, relpath: str) -> Path:

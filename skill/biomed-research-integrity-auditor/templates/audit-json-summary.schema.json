@@ -50,7 +50,7 @@
     "scan_profile": "standard",
     "execution_mode": "parallel",
     "parallel_workstreams_enabled": true,
-    "workstream_count": 4,
+    "workstream_count": 8,
     "workstreams": [
       {
         "phase": "detectors",

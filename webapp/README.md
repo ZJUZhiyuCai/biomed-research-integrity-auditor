@@ -1,6 +1,6 @@
 # Local Self-Audit Web App
 
-V0.5 is a local-first web wrapper around the existing audit pipeline. It does not replace
+V0.6.2 is a local-first web wrapper around the existing audit pipeline. It does not replace
 `scripts/audit_package.py`, and it does not reinterpret risk. The backend runs the CLI in a
 background subprocess and the UI reads the artifacts the CLI writes.
 
@@ -50,7 +50,7 @@ cd webapp/frontend
 npm run dev
 ```
 
-## V0.5 Scope
+## V0.6.2 Scope
 
 Included:
 

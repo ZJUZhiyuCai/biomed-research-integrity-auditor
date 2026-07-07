@@ -170,7 +170,10 @@ export function Sidebar(props: SidebarProps) {
         onDrop={handleDrop}
         onClick={() => fileRef.current?.click()}
         onKeyDown={(event) => {
-          if (event.key === "Enter" || event.key === " ") fileRef.current?.click();
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            fileRef.current?.click();
+          }
         }}
       >
         <Upload size={18} aria-hidden="true" />

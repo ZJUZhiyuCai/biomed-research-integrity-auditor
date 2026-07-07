@@ -245,11 +245,24 @@ def calibrate_candidate(candidate: dict[str, Any], mode: str, rules: dict[str, A
 
 def load_candidates(paths: list[Path]) -> list[dict[str, Any]]:
     candidates: list[dict[str, Any]] = []
+    seen_ids: dict[str, int] = {}
     for path in paths:
         payload = json.loads(path.read_text(encoding="utf-8"))
         if isinstance(payload, dict) and isinstance(payload.get("candidates"), list):
             validate_instance(payload, DETECTOR_SCHEMA, f"detector output {path}")
-            candidates.extend(payload["candidates"])
+            for idx, candidate in enumerate(payload["candidates"], start=1):
+                item = dict(candidate)
+                candidate_id = str(item.get("candidate_id", "")).strip()
+                if not candidate_id:
+                    candidate_id = f"{path.stem}-{idx:04d}"
+                count = seen_ids.get(candidate_id, 0) + 1
+                seen_ids[candidate_id] = count
+                if count > 1:
+                    item["original_candidate_id"] = candidate_id
+                    item["candidate_id"] = f"{candidate_id}__dup{count:02d}_{path.stem}_{idx:04d}"
+                else:
+                    item["candidate_id"] = candidate_id
+                candidates.append(item)
         elif isinstance(payload, dict) and isinstance(payload.get("findings"), list):
             raise ContractError(
                 f"{path} contains legacy findings; calibrator input must be detector_output.schema.json candidates"

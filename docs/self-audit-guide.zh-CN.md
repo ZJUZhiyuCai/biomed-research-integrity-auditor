@@ -92,11 +92,10 @@ C001,"Treatment increases signal intensity",Results p.4,Fig1A,source_data/Fig1.c
 对于大多数作者和 PI，本地 web 应用是最简单的路径。从源检查，运行：
 
 ```bash
-make preflight PYTHON=.venv/bin/python
 make run
 ```
 
-preflight 检查 Python 包、图像/OCR 依赖和本地 web UI 构建运行时。如果它报告缺少依赖，请先安装该环境。`make run` 创建或重用 `.venv`，安装依赖，在 `npm` 可用时构建前端，在 `http://127.0.0.1:8765` 启动应用，并打开您的浏览器。应用在您的机器上运行；上传的 zip 包在本地解包。
+`make run` 创建或重用 `.venv`，安装依赖，在 `npm` 可用时构建前端，在 `http://127.0.0.1:8765` 启动应用，并打开您的浏览器。环境建好后，您可以运行 `make preflight PYTHON=.venv/bin/python` 检查 Python 包、图像/OCR 依赖和本地 web UI 构建运行时。应用在您的机器上运行；上传的 zip 包在本地解包。
 
 在浏览器中：
 

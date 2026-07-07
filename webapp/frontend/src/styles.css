@@ -40,7 +40,10 @@
   --brand: #0f766e;
   --brand-soft: #d2ece8;
   --brand-strong: #134e4a;
+  --brand-ink: #0b3d38;
   --accent: #b45309;
+  --accent-soft: #f4dfc3;
+  --panel: var(--surface);
 
   /* risk spectrum: cool → warm */
   --r0-bg: #e6ecee; --r0-ink: #475569;
@@ -88,7 +91,10 @@
   --brand: #2dd4bf;
   --brand-soft: #134e44;
   --brand-strong: #5eead4;
+  --brand-ink: #d7fff7;
   --accent: #d99350;
+  --accent-soft: #3b2a18;
+  --panel: var(--surface);
 
   --r0-bg: #2a3338; --r0-ink: #b8c5cc;
   --r1-bg: #1e3a34; --r1-ink: #6ee0c8;
@@ -2000,6 +2006,12 @@ button:disabled:hover {
   }
   .workspace-card,
   .finding-card,
+  .panel,
+  .coverage-band,
+  .report-section,
+  .submission-panel,
+  .prep-panel,
+  .methodology-panel,
   .mini-panel,
   .report-panel,
   .coverage-card {
@@ -2013,6 +2025,16 @@ button:disabled:hover {
   }
   .markdown-body table {
     page-break-inside: avoid;
+  }
+  .manifest-table-wrap,
+  .table-scroll {
+    overflow: visible !important;
+  }
+  .manifest-table,
+  .claim-table {
+    min-width: 0 !important;
+    width: 100% !important;
+    font-size: 9pt !important;
   }
   a {
     color: #111 !important;

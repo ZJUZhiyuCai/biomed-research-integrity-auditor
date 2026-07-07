@@ -43,9 +43,17 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     <ToastCtx.Provider value={push}>
       {children}
       {createPortal(
-        <div className="toast-stack" role="status" aria-live="polite">
+        <div
+          className="toast-stack"
+          role={items.some((item) => item.kind === "error") ? "alert" : "status"}
+          aria-live={items.some((item) => item.kind === "error") ? "assertive" : "polite"}
+        >
           {items.map((t) => (
-            <div key={t.id} className={`toast toast--${t.kind}`}>
+            <div
+              key={t.id}
+              className={`toast toast--${t.kind}`}
+              role={t.kind === "error" ? "alert" : undefined}
+            >
               <span className="toast-icon">
                 {t.kind === "success" ? (
                   <CheckCircle2 size={16} aria-hidden="true" />

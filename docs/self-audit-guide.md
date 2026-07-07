@@ -127,15 +127,14 @@ The local web app's Package Prep panel can create this CSV for you if you prefer
 For most authors and PIs, the local web app is the easiest path. From the source checkout, run:
 
 ```bash
-make preflight PYTHON=.venv/bin/python
 make run
 ```
 
-The preflight checks Python packages, image/OCR dependencies, and the local web UI build runtime.
-If it reports a missing dependency, install that environment first. `make run` creates or reuses
-`.venv`, installs dependencies, builds the frontend when `npm` is available, starts the app at
-`http://127.0.0.1:8765`, and opens your browser. The app runs on
-your machine; uploaded zip packages are unpacked locally.
+`make run` creates or reuses `.venv`, installs dependencies, builds the frontend when `npm` is
+available, starts the app at `http://127.0.0.1:8765`, and opens your browser. After setup, you can
+run `make preflight PYTHON=.venv/bin/python` to verify Python packages, image/OCR dependencies, and
+the local web UI build runtime. The app runs on your machine; uploaded zip packages are unpacked
+locally.
 
 In the browser:
 
