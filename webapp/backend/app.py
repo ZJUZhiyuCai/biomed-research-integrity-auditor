@@ -584,8 +584,17 @@ def create_app(output_root: Optional[Path] = None) -> FastAPI:
         return {"deleted": audit_id}
 
     dist_dir = ROOT / "webapp" / "frontend" / "dist"
-    if dist_dir.exists():
+    if dist_dir.is_dir():
         app.mount("/", StaticFiles(directory=dist_dir, html=True), name="frontend")
+    else:
+        @app.get("/")
+        def frontend_not_built() -> PlainTextResponse:
+            return PlainTextResponse(
+                "Biomed Research Integrity Auditor API is running, but the web frontend has not been built. "
+                "Run `make run PYTHON=.venv/bin/python` or "
+                "`npm --prefix webapp/frontend install && npm --prefix webapp/frontend run build`.",
+                status_code=503,
+            )
 
     return app
 
@@ -2411,6 +2420,9 @@ def extract_zip_safely(zip_path: Path, destination: Path) -> None:
             extracted = (destination / member).resolve()
             if not is_relative_to(extracted, destination_root) or extracted.is_symlink():
                 raise ValueError("Uploaded zip extracted an unsafe path")
+    for extracted_path in destination.rglob("*"):
+        if extracted_path.is_symlink() or not is_relative_to(extracted_path.resolve(), destination_root):
+            raise ValueError("Uploaded zip extracted an unsafe path")
 
 
 def text_tail(value: str, limit: int = 8000) -> str:

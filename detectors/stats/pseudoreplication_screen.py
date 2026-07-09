@@ -14,8 +14,45 @@ from typing import Any
 CSV_EXTS = {".csv", ".tsv"}
 XLSX_EXTS = {".xlsx"}
 TABLE_EXTS = CSV_EXTS | XLSX_EXTS
-BIOLOGICAL_ID_COLUMNS = ("animal_id", "mouse_id", "rat_id", "subject_id", "patient_id", "donor_id")
-TECHNICAL_ID_COLUMNS = ("field_id", "section_id", "well_id", "technical_replicate", "cell_id", "lesion_id", "image_id")
+BIOLOGICAL_ID_COLUMNS = (
+    "animal",
+    "animal_id",
+    "mouse",
+    "mouse_id",
+    "rat",
+    "rat_id",
+    "subject",
+    "subject_id",
+    "patient",
+    "patient_id",
+    "participant",
+    "participant_id",
+    "donor",
+    "donor_id",
+)
+TECHNICAL_ID_COLUMNS = (
+    "field_id",
+    "field_num",
+    "field_number",
+    "section_id",
+    "section_num",
+    "section_number",
+    "well_id",
+    "well_num",
+    "well_number",
+    "technical_replicate",
+    "technical_replicate_id",
+    "technical_replicate_num",
+    "technical_replicate_number",
+    "replicate_id",
+    "replicate_num",
+    "replicate_number",
+    "cell_id",
+    "lesion_id",
+    "image_id",
+    "image_num",
+    "image_number",
+)
 
 
 def normalize_header(header: str) -> str:

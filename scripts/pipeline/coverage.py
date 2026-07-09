@@ -36,6 +36,32 @@ RAW_CANDIDATE_ARTIFACTS = (
     "format_coverage_candidates.json",
     "audit_coverage_candidates.json",
 )
+DETECTOR_FAILURE_MODULES = {
+    "stats_consistency": ["statistics_consistency"],
+    "pseudoreplication": ["pseudoreplication"],
+    "global_image": ["image_global_near_duplicate"],
+    "channel_metadata": ["image_channel_metadata_consistency"],
+    "splice_forensics": ["image_splice_forensics_triage"],
+    "keypoint_image": ["image_keypoint_geometric_match"],
+    "local_patch": ["image_local_patch_and_same_image_copy_move"],
+    "text_overlap": ["package_internal_text_overlap"],
+    "external_literature_search": ["external_literature_search"],
+}
+DETECTOR_FAILURE_LABELS = {
+    "stats_consistency": "statistics consistency screening",
+    "pseudoreplication": "pseudoreplication screening",
+    "global_image": "whole-image near-duplicate screening",
+    "contextual_image": "provenance-aware image contextual calibration",
+    "channel_metadata": "same-field/different-channel metadata consistency check",
+    "splice_forensics": "ELA/JPEG residual, JPEG-ghost profile, noise-map, and CFA-like grid splice-forensics triage",
+    "keypoint_image": "keypoint geometric image screening",
+    "keypoint_contextual": "keypoint image contextual calibration",
+    "local_patch": "local patch / same-image copy-move deep image screening",
+    "local_patch_contextual": "local patch contextual calibration",
+    "text_overlap": "package-internal text overlap screening",
+    "external_literature_search": "external literature phrase search",
+    "registered_detector_registry": "registered extension detector configuration",
+}
 
 
 IMAGE_SCREENING_BOUNDARY = {
@@ -84,6 +110,23 @@ IMAGE_SCREENING_BOUNDARY = {
 }
 
 
+def supplementary_source_tables_present(package: Path) -> bool:
+    for item in package.rglob("*"):
+        if item.is_symlink() or not item.is_file() or item.suffix.lower() not in SOURCE_EXTS:
+            continue
+        try:
+            relative = item.relative_to(package)
+        except ValueError:
+            continue
+        parts = {part.lower() for part in relative.parts[:-1]}
+        name = item.name.lower()
+        if "source_data" in parts:
+            continue
+        if name.startswith("moesm") or parts.intersection({"supplementary", "supplemental", "supplement", "supplements"}):
+            return True
+    return False
+
+
 def build_coverage(
     package: Path,
     output_dir: Path,
@@ -98,6 +141,26 @@ def build_coverage(
         return read_json(path) if path.exists() else None
 
     unreadable_image_files: dict[str, dict[str, str]] = {}
+
+    def detector_failure_stages() -> set[str]:
+        stages: set[str] = set()
+        for path in detector_outputs:
+            if not path.exists():
+                continue
+            payload = read_json(path)
+            for error in payload.get("errors", []) or []:
+                if isinstance(error, dict) and error.get("stage"):
+                    stages.add(str(error["stage"]))
+            for candidate in payload.get("candidates", []) or []:
+                if not isinstance(candidate, dict) or candidate.get("candidate_type") != "detector_execution_failure":
+                    continue
+                evidence = candidate.get("evidence", {}) if isinstance(candidate.get("evidence"), dict) else {}
+                stage = evidence.get("stage") or candidate.get("candidate_id")
+                if stage:
+                    stages.add(str(stage))
+        return stages
+
+    failed_stages = detector_failure_stages()
 
     def record_unreadable_image_errors(payload: dict[str, Any] | None) -> None:
         if not payload:
@@ -249,6 +312,17 @@ def build_coverage(
         ),
     }
 
+    def append_unique(key: str, value: str) -> None:
+        if value not in coverage[key]:
+            coverage[key].append(value)
+
+    def remove_executed(module_name: str) -> None:
+        coverage["modules_executed"] = [
+            item
+            for item in coverage["modules_executed"]
+            if item != module_name and not item.startswith(f"{module_name} ")
+        ]
+
     guardrail_payload = load_safe("package_guardrail_candidates.json")
     if guardrail_payload:
         coverage["modules_executed"].append("package_intake_guardrail")
@@ -287,7 +361,6 @@ def build_coverage(
     image_screening_has_inputs = bool(screening_original_images or screening_derived_images) or has_files(package, IMAGE_EXTS)
 
     if image_screening_has_inputs and not coverage.get("package_guardrail_image_screening_blocked"):
-        coverage["modules_executed"].append("image_global_near_duplicate")
         if scan_profile == "quick":
             coverage["modules_not_executed"].append(
                 "local patch / same-image copy-move deep image screening (skipped by quick scan profile)"
@@ -298,17 +371,15 @@ def build_coverage(
             coverage["modules_not_executed"].append(
                 "ELA/JPEG residual, JPEG-ghost profile, noise-map, and CFA-like grid splice-forensics triage (skipped by quick scan profile)"
             )
-        else:
-            coverage["modules_executed"].append("image_splice_forensics_triage")
-            coverage["modules_executed"].append("image_keypoint_geometric_match")
-            coverage["modules_executed"].append("image_local_patch_and_same_image_copy_move")
         global_payload = load_safe("global_image_candidates.json")
         if global_payload:
+            append_unique("modules_executed", "image_global_near_duplicate")
             coverage["image_panels_screened"] = int(global_payload.get("images_screened", 0) or 0)
             record_unreadable_image_errors(global_payload)
         if scan_profile != "quick":
             splice_payload = load_safe("splice_forensics_candidates.json")
             if splice_payload:
+                append_unique("modules_executed", "image_splice_forensics_triage")
                 record_unreadable_image_errors(splice_payload)
                 coverage["splice_forensics_images_screened"] = int(
                     splice_payload.get("images_screened", 0) or 0
@@ -342,6 +413,7 @@ def build_coverage(
                     )
             keypoint_payload = load_safe("keypoint_image_candidates.json")
             if keypoint_payload:
+                append_unique("modules_executed", "image_keypoint_geometric_match")
                 record_unreadable_image_errors(keypoint_payload)
                 coverage["keypoint_pairs_screened"] = int(
                     keypoint_payload.get("pairwise_comparisons_attempted", 0) or 0
@@ -361,6 +433,7 @@ def build_coverage(
                     )
             local_payload = load_safe("local_patch_candidates.json")
             if local_payload:
+                append_unique("modules_executed", "image_local_patch_and_same_image_copy_move")
                 record_unreadable_image_errors(local_payload)
                 coverage["modality_routing_enabled"] = bool(
                     (local_payload.get("input") or {}).get("modality_routing_enabled")
@@ -430,16 +503,26 @@ def build_coverage(
 
     stats_payload = load_safe("stats_consistency_candidates.json")
     if stats_payload:
-        coverage["modules_executed"].append("statistics_consistency")
+        append_unique("modules_executed", "statistics_consistency")
         coverage["source_tables_screened"] = len(stats_payload.get("files_screened", []) or [])
-    if has_files(package / "source_data", SOURCE_EXTS):
-        coverage["modules_executed"].append("pseudoreplication")
+    source_tables_supplied = has_files(package / "source_data", SOURCE_EXTS)
+    if source_tables_supplied and load_safe("pseudoreplication_candidates.json"):
+        append_unique("modules_executed", "pseudoreplication")
+    elif source_tables_supplied:
+        coverage["modules_not_executed"].append(
+            "pseudoreplication screening (detector did not produce an output artifact; not a clean result)"
+        )
     else:
         coverage["modules_not_executed"].append("pseudoreplication screening (no source_data CSV/TSV/XLSX/PZFX supplied)")
     if not stats_payload:
-        coverage["modules_not_executed"].append(
-            "statistics screening (no source_data or supplementary CSV/TSV/XLSX/PZFX source tables supplied)"
-        )
+        if source_tables_supplied or supplementary_source_tables_present(package):
+            coverage["modules_not_executed"].append(
+                "statistics screening (detector did not produce an output artifact; not a clean result)"
+            )
+        else:
+            coverage["modules_not_executed"].append(
+                "statistics screening (no source_data or supplementary CSV/TSV/XLSX/PZFX source tables supplied)"
+            )
 
     xlsx_payload = load_safe("xlsx_structure.json")
     if xlsx_payload:
@@ -587,8 +670,12 @@ def build_coverage(
                 "(unsupported format exports required; not a clean result)"
             )
 
-    if has_files(package, TEXT_EXTS):
-        coverage["modules_executed"].append("package_internal_text_overlap")
+    if has_files(package, TEXT_EXTS) and load_safe("text_overlap_candidates.json"):
+        append_unique("modules_executed", "package_internal_text_overlap")
+    elif has_files(package, TEXT_EXTS):
+        coverage["modules_not_executed"].append(
+            "text-overlap screening (detector did not produce an output artifact; not a clean result)"
+        )
     else:
         coverage["modules_not_executed"].append("text-overlap screening (no manuscript/text supplied)")
 
@@ -887,8 +974,12 @@ def build_coverage(
 
     if scan_profile == "quick":
         coverage["modules_not_executed"].append("external literature phrase search (skipped by quick scan profile)")
+    elif external_provider and load_safe("external_literature_candidates.json"):
+        append_unique("modules_executed", f"external_literature_search ({external_provider})")
     elif external_provider:
-        coverage["modules_executed"].append(f"external_literature_search ({external_provider})")
+        coverage["modules_not_executed"].append(
+            "external literature phrase search (detector did not produce an output artifact; not a clean result)"
+        )
     else:
         coverage["modules_not_executed"].append(
             "external literature phrase search (offline: private internal audit, or no provider/fixture)"
@@ -915,8 +1006,10 @@ def build_coverage(
             coverage["assembly_manifest_warning_count"] = len(warnings)
 
     raw_candidate_count = 0
-    for name in RAW_CANDIDATE_ARTIFACTS:
-        payload = load_safe(name)
+    candidate_artifacts = {output_dir / name for name in RAW_CANDIDATE_ARTIFACTS}
+    candidate_artifacts.update(output_dir.glob("*failure_candidates.json"))
+    for artifact in sorted(candidate_artifacts, key=lambda item: item.name):
+        payload = read_json(artifact) if artifact.exists() else None
         if payload:
             raw_candidate_count += len(payload.get("candidates", []) or [])
     coverage["raw_detector_candidate_count"] = raw_candidate_count
@@ -929,13 +1022,37 @@ def build_coverage(
             error_path = error.get("path") if isinstance(error, dict) else None
             label = f"{stage}: {error_path}" if error_path else str(stage)
             coverage["detector_failures"].append(label)
+            coverage["audit_coverage_gap"] = True
         for candidate in payload.get("candidates", []) or []:
             candidate_type = candidate.get("candidate_type")
             if candidate_type == "detector_execution_failure":
                 stage = candidate.get("evidence", {}).get("stage") or candidate.get("candidate_id", "detector")
                 coverage["detector_failures"].append(str(stage))
+                coverage["audit_coverage_gap"] = True
             elif candidate_type == "audit_coverage_gap":
                 coverage["audit_coverage_gap"] = True
+
+    for stage in sorted(failed_stages):
+        base_stage = stage
+        if stage.startswith("registered_detector_registry"):
+            base_stage = "registered_detector_registry"
+        for module in DETECTOR_FAILURE_MODULES.get(base_stage, []):
+            if module == "external_literature_search":
+                for executed in list(coverage["modules_executed"]):
+                    if executed.startswith("external_literature_search"):
+                        remove_executed(executed)
+            else:
+                remove_executed(module)
+        label = DETECTOR_FAILURE_LABELS.get(base_stage, base_stage.replace("_", " "))
+        append_unique(
+            "modules_not_executed",
+            f"{label} (detector execution failed; see detector_failures; not a clean result)",
+        )
+        coverage["audit_coverage_gap"] = True
+
+    coverage["detector_failures"] = sorted({str(item) for item in coverage["detector_failures"] if str(item).strip()})
+    coverage["modules_executed"] = sorted({str(item) for item in coverage["modules_executed"] if str(item).strip()})
+    coverage["modules_not_executed"] = sorted({str(item) for item in coverage["modules_not_executed"] if str(item).strip()})
 
     if unreadable_image_files:
         coverage["unreadable_image_files"] = sorted(unreadable_image_files.values(), key=lambda item: item["path"])

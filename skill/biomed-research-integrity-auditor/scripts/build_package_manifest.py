@@ -126,7 +126,8 @@ def build_manifest(root: Path, mode: str, domains: list[str]) -> dict[str, Any]:
         if category_counts.get(category, 0) == 0
     ]
     return {
-        "root": str(root),
+        "root": ".",
+        "package_name": root.name,
         "mode": mode,
         "domains": domains,
         "category_counts": category_counts,

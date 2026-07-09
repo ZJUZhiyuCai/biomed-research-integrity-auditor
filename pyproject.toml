@@ -48,7 +48,7 @@ biomed-self-audit-webapp = "webapp.__main__:main"
 
 [tool.setuptools]
 include-package-data = true
-packages = ["calibrators", "detectors", "detectors.image", "detectors.stats", "detectors.text", "provenance", "schemas", "scripts", "scripts.pipeline", "skill", "webapp", "webapp.backend", "webapp.frontend"]
+packages = ["calibrators", "detectors", "detectors.image", "detectors.stats", "detectors.text", "provenance", "schemas", "scripts", "scripts.pipeline", "skill", "webapp", "webapp.backend"]
 
 [tool.setuptools.package-data]
 schemas = ["*.json", "*.yaml"]

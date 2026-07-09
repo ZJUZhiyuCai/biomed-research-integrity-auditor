@@ -2255,13 +2255,14 @@ def render_submission_readiness(summary: dict[str, Any]) -> list[str]:
 
 
 def render_scope(mode: str, manifest: dict[str, Any], case_id: str | None, scan_profile: str) -> list[str]:
+    package_label = str(manifest.get("package_name") or manifest.get("root") or "not supplied")
     return [
         "## Scope / 范围",
         "",
         f"- Mode / 模式: {label_pair(mode, MODE_LABELS)} (`{mode}`)",
         f"- Scan profile / 扫描档位: {label_pair(scan_profile, SCAN_PROFILE_LABELS)} (`{scan_profile}`)",
         f"- Case ID / 案例编号: `{case_id or 'not supplied'}`",
-        f"- Package root / 材料目录: `{manifest.get('root', 'not supplied')}`",
+        f"- Package / 材料包: `{package_label}` (local path redacted / 本机路径已隐藏)",
         "",
         "> Scope note / 范围提示：This report describes the supplied package and executed modules only; it does not prove correctness.",
         "> 本报告只描述已提供材料和已执行模块范围；不证明研究或数据正确。",

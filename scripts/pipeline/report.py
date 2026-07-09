@@ -288,10 +288,11 @@ def write_start_here(output_dir: Path, package: Path, qc_packet: dict[str, Any],
         candidate = Path(str(image_review_packet.get("packet_dir")))
         image_review_dir = str(candidate.relative_to(output_dir) if candidate.is_relative_to(output_dir) else candidate)
     has_re_audit_diff = (output_dir / "re_audit_diff.md").is_file()
+    package_label = package.name or "supplied package"
     lines = [
         "# START HERE",
         "",
-        f"Package reviewed: `{package}`",
+        f"Package reviewed: `{package_label}` (local path redacted)",
         f"Overall audit risk band: `{summary.get('overall_risk', 'R0')}`",
         "",
         "Read these files in order:",

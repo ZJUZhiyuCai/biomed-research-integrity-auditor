@@ -106,7 +106,11 @@ RUN_ARTIFACTS = (
     "psd_preview_images.json",
     "image_metadata.json",
     "package_guardrail_candidates.json",
+    "figure_source_map.json",
+    "figure_source_links.json",
+    "assembly_links.json",
     "provenance_graph.json",
+    "image_screening_inputs.json",
     "global_image_candidates.json",
     "contextual_image_candidates.json",
     "channel_metadata_candidates.json",
@@ -143,6 +147,9 @@ RUN_ARTIFACTS = (
     "START_HERE.md",
     "submission_qc_packet.zip",
 )
+RUN_ARTIFACT_GLOBS = (
+    "*failure_candidates.json",
+)
 RUN_DIRECTORIES = (
     ".cache",
     "evidence",
@@ -160,6 +167,10 @@ def clean_previous_run_artifacts(output_dir: Path) -> None:
         path = output_dir / name
         if path.is_file() or path.is_symlink():
             path.unlink()
+    for pattern in RUN_ARTIFACT_GLOBS:
+        for path in output_dir.glob(pattern):
+            if path.is_file() or path.is_symlink():
+                path.unlink()
     for name in RUN_DIRECTORIES:
         path = output_dir / name
         if path.exists():

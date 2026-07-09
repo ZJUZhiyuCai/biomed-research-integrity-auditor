@@ -1520,8 +1520,12 @@ class WebappBackendTests(unittest.TestCase):
             tmp_path = Path(tmp)
             with TestClient(create_app(output_root=tmp_path / "runs")) as client:
                 index = client.get("/")
-                self.assertEqual(index.status_code, 200)
-                self.assertIn("root", index.text)
+                if (ROOT / "webapp" / "frontend" / "dist").is_dir():
+                    self.assertEqual(index.status_code, 200)
+                    self.assertIn("root", index.text)
+                else:
+                    self.assertEqual(index.status_code, 503)
+                    self.assertIn("frontend has not been built", index.text)
 
                 response = client.post("/api/packages/inspect", json={
                     "package_path": str(ROOT / "examples" / "full_presubmission_package")

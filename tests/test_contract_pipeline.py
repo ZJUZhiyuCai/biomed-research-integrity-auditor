@@ -1415,15 +1415,39 @@ class ContractPipelineTests(unittest.TestCase):
         self.assertEqual(stats.parse_float("10%"), 10.0)
         self.assertEqual(stats.parse_float("1,5%", stats.FORMAT_DECIMAL_COMMA), 1.5)
         rows = [
-            {"sample_id": "101", "animal_id": "1001", "response_pct": "10%", "day_1": "12.5%"},
-            {"sample_id": "102", "animal_id": "1002", "response_pct": "15%", "day_1": "18.5%"},
+            {
+                "sample_id": "101",
+                "animal_id": "1001",
+                "patient": "501",
+                "well_num": "12",
+                "replicate_num": "1",
+                "response_pct": "10%",
+                "day_1": "12.5%",
+            },
+            {
+                "sample_id": "102",
+                "animal_id": "1002",
+                "patient": "502",
+                "well_num": "24",
+                "replicate_num": "2",
+                "response_pct": "15%",
+                "day_1": "18.5%",
+            },
         ]
         profiles = stats.infer_numeric_format_profiles(rows)
         columns = stats.numeric_columns(rows, profiles)
         self.assertNotIn("sample_id", columns)
         self.assertNotIn("animal_id", columns)
+        self.assertNotIn("patient", columns)
+        self.assertNotIn("well_num", columns)
+        self.assertNotIn("replicate_num", columns)
         self.assertEqual(columns["response_pct"][0][2], 10.0)
         self.assertEqual(columns["day_1"][1][2], 18.5)
+        vectors = stats.numeric_row_vectors(rows, profiles)
+        flattened_columns = {value["column"] for vector in vectors for value in vector["values"]}
+        self.assertNotIn("patient", flattened_columns)
+        self.assertNotIn("well_num", flattened_columns)
+        self.assertNotIn("replicate_num", flattened_columns)
 
     def test_stats_detector_reports_ambiguous_comma_numeric_format_gap(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1688,6 +1712,33 @@ class ContractPipelineTests(unittest.TestCase):
             validate_instance(payload, ROOT / "schemas" / "detector_output.schema.json", "xlsx pseudoreplication detector")
             self.assertEqual(len(payload["candidates"]), 1)
             self.assertIn("Figure_fields.xlsx#Fields", payload["candidates"][0]["locations"][0])
+
+    def test_pseudoreplication_detector_recognizes_patient_and_well_number_headers(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            source_dir = Path(tmp) / "source_data"
+            source_dir.mkdir()
+            (source_dir / "patient_wells.csv").write_text(
+                "group,patient,well_num,replicate_num,value,reported_n_basis\n"
+                "control,p1,1,1,1.0,well\n"
+                "control,p1,2,2,1.1,well\n"
+                "control,p2,1,1,0.9,well\n"
+                "control,p2,2,2,1.2,well\n",
+                encoding="utf-8",
+            )
+            output = Path(tmp) / "pseudo.json"
+            run([
+                PYTHON,
+                "detectors/stats/pseudoreplication_screen.py",
+                str(source_dir),
+                "--output",
+                str(output),
+            ])
+            payload = json.loads(output.read_text(encoding="utf-8"))
+            validate_instance(payload, ROOT / "schemas" / "detector_output.schema.json", "patient/well pseudoreplication detector")
+            self.assertEqual(len(payload["candidates"]), 1)
+            evidence = payload["candidates"][0]["evidence"]
+            self.assertEqual(evidence["biological_id_column"], "patient")
+            self.assertEqual(evidence["technical_id_column"], "well_num")
 
     def test_reporter_rejects_uncalibrated_candidates(self) -> None:
         report_assembler = load_report_assembler()
@@ -5078,11 +5129,52 @@ class EndToEndTests(unittest.TestCase):
             (output_dir / ".cache").mkdir(parents=True)
             (output_dir / ".cache" / "old.txt").write_text("old", encoding="utf-8")
             (output_dir / "calibrated_findings.json").write_text("stale", encoding="utf-8")
+            (output_dir / "figure_source_map.json").write_text("stale", encoding="utf-8")
+            (output_dir / "assembly_links.json").write_text("stale", encoding="utf-8")
+            (output_dir / "registered_detector_registry_01_failure_candidates.json").write_text("stale", encoding="utf-8")
             (output_dir / "unrelated_note.txt").write_text("keep", encoding="utf-8")
             clean_previous_run_artifacts(output_dir)
             self.assertFalse((output_dir / ".cache").exists())
             self.assertFalse((output_dir / "calibrated_findings.json").exists())
+            self.assertFalse((output_dir / "figure_source_map.json").exists())
+            self.assertFalse((output_dir / "assembly_links.json").exists())
+            self.assertFalse((output_dir / "registered_detector_registry_01_failure_candidates.json").exists())
             self.assertTrue((output_dir / "unrelated_note.txt").is_file())
+
+    def test_human_outputs_redact_local_package_absolute_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "private_lab_package"
+            source_dir = package / "source_data"
+            source_dir.mkdir(parents=True)
+            (package / "manuscript.txt").write_text("Figure 1 reports source values.\n", encoding="utf-8")
+            (source_dir / "values.csv").write_text("group,mean,sd,sem,n\nA,1.0,0.2,0.1,4\n", encoding="utf-8")
+            out = Path(tmp) / "out"
+            run([
+                PYTHON,
+                "scripts/audit_package.py",
+                str(package),
+                "--mode",
+                "internal_presubmission",
+                "--scan-profile",
+                "quick",
+                "--external-literature-provider",
+                "none",
+                "--output-dir",
+                str(out),
+            ])
+
+            private_root = str(package)
+            report = (out / "audit-report.md").read_text(encoding="utf-8")
+            start_here = (out / "START_HERE.md").read_text(encoding="utf-8")
+            manifest = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
+            snapshot = json.loads((out / "audit_snapshot.json").read_text(encoding="utf-8"))
+            file_hash_manifest = json.loads((out / "file_hash_manifest.json").read_text(encoding="utf-8"))
+            self.assertNotIn(private_root, report)
+            self.assertNotIn(private_root, start_here)
+            self.assertEqual(manifest["root"], ".")
+            self.assertEqual(manifest["package_name"], package.name)
+            self.assertEqual(snapshot["package_root"], ".")
+            self.assertEqual(file_hash_manifest["package_root"], ".")
 
     def test_submission_qc_artifacts_snapshot_and_claim_coverage(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -5816,6 +5908,40 @@ class EndToEndTests(unittest.TestCase):
             coverage = audit_package.build_coverage(package, out, [stats_output], None)
             self.assertTrue(any("stats.consistency_check" in item for item in coverage["detector_failures"]))
             self.assertTrue(any("broken.csv" in item for item in coverage["detector_failures"]))
+            self.assertTrue(coverage["audit_coverage_gap"])
+
+    def test_coverage_treats_detector_execution_failure_as_not_executed(self) -> None:
+        audit_package = load_audit_package()
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "pkg"
+            source_dir = package / "source_data"
+            source_dir.mkdir(parents=True)
+            (source_dir / "values.csv").write_text("group,value\nA,1.0\n", encoding="utf-8")
+            out = Path(tmp) / "out"
+            out.mkdir()
+            failure_output = out / "stats_consistency_failure_candidates.json"
+            failure_output.write_text(json.dumps({
+                "detector_name": "audit.detector_failure",
+                "detector_version": "test",
+                "input": {"path": str(source_dir)},
+                "candidates": [
+                    {
+                        "candidate_id": "stats_consistency_failed",
+                        "candidate_type": "detector_execution_failure",
+                        "risk_suggestion": "R1_possible",
+                        "locations": [str(source_dir)],
+                        "evidence": {"stage": "stats_consistency", "error": "missing numpy"},
+                    }
+                ],
+                "errors": [{"stage": "stats_consistency", "path": str(source_dir), "error": "missing numpy"}],
+            }), encoding="utf-8")
+
+            coverage = audit_package.build_coverage(package, out, [failure_output], None)
+            self.assertNotIn("statistics_consistency", coverage["modules_executed"])
+            self.assertTrue(any("statistics consistency screening" in item for item in coverage["modules_not_executed"]))
+            self.assertTrue(any("detector execution failed" in item for item in coverage["modules_not_executed"]))
+            self.assertEqual(coverage["raw_detector_candidate_count"], 1)
+            self.assertTrue(coverage["audit_coverage_gap"])
 
     def test_make_run_entrypoint_is_documented_and_helpful(self) -> None:
         makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
