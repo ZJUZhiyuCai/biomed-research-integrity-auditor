@@ -244,6 +244,14 @@ function ActionEditorRow({
   const neutralInquiry = row.neutral_inquiry_template || "";
   const materialRequest = row.material_request_template || "";
   const hasTemplates = Boolean(neutralInquiry || materialRequest);
+  const normalizedStatus = status.toLowerCase();
+  const acceptanceNeedsReason = ["accepted_with_reason", "false_positive"].includes(normalizedStatus);
+  const resolutionNeedsEvidence = normalizedStatus === "resolved";
+  const validationMessage = acceptanceNeedsReason && !(acceptedReason.trim() || humanNote.trim())
+    ? t.actionAcceptanceReasonRequired
+    : resolutionNeedsEvidence && !(humanNote.trim() || attachmentReference.trim())
+      ? t.actionResolutionEvidenceRequired
+      : "";
 
   function copyTemplate(value: string) {
     if (!value || !navigator.clipboard) return;
@@ -295,10 +303,10 @@ function ActionEditorRow({
           </select>
         </td>
         <td>
-          <input className="compact-input" value={humanNote} onChange={(e) => setHumanNote(e.target.value)} aria-label={t.note} />
+          <input className="compact-input" value={humanNote} onChange={(e) => setHumanNote(e.target.value)} aria-label={t.note} aria-invalid={Boolean(validationMessage)} />
         </td>
         <td>
-          <input className="compact-input" value={acceptedReason} onChange={(e) => setAcceptedReason(e.target.value)} aria-label={t.acceptedReason} />
+          <input className="compact-input" value={acceptedReason} onChange={(e) => setAcceptedReason(e.target.value)} aria-label={t.acceptedReason} aria-invalid={acceptanceNeedsReason && Boolean(validationMessage)} />
         </td>
         <td>
           <div className="attachment-cell">
@@ -315,7 +323,7 @@ function ActionEditorRow({
           </div>
         </td>
         <td>
-          <button type="button" className="icon-button small" onClick={save} disabled={!actionId || saving} aria-label={t.save}>
+          <button type="button" className="icon-button small" onClick={save} disabled={!actionId || saving || Boolean(validationMessage)} aria-label={t.save} title={validationMessage || t.save}>
             <Save size={14} aria-hidden="true" />
           </button>
         </td>

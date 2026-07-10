@@ -244,6 +244,10 @@ states that current automated image detectors cover package-local whole-image ne
 D4 whole-image transforms, ORB/RANSAC keypoint geometric matches, local patch reuse,
 same-image copy-move, limited low-contrast probing, multi-frame TIFF-like frame screening,
 and weak ELA/JPEG residual, JPEG-ghost profile, noise-map, and CFA-like grid triage.
+Multi-frame screening records its frame cap and treats truncated stacks as R1 coverage gaps;
+frames within one stack are not treated as independent cross-context image reuse. Evidence regions
+record whether coordinates are in resized, panel-local, or source-image space and include the
+mapping information needed to return to the supplied source image.
 It also states that elastic/nonrigid deformation, severe perspective distortion, very low-feature
 images, specialist sensor-pattern authentication beyond weak CFA-like grid triage, robust JPEG
 ghost analysis beyond weak recompression-profile prompts, and lighting/shadow inconsistency are

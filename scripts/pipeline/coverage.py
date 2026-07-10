@@ -24,6 +24,7 @@ from scripts.pipeline.common import (
 
 RAW_CANDIDATE_ARTIFACTS = (
     "package_guardrail_candidates.json",
+    "intake_coverage_candidates.json",
     "stats_consistency_candidates.json",
     "pseudoreplication_candidates.json",
     "global_image_candidates.json",
@@ -188,6 +189,10 @@ def build_coverage(
         "image_screening_derived_images": 0,
         "image_screening_derived_sources": [],
         "image_screening_inputs_note": "",
+        "global_low_information_images_excluded": 0,
+        "global_low_information_image_files": [],
+        "multi_frame_screening_limits": [],
+        "intra_stack_pairs_skipped": 0,
         "keypoint_pairs_screened": 0,
         "keypoint_candidates": 0,
         "keypoint_screening_limits": [],
@@ -375,6 +380,24 @@ def build_coverage(
         if global_payload:
             append_unique("modules_executed", "image_global_near_duplicate")
             coverage["image_panels_screened"] = int(global_payload.get("images_screened", 0) or 0)
+            low_information_files = global_payload.get("low_information_images_excluded", []) or []
+            coverage["global_low_information_images_excluded"] = len(low_information_files)
+            coverage["global_low_information_image_files"] = [str(item) for item in low_information_files[:20]]
+            frame_limits = global_payload.get("frame_screening_limits", []) or []
+            coverage["multi_frame_screening_limits"] = frame_limits[:20]
+            coverage["intra_stack_pairs_skipped"] = int(global_payload.get("intra_stack_pairs_skipped", 0) or 0)
+            if frame_limits:
+                coverage["modules_not_executed"].append(
+                    "later frames in "
+                    f"{len(frame_limits)} multi-frame image file(s) "
+                    "(per-file frame budget reached; not a clean result)"
+                )
+            if low_information_files:
+                coverage["modules_not_executed"].append(
+                    "whole-image hash comparison for "
+                    f"{len(low_information_files)} low-information image(s) "
+                    "(hashes are non-discriminative; exclusion is not clearance)"
+                )
             record_unreadable_image_errors(global_payload)
         if scan_profile != "quick":
             splice_payload = load_safe("splice_forensics_candidates.json")
@@ -504,7 +527,10 @@ def build_coverage(
     stats_payload = load_safe("stats_consistency_candidates.json")
     if stats_payload:
         append_unique("modules_executed", "statistics_consistency")
-        coverage["source_tables_screened"] = len(stats_payload.get("files_screened", []) or [])
+        coverage["source_table_files_attempted"] = len(stats_payload.get("files_screened", []) or [])
+        coverage["source_tables_screened"] = int(
+            stats_payload.get("tables_screened", len(stats_payload.get("files_screened", []) or [])) or 0
+        )
     source_tables_supplied = has_files(package / "source_data", SOURCE_EXTS)
     if source_tables_supplied and load_safe("pseudoreplication_candidates.json"):
         append_unique("modules_executed", "pseudoreplication")

@@ -11,7 +11,7 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
 
-from detectors.image.image_io import iter_normalized_frames
+from detectors.image.image_io import DEFAULT_MAX_FRAMES, normalized_frame_inventory
 
 
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".webp"}
@@ -25,6 +25,9 @@ TRANSFORMS = {
     "transpose": "TRANSPOSE",
     "transverse": "TRANSVERSE",
 }
+MIN_INFORMATION_STDDEV = 1.0
+MIN_INFORMATION_ENTROPY = 0.25
+MIN_HASH_METHOD_AGREEMENT = 2
 
 
 def hamming(left: int, right: int) -> int:
@@ -94,6 +97,22 @@ def hash_bundle(img: Any, hash_size: int) -> dict[str, int]:
         "average_hash": average_hash(img, hash_size),
         "difference_hash": difference_hash(img, hash_size),
         "perceptual_hash": perceptual_hash(img, hash_size),
+    }
+
+
+def information_profile(img: Any) -> dict[str, Any]:
+    from PIL import ImageStat
+
+    gray = img.convert("L")
+    if max(gray.size) > 512:
+        gray.thumbnail((512, 512))
+    stddev = float(ImageStat.Stat(gray).stddev[0])
+    entropy = float(gray.entropy())
+    low_information = stddev < MIN_INFORMATION_STDDEV and entropy < MIN_INFORMATION_ENTROPY
+    return {
+        "luminance_stddev": round(stddev, 4),
+        "luminance_entropy": round(entropy, 4),
+        "low_information": low_information,
     }
 
 
@@ -189,11 +208,19 @@ def scan(root: Path, threshold: int, hash_size: int) -> dict[str, Any]:
     image_paths = collect_images(root)
     images: list[dict[str, Any]] = []
     errors: list[dict[str, str]] = []
+    frame_limits: list[dict[str, Any]] = []
     for path in image_paths:
         try:
             with Image.open(path) as img:
                 rel = str(path.relative_to(root))
-                frames = iter_normalized_frames(img)
+                frames, total_frames, frames_truncated = normalized_frame_inventory(img)
+                if frames_truncated:
+                    frame_limits.append({
+                        "path": rel,
+                        "frames_total": total_frames,
+                        "frames_screened": len(frames),
+                        "max_frames": DEFAULT_MAX_FRAMES,
+                    })
                 for frame_label, base in frames:
                     transform_hashes = {
                         name: hash_bundle(transformed(base, name), hash_size)
@@ -203,15 +230,28 @@ def scan(root: Path, threshold: int, hash_size: int) -> dict[str, Any]:
                         "path": f"{rel}{frame_label}",
                         "source_file": rel,
                         "frame_label": frame_label or None,
+                        "information": information_profile(base),
                         "hashes": transform_hashes,
                     })
         except Exception as exc:  # noqa: BLE001 - unreadable files should not abort an audit.
             errors.append({"path": str(path.relative_to(root)), "error": str(exc)})
 
     edges: list[dict[str, Any]] = []
+    low_information_paths = [
+        item["path"] for item in images
+        if item["information"]["low_information"]
+    ]
+    comparisons_skipped_low_information = 0
+    intra_stack_pairs_skipped = 0
     for i, left in enumerate(images):
         left_hashes = left["hashes"]["identity"]
         for right in images[i + 1:]:
+            if left["source_file"] == right["source_file"]:
+                intra_stack_pairs_skipped += 1
+                continue
+            if left["information"]["low_information"] or right["information"]["low_information"]:
+                comparisons_skipped_low_information += 1
+                continue
             best: dict[str, Any] | None = None
             for transform_name, right_hashes in right["hashes"].items():
                 distances = {
@@ -220,14 +260,21 @@ def scan(root: Path, threshold: int, hash_size: int) -> dict[str, Any]:
                 }
                 min_method = min(distances, key=lambda method: distances[method])
                 score = distances[min_method]
-                if best is None or score < best["distance"]:
+                methods_within_threshold = sorted(
+                    method for method, distance in distances.items()
+                    if distance <= threshold
+                )
+                agreement = len(methods_within_threshold)
+                if best is None or (agreement, -score) > (best["agreement"], -best["distance"]):
                     best = {
                         "transform": transform_name,
                         "method": min_method,
                         "distance": score,
                         "distances": distances,
+                        "agreement": agreement,
+                        "methods_within_threshold": methods_within_threshold,
                     }
-            if best and best["distance"] <= threshold:
+            if best and best["distance"] <= threshold and best["agreement"] >= MIN_HASH_METHOD_AGREEMENT:
                 edges.append({
                     "left": left["path"],
                     "right": right["path"],
@@ -235,21 +282,53 @@ def scan(root: Path, threshold: int, hash_size: int) -> dict[str, Any]:
                     "best_hash_method": best["method"],
                     "best_hamming_distance": best["distance"],
                     "all_method_distances": best["distances"],
+                    "hash_methods_within_threshold": best["methods_within_threshold"],
                 })
     candidates = cluster_candidates(edges, [item["path"] for item in images], threshold)
+    for record in frame_limits:
+        candidates.append({
+            "candidate_id": f"IMG-FRAME-LIMIT-{len(candidates) + 1:04d}",
+            "detector": "image.global_near_duplicate",
+            "candidate_type": "audit_coverage_gap",
+            "locations": [record["path"]],
+            "finding_type": "multi-frame image screening limit reached",
+            "evidence": {
+                **record,
+                "message": "Only the first configured frames were screened; later frames remain outside automated image coverage.",
+            },
+            "evidence_strength": "weak_signal",
+            "risk_suggestion": "R1_max",
+            "risk_cap_tags": ["audit_coverage_gap", "completeness_gap"],
+            "benign_explanations": ["The file may be a routine Z-stack, time series, or multi-page acquisition."],
+            "required_materials": ["focused frame-range review or an increased frame screening budget"],
+            "recommended_action": "Run a focused review of the unscreened frames before treating the stack as fully screened.",
+            "requires_contextual_calibration": True,
+        })
 
     return {
         "detector_name": "image.global_near_duplicate",
-        "detector_version": "0.3.0",
+        "detector_version": "0.5.0",
         "input": {
             "root": str(root),
             "hash_size": hash_size,
             "threshold": threshold,
             "transforms": list(TRANSFORMS),
             "hash_methods": ["average_hash", "difference_hash", "perceptual_hash"],
+            "minimum_hash_method_agreement": MIN_HASH_METHOD_AGREEMENT,
+            "low_information_gate": {
+                "minimum_luminance_stddev": MIN_INFORMATION_STDDEV,
+                "minimum_luminance_entropy": MIN_INFORMATION_ENTROPY,
+                "rule": "excluded only when both metrics are below threshold",
+            },
             "multi_frame_images": "screened_as_frame_level_items",
+            "max_frames_per_file": DEFAULT_MAX_FRAMES,
         },
         "images_screened": len(images),
+        "low_information_images_excluded": low_information_paths,
+        "low_information_image_count": len(low_information_paths),
+        "pairwise_comparisons_skipped_low_information": comparisons_skipped_low_information,
+        "intra_stack_pairs_skipped": intra_stack_pairs_skipped,
+        "frame_screening_limits": frame_limits,
         "pairwise_edges": len(edges),
         "candidates": candidates,
         "errors": errors,

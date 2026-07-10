@@ -99,6 +99,9 @@ DECIMAL_POINT_RE = re.compile(r"^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?%?
 US_THOUSANDS_RE = re.compile(r"^[+-]?\d{1,3}(?:,\d{3})+(?:\.\d+)?%?$")
 EU_THOUSANDS_RE = re.compile(r"^[+-]?\d{1,3}(?:\.\d{3})+,\d+%?$")
 SINGLE_COMMA_RE = re.compile(r"^[+-]?(\d+),(\d+)%?$")
+CENSORED_NUMERIC_RE = re.compile(
+    r"^[<>]=?\s*[+-]?(?:\d+(?:[.,]\d*)?|[.,]\d+)(?:[eE][+-]?\d+)?%?$"
+)
 COUNT_HINTS = (
     "count",
     "counts",
@@ -115,6 +118,7 @@ COUNT_HINTS = (
     "number",
 )
 DEFAULT_MIN_DIGIT_VALUES = 8
+DEFAULT_MIN_RELATIONSHIP_PAIRS = 8
 DEFAULT_MIN_INTEGER_COUNT_N = 6
 DEFAULT_MIN_BENFORD_VALUES = 30
 DEFAULT_MIN_PVALUE_CLUSTER_VALUES = 20
@@ -165,6 +169,15 @@ def numeric_format_kind(value: Any) -> str | None:
     if "," in text and "." in text and US_THOUSANDS_RE.fullmatch(text):
         return FORMAT_DECIMAL_POINT
     return None
+
+
+def table_has_censored_numeric_records(rows: list[dict[str, str]]) -> bool:
+    return any(
+        CENSORED_NUMERIC_RE.fullmatch(str(raw).strip())
+        for row in rows
+        for raw in row.values()
+        if str(raw).strip()
+    )
 
 
 def infer_numeric_format_profiles(rows: list[dict[str, str]]) -> dict[str, str]:
@@ -271,6 +284,32 @@ def cell_to_text(value: Any) -> str:
     return str(value)
 
 
+def xlsx_header_score(values: list[Any]) -> float:
+    populated = [cell_to_text(value).strip() for value in values if cell_to_text(value).strip()]
+    if len(populated) < 2:
+        return float("-inf")
+    normalized = [normalize_header(value) for value in populated]
+    header_hints = (
+        SUMMARY_COLUMNS
+        | set(ROW_LABEL_COLUMNS)
+        | IDENTIFIER_COLUMN_HINTS
+        | {"value", "measurement", "outcome", "reported_n_basis", "time", "timepoint"}
+    )
+    recognized = sum(value in header_hints for value in normalized)
+    numeric = sum(raw_numeric_text(value) is not None for value in populated)
+    duplicates = len(normalized) - len(set(normalized))
+    return (recognized * 8.0) + ((len(populated) - numeric) * 1.5) - (numeric * 3.0) - (duplicates * 2.0)
+
+
+def select_xlsx_header_index(matrix: list[list[Any]], search_rows: int = 20) -> int | None:
+    nonempty = [idx for idx, values in enumerate(matrix[:search_rows]) if any(cell_to_text(value).strip() for value in values)]
+    if not nonempty:
+        return None
+    scored = [(xlsx_header_score(matrix[idx]), idx) for idx in nonempty]
+    best_score, best_idx = max(scored, key=lambda item: (item[0], -item[1]))
+    return best_idx if math.isfinite(best_score) else nonempty[0]
+
+
 def read_delimited_table(path: Path) -> list[dict[str, str]]:
     delimiter = "\t" if path.suffix.lower() == ".tsv" else ","
     with path.open(newline="", encoding="utf-8-sig") as fh:
@@ -297,18 +336,17 @@ def read_xlsx_tables(path: Path) -> list[tuple[Path, list[dict[str, str]]]]:
     workbook = load_workbook(path, read_only=True, data_only=True)
     tables: list[tuple[Path, list[dict[str, str]]]] = []
     for sheet in workbook.worksheets:
-        headers: list[str] | None = None
+        matrix = [list(values) for values in sheet.iter_rows(values_only=True)]
+        header_idx = select_xlsx_header_index(matrix)
+        if header_idx is None:
+            continue
+        header_values = matrix[header_idx]
+        headers = [
+            normalize_header(cell_to_text(value)) if cell_to_text(value).strip() else f"column_{idx + 1}"
+            for idx, value in enumerate(header_values)
+        ]
         rows: list[dict[str, str]] = []
-        for values in sheet.iter_rows(values_only=True):
-            values = list(values)
-            if headers is None:
-                if not any(cell_to_text(value).strip() for value in values):
-                    continue
-                headers = [
-                    normalize_header(cell_to_text(value)) if cell_to_text(value).strip() else f"column_{idx + 1}"
-                    for idx, value in enumerate(values)
-                ]
-                continue
+        for values in matrix[header_idx + 1:]:
             if not any(cell_to_text(value).strip() for value in values):
                 continue
             rows.append({
@@ -449,6 +487,35 @@ def source_table_extraction_gap(path: Path, error: str) -> dict[str, Any]:
     }
 
 
+def source_table_no_screenable_records_gap(path: Path) -> dict[str, Any]:
+    return {
+        "candidate_id": "",
+        "detector": "stats.consistency_check",
+        "candidate_type": "audit_coverage_gap",
+        "locations": [str(path)],
+        "finding_type": "source data table has no machine-screenable numeric records",
+        "evidence": {
+            "gap_type": "source_table_no_screenable_numeric_records",
+            "message": (
+                "The supplied table was opened, but no populated numeric row/column records were available for statistical screening."
+            ),
+            "file": str(path),
+        },
+        "evidence_strength": "weak_signal",
+        "risk_suggestion": "R1_max",
+        "risk_cap_tags": ["audit_coverage_gap", "completeness_gap"],
+        "benign_explanations": [
+            "the file may be a title sheet, header-only template, or formatted summary rather than source data",
+            "the numeric records may be stored on another sheet or in a separate export",
+        ],
+        "required_materials": [
+            "a machine-readable table with populated numeric rows and explicit column headers",
+        ],
+        "recommended_action": "Provide populated source-data rows in CSV/XLSX form and re-run statistical screening.",
+        "requires_contextual_calibration": True,
+    }
+
+
 def row_label(path: Path, idx: int, row: dict[str, str]) -> str:
     for key in ("id", "animal_id", "mouse_id", "subject_id", "group", "condition", "figure", "panel", "comparison"):
         if row.get(key):
@@ -456,16 +523,19 @@ def row_label(path: Path, idx: int, row: dict[str, str]) -> str:
     return f"{path.name}:row{idx}"
 
 
+WEAK_STATISTICAL_EVIDENCE_TYPES = {"weak_forensic_triage_signal", "p_value_range"}
+
+
 def risk_suggestion(level: str, evidence_type: str) -> str:
-    if evidence_type == "weak_forensic_triage_signal" or level in {"R1", "R2"}:
-        return "R2_max" if evidence_type == "weak_forensic_triage_signal" else f"{level}_possible"
+    if evidence_type in WEAK_STATISTICAL_EVIDENCE_TYPES or level in {"R1", "R2"}:
+        return "R2_max" if evidence_type in WEAK_STATISTICAL_EVIDENCE_TYPES else f"{level}_possible"
     if level == "R4":
         return "R4_only_if_direct_contradiction"
     return f"{level}_possible"
 
 
 def issue(location: str, risk_level: str, message: str, values: dict[str, Any], evidence_type: str = "statistics_consistency") -> dict[str, Any]:
-    is_weak = evidence_type == "weak_forensic_triage_signal"
+    is_weak = evidence_type in WEAK_STATISTICAL_EVIDENCE_TYPES
     return {
         "candidate_id": "",
         "detector": "stats.consistency_check",
@@ -699,7 +769,13 @@ def check_rows(
                 }))
 
         if p_value is not None and not (0 <= p_value <= 1):
-            findings.append(issue(label, "R3", "p value is outside [0, 1]", {"p_value": p_value}))
+            findings.append(issue(
+                label,
+                "R3",
+                "p value is outside [0, 1]",
+                {"p_value": p_value},
+                evidence_type="p_value_range",
+            ))
 
         if mean is not None and sd is not None and abs(mean) > 0 and sd / abs(mean) < 1e-6:
             findings.append(issue(label, "R1", "Extremely small relative SD; weak triage signal", {
@@ -1161,18 +1237,19 @@ def check_column_relationships(
     residual_tolerance: float,
 ) -> list[dict[str, Any]]:
     findings = []
-    names = list(columns)
+    names = [name for name in columns if name not in SUMMARY_COLUMNS and not is_identifier_column(name)]
+    effective_min_pairs = max(min_pairs, DEFAULT_MIN_RELATIONSHIP_PAIRS)
+    comparisons_tested = max(1, (len(names) * (len(names) - 1)) // 2)
+    adjusted_correlation_threshold = 1.0 - ((1.0 - 0.995) / comparisons_tested)
     for i, left in enumerate(names):
-        for j, right in enumerate(names[i + 1:], start=i + 1):
-            if left in SUMMARY_COLUMNS or right in SUMMARY_COLUMNS:
-                continue
+        for right in names[i + 1:]:
             left_time = time_token(left)
             right_time = time_token(right)
             if left_time and right_time:
                 if left_time != right_time:
                     continue
             pairs = shared_pairs(columns[left], columns[right])
-            if len(pairs) < min_pairs:
+            if len(pairs) < effective_min_pairs:
                 continue
             xs = [x for _, x, _ in pairs]
             ys = [y for _, _, y in pairs]
@@ -1199,7 +1276,9 @@ def check_column_relationships(
                     "r2": round(fit["r2"], 10),
                     "max_abs_residual": fit["max_abs_residual"],
                     "same_rank_order": same_rank,
-                    "centered_residual_correlation": round(corr, 10) if corr is not None else None,
+                    "centered_value_correlation": round(corr, 10) if corr is not None else None,
+                    "minimum_relationship_pairs": effective_min_pairs,
+                    "column_pairs_tested": comparisons_tested,
                 }))
             elif same_rank and len(set(xs)) == len(xs) and len(set(ys)) == len(ys):
                 findings.append(issue(f"{path.name}:{left}<->{right}", "R1", "Rank order is identical across columns; weak triage signal", {
@@ -1208,12 +1287,14 @@ def check_column_relationships(
                     "paired_rows": len(pairs),
                     "r2": round(fit["r2"], 6),
                 }, evidence_type="weak_forensic_triage_signal"))
-            elif corr is not None and abs(corr) >= 0.995:
-                findings.append(weak_issue(f"{path.name}:{left}<->{right}", "Residual/rank fluctuation pattern is highly correlated across columns", {
+            elif corr is not None and abs(corr) >= adjusted_correlation_threshold:
+                findings.append(weak_issue(f"{path.name}:{left}<->{right}", "Centered value patterns are highly correlated across columns", {
                     "left_column": left,
                     "right_column": right,
                     "paired_rows": len(pairs),
-                    "centered_residual_correlation": round(corr, 10),
+                    "centered_value_correlation": round(corr, 10),
+                    "multiplicity_adjusted_correlation_threshold": round(adjusted_correlation_threshold, 10),
+                    "column_pairs_tested": comparisons_tested,
                     "r2": round(fit["r2"], 6),
                 }))
     return findings
@@ -1506,6 +1587,7 @@ def check_table_forensics(
 ) -> list[dict[str, Any]]:
     profiles = numeric_profiles or infer_numeric_format_profiles(rows)
     columns = columns or numeric_columns(rows, profiles)
+    relationship_min_pairs = max(min_pairs, DEFAULT_MIN_RELATIONSHIP_PAIRS)
     findings = []
     findings.extend(check_terminal_digits(path, columns, min_digit_count, digit_dominance))
     findings.extend(check_rounding_patterns(path, columns, min_digit_count, rounding_share))
@@ -1520,10 +1602,10 @@ def check_table_forensics(
         pvalue_repeated_value_share,
     ))
     findings.extend(check_repeated_summaries(path, rows, profiles))
-    findings.extend(check_column_relationships(path, columns, min_pairs, residual_tolerance))
+    findings.extend(check_column_relationships(path, columns, relationship_min_pairs, residual_tolerance))
     findings.extend(check_digit_preservation(path, columns, min_pairs, effective_min_count(0, min_digit_pairs), 0.85))
     findings.extend(check_row_digit_preservation(path, rows, profiles, min_pairs, effective_min_count(0, min_digit_pairs)))
-    findings.extend(check_time_stratified_shifts(path, columns, min_pairs, residual_tolerance))
+    findings.extend(check_time_stratified_shifts(path, columns, relationship_min_pairs, residual_tolerance))
     findings.extend(check_longitudinal_mechanics(path, rows, columns, residual_tolerance, profiles))
     return findings
 
@@ -1603,12 +1685,20 @@ def main() -> int:
     candidates = []
     errors = []
     tables = []
+    tables_discovered = 0
+    tables_screened = 0
+    files_with_screenable_tables: list[Path] = []
     for file_path in files:
+        file_has_screenable_table = False
         try:
             for table_path, rows in read_tables(file_path):
+                tables_discovered += 1
                 numeric_profiles = infer_numeric_format_profiles(rows)
                 columns = numeric_columns(rows, numeric_profiles)
                 tables.append((table_path, rows, columns))
+                if rows and (columns or table_has_censored_numeric_records(rows)):
+                    tables_screened += 1
+                    file_has_screenable_table = True
                 candidates.extend(numeric_format_gap_issues(table_path, rows, numeric_profiles))
                 candidates.extend(check_rows(table_path, rows, args.sem_tolerance, args.min_integer_count_n, numeric_profiles))
                 candidates.extend(check_table_forensics(
@@ -1629,6 +1719,10 @@ def main() -> int:
                     columns,
                     numeric_profiles,
                 ))
+            if file_has_screenable_table:
+                files_with_screenable_tables.append(file_path)
+            elif file_path.suffix.lower() in TABLE_EXTS:
+                candidates.append(source_table_no_screenable_records_gap(file_path))
         except Exception as exc:  # noqa: BLE001 - report unreadable data without aborting.
             errors.append({"path": str(file_path), "error": str(exc)})
             if file_path.suffix.lower() in TABLE_EXTS:
@@ -1638,12 +1732,13 @@ def main() -> int:
         item["candidate_id"] = f"BIOMED-STAT-{idx:04d}"
     result = {
         "detector_name": "stats.consistency_check",
-        "detector_version": "0.4.0",
+        "detector_version": "0.5.0",
         "input": {
             "path": str(targets[0]),
             "paths": [str(target) for target in targets],
             "sem_tolerance": args.sem_tolerance,
             "min_pairs": args.min_pairs,
+            "effective_min_relationship_pairs": max(args.min_pairs, DEFAULT_MIN_RELATIONSHIP_PAIRS),
             "min_digit_count": args.min_digit_count,
             "default_min_digit_values": DEFAULT_MIN_DIGIT_VALUES,
             "min_digit_pairs": args.min_digit_pairs,
@@ -1660,6 +1755,9 @@ def main() -> int:
             "pvalue_repeated_value_share": args.pvalue_repeated_value_share,
         },
         "files_screened": [str(p) for p in files],
+        "files_with_screenable_tables": [str(p) for p in files_with_screenable_tables],
+        "tables_discovered": tables_discovered,
+        "tables_screened": tables_screened,
         "candidates": candidates,
         "errors": errors,
     }

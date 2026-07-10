@@ -167,6 +167,85 @@ def append_contextual_or_raw(
     outputs.append(contextual_result.output)
 
 
+INTAKE_COVERAGE_ARTIFACTS = (
+    "xlsx_structure.json",
+    "prism_project_intake.json",
+    "fcs_metadata_intake.json",
+    "docx_structure.json",
+    "pdf_structure.json",
+    "pdf_embedded_images.json",
+    "pptx_structure.json",
+    "pptx_embedded_images.json",
+    "key_embedded_images.json",
+    "psd_preview_images.json",
+    "image_metadata.json",
+)
+
+
+def intake_error_location(package: Path, artifact_name: str, error: Any) -> str:
+    if not isinstance(error, dict):
+        return artifact_name
+    raw_path = str(error.get("path", "")).strip()
+    if not raw_path:
+        return artifact_name
+    try:
+        return Path(raw_path).expanduser().resolve().relative_to(package.resolve()).as_posix()
+    except (OSError, ValueError):
+        return artifact_name
+
+
+def write_intake_coverage_gaps(package: Path, output_dir: Path) -> Path | None:
+    candidates: list[dict[str, Any]] = []
+    for artifact_name in INTAKE_COVERAGE_ARTIFACTS:
+        artifact = output_dir / artifact_name
+        payload = read_json(artifact) if artifact.is_file() else None
+        if not payload:
+            continue
+        for error in payload.get("errors", []) or []:
+            detail = error if isinstance(error, dict) else {"error": str(error)}
+            message = str(detail.get("error") or detail.get("reason") or "intake extraction failed")
+            candidates.append({
+                "candidate_id": f"AUDIT-INTAKE-{len(candidates) + 1:04d}",
+                "detector": "audit.intake_coverage",
+                "candidate_type": "audit_coverage_gap",
+                "locations": [intake_error_location(package, artifact_name, error)],
+                "finding_type": "material intake extraction gap",
+                "evidence": {
+                    "gap_type": "intake_extraction_failed",
+                    "artifact": artifact_name,
+                    "stage": str(detail.get("stage", "")),
+                    "message": message,
+                },
+                "evidence_strength": "weak_signal",
+                "risk_suggestion": "R1_max",
+                "risk_cap_tags": ["audit_coverage_gap", "completeness_gap", "intake_extraction_failed"],
+                "benign_explanations": [
+                    "the supplied file may be valid but use a container feature or encoding not supported by this intake extractor",
+                    "an equivalent machine-readable export may exist outside the supplied package",
+                ],
+                "required_materials": [
+                    "a machine-readable export of the affected material",
+                    "manual review of the affected file until automated intake can be repeated",
+                ],
+                "recommended_action": (
+                    "Review the intake error, provide a supported export where possible, and do not treat the affected material as screened."
+                ),
+                "requires_contextual_calibration": True,
+            })
+    if not candidates:
+        return None
+    output = output_dir / "intake_coverage_candidates.json"
+    write_json(output, {
+        "detector_name": "audit.intake_coverage",
+        "detector_version": "0.1.0",
+        "input": {"package": str(package)},
+        "candidates": candidates,
+        "errors": [],
+    })
+    validate_detector(output)
+    return output
+
+
 def supplementary_source_table_candidates(package: Path) -> list[Path]:
     candidates = []
     for item in sorted(package.rglob("*")):
@@ -355,6 +434,8 @@ def run_image_detector(
             str(package),
             "--provenance",
             str(provenance_graph),
+            "--screening-inputs",
+            str(output_dir / "image_screening_inputs.json"),
             "--output",
             str(contextual_output),
         ], contextual_output)
@@ -433,6 +514,8 @@ def run_image_detector(
             str(package),
             "--provenance",
             str(provenance_graph),
+            "--screening-inputs",
+            str(output_dir / "image_screening_inputs.json"),
             "--output",
             str(keypoint_contextual_output),
         ], keypoint_contextual_output)
@@ -474,6 +557,8 @@ def run_image_detector(
             str(package),
             "--provenance",
             str(provenance_graph),
+            "--screening-inputs",
+            str(output_dir / "image_screening_inputs.json"),
             "--output",
             str(local_patch_contextual_output),
         ], local_patch_contextual_output)

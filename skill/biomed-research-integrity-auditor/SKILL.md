@@ -125,6 +125,7 @@ Calibration, risk caps, action queue construction, and report assembly must rema
    - Evidence crops from local patch screening are written under `audit_outputs/<case>/evidence/local_patch/`.
    - `scripts/image_similarity_screen.py` is a deprecated compatibility wrapper only; it delegates to the global near-duplicate detector and should not be the recommended workflow.
    - High-bit-depth grayscale inputs such as 16-bit TIFFs are contrast-normalized for screening before hashing or tile comparison.
+   - Whole-image hash screening excludes near-uniform low-information frames and requires agreement from at least two hash methods. Record these exclusions as scope limits; a blank or near-solid panel is not cleared by being excluded from non-discriminative hash comparison.
    - Inspect candidate repeats across main figures, supplementary figures, source images, and raw images.
    - Prioritize Western blot/gel, microscopy, histology/IHC/IF, wound healing, colony formation, animal images, and flow plots.
 
@@ -152,6 +153,7 @@ Calibration, risk caps, action queue construction, and report assembly must rema
    - Do not over-read tiny samples: terminal-digit, rounding, precision, and digit-preservation screens require at least 8 comparable values by default; integer-count mean/SD/n feasibility checks require n >= 6 and account for reported mean/SD precision.
    - Benford-style and p-value-clustering screens are automatic weak prompts only when their sample-size gates are met (default: 30 positive values for Benford-style; 20 p-values for clustering). Never present them as standalone evidence.
    - Run `detectors/stats/pseudoreplication_screen.py <source_data_dir>` when source tables include animal, patient, field, well, section, cell, or technical-replicate IDs.
+   - Treat repeated fields/wells/visits nested within animals or patients as an R1 model-verification prompt by default. A machine-readable declaration that inferential `n` is based on fields, wells, cells, or other technical units can justify an R2 candidate, but hierarchy alone must not be escalated to R3.
 
 7. Audit methodology and compliance gaps.
    - Read `references/biomed-module-checklists.md` for domain-specific checks.

@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import math
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
@@ -52,6 +53,10 @@ TECHNICAL_ID_COLUMNS = (
     "image_id",
     "image_num",
     "image_number",
+    "visit",
+    "visit_id",
+    "timepoint",
+    "timepoint_id",
 )
 
 
@@ -63,6 +68,36 @@ def cell_to_text(value: Any) -> str:
     if value is None:
         return ""
     return str(value)
+
+
+def xlsx_header_score(values: list[Any]) -> float:
+    populated = [cell_to_text(value).strip() for value in values if cell_to_text(value).strip()]
+    if len(populated) < 2:
+        return float("-inf")
+    normalized = [normalize_header(value) for value in populated]
+    hints = (
+        set(BIOLOGICAL_ID_COLUMNS)
+        | set(TECHNICAL_ID_COLUMNS)
+        | {"group", "condition", "treatment", "arm", "value", "reported_n_basis"}
+    )
+    recognized = sum(value in hints for value in normalized)
+    numeric = 0
+    for value in populated:
+        try:
+            float(value)
+            numeric += 1
+        except ValueError:
+            pass
+    return (recognized * 8.0) + ((len(populated) - numeric) * 1.5) - (numeric * 3.0)
+
+
+def select_xlsx_header_index(matrix: list[list[Any]], search_rows: int = 20) -> int | None:
+    nonempty = [idx for idx, values in enumerate(matrix[:search_rows]) if any(cell_to_text(value).strip() for value in values)]
+    if not nonempty:
+        return None
+    scored = [(xlsx_header_score(matrix[idx]), idx) for idx in nonempty]
+    best_score, best_idx = max(scored, key=lambda item: (item[0], -item[1]))
+    return best_idx if math.isfinite(best_score) else nonempty[0]
 
 
 def read_delimited_table(path: Path) -> list[dict[str, str]]:
@@ -81,18 +116,16 @@ def read_xlsx_tables(path: Path) -> list[tuple[Path, list[dict[str, str]]]]:
     workbook = load_workbook(path, read_only=True, data_only=True)
     tables: list[tuple[Path, list[dict[str, str]]]] = []
     for sheet in workbook.worksheets:
-        headers: list[str] | None = None
+        matrix = [list(values) for values in sheet.iter_rows(values_only=True)]
+        header_idx = select_xlsx_header_index(matrix)
+        if header_idx is None:
+            continue
+        headers = [
+            normalize_header(cell_to_text(value)) if cell_to_text(value).strip() else f"column_{idx + 1}"
+            for idx, value in enumerate(matrix[header_idx])
+        ]
         rows: list[dict[str, str]] = []
-        for values in sheet.iter_rows(values_only=True):
-            values = list(values)
-            if headers is None:
-                if not any(cell_to_text(value).strip() for value in values):
-                    continue
-                headers = [
-                    normalize_header(cell_to_text(value)) if cell_to_text(value).strip() else f"column_{idx + 1}"
-                    for idx, value in enumerate(values)
-                ]
-                continue
+        for values in matrix[header_idx + 1:]:
             if not any(cell_to_text(value).strip() for value in values):
                 continue
             rows.append({
@@ -176,9 +209,9 @@ def screen_table(path: Path, rows: list[dict[str, str]]) -> list[dict[str, Any]]
                     "reported_n_basis_values": sorted(v for v in reported_n_basis_values if v),
                     "reported_n_appears_technical": reported_technical,
                 },
-                "evidence_strength": "candidate",
-                "risk_suggestion": "R2_or_R3_depending_on_claim_centrality",
-                "risk_cap_tags": ["pseudoreplication_candidate"],
+                "evidence_strength": "weak_signal",
+                "risk_suggestion": "R2_possible" if reported_technical else "R1_possible",
+                "risk_cap_tags": ["pseudoreplication_candidate", "weak_statistical_signal"],
                 "benign_explanations": [
                     "analysis may use a nested or mixed-effects model",
                     "technical replicates may have been averaged before inferential testing",
@@ -210,7 +243,7 @@ def scan(root: Path) -> dict[str, Any]:
         candidate["candidate_id"] = f"STAT-PSEUDO-{idx:04d}"
     return {
         "detector_name": "stats.pseudoreplication_screen",
-        "detector_version": "0.2.0",
+        "detector_version": "0.3.1",
         "input": {"root": str(root)},
         "candidates": candidates,
         "errors": errors,

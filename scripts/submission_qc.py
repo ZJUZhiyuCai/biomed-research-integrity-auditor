@@ -15,7 +15,7 @@ import html
 import json
 import re
 import shutil
-import textwrap
+import unicodedata
 from pathlib import Path
 from typing import Any
 
@@ -710,39 +710,113 @@ def author_signoff_template(audit_id: str) -> dict[str, Any]:
     }
 
 
-def markdown_to_basic_html(markdown_text: str, title: str) -> str:
-    body_lines = []
-    in_code = False
-    for raw in markdown_text.splitlines():
-        line = raw.rstrip()
-        if line.startswith("```"):
-            body_lines.append("</pre>" if in_code else "<pre>")
-            in_code = not in_code
+def human_report_markdown(markdown_text: str) -> str:
+    """Remove the machine JSON appendix from human-facing derivatives."""
+    kept: list[str] = []
+    skipping_summary = False
+    for line in markdown_text.splitlines():
+        if line.strip().startswith("```json AUDIT_JSON_SUMMARY"):
+            skipping_summary = True
+            kept.extend([
+                "> Machine-readable details are stored separately in `AUDIT_JSON_SUMMARY.json`.",
+                "> 机器可读明细已单独保存于 `AUDIT_JSON_SUMMARY.json`。",
+            ])
             continue
-        escaped = html.escape(line)
+        if skipping_summary:
+            if line.strip() == "```":
+                skipping_summary = False
+            continue
+        kept.append(line)
+    return "\n".join(kept).rstrip() + "\n"
+
+
+def inline_markdown(text: str) -> str:
+    escaped = html.escape(text)
+    escaped = re.sub(r"`([^`]+)`", r"<code>\1</code>", escaped)
+    escaped = re.sub(r"\*\*([^*]+)\*\*", r"<strong>\1</strong>", escaped)
+    return escaped
+
+
+def markdown_table_cells(line: str) -> list[str]:
+    return [cell.strip() for cell in line.strip().strip("|").split("|")]
+
+
+def is_markdown_table_separator(line: str) -> bool:
+    cells = markdown_table_cells(line)
+    return bool(cells) and all(re.fullmatch(r":?-{3,}:?", cell.replace(" ", "")) for cell in cells)
+
+
+def markdown_to_basic_html(markdown_text: str, title: str) -> str:
+    lines = human_report_markdown(markdown_text).splitlines()
+    body_lines: list[str] = []
+    in_code = False
+    in_list = False
+    idx = 0
+    while idx < len(lines):
+        line = lines[idx].rstrip()
+        if line.startswith("```"):
+            if in_list:
+                body_lines.append("</ul>")
+                in_list = False
+            body_lines.append("</code></pre>" if in_code else "<pre><code>")
+            in_code = not in_code
+            idx += 1
+            continue
         if in_code:
-            body_lines.append(escaped)
+            body_lines.append(html.escape(line))
+            idx += 1
+            continue
+        if idx + 1 < len(lines) and "|" in line and is_markdown_table_separator(lines[idx + 1]):
+            if in_list:
+                body_lines.append("</ul>")
+                in_list = False
+            headers = markdown_table_cells(line)
+            body_lines.append("<table><thead><tr>" + "".join(f"<th>{inline_markdown(cell)}</th>" for cell in headers) + "</tr></thead><tbody>")
+            idx += 2
+            while idx < len(lines) and "|" in lines[idx] and lines[idx].strip():
+                cells = markdown_table_cells(lines[idx])
+                body_lines.append("<tr>" + "".join(f"<td>{inline_markdown(cell)}</td>" for cell in cells) + "</tr>")
+                idx += 1
+            body_lines.append("</tbody></table>")
+            continue
+        if line.startswith("- "):
+            if not in_list:
+                body_lines.append("<ul>")
+                in_list = True
+            body_lines.append(f"<li>{inline_markdown(line[2:].strip())}</li>")
+            idx += 1
+            continue
+        if in_list:
+            body_lines.append("</ul>")
+            in_list = False
+        stripped = line.strip()
+        if stripped in {"<details>", "</details>"}:
+            body_lines.append(stripped)
+        elif stripped.startswith("<summary>") and stripped.endswith("</summary>"):
+            summary = stripped[len("<summary>"):-len("</summary>")]
+            body_lines.append(f"<summary>{inline_markdown(summary)}</summary>")
         elif line.startswith("# "):
-            body_lines.append(f"<h1>{html.escape(line[2:].strip())}</h1>")
+            body_lines.append(f"<h1>{inline_markdown(line[2:].strip())}</h1>")
         elif line.startswith("## "):
-            body_lines.append(f"<h2>{html.escape(line[3:].strip())}</h2>")
+            body_lines.append(f"<h2>{inline_markdown(line[3:].strip())}</h2>")
         elif line.startswith("### "):
-            body_lines.append(f"<h3>{html.escape(line[4:].strip())}</h3>")
-        elif line.startswith("- "):
-            body_lines.append(f"<p>&bull; {html.escape(line[2:].strip())}</p>")
+            body_lines.append(f"<h3>{inline_markdown(line[4:].strip())}</h3>")
         elif line.startswith("> "):
-            body_lines.append(f"<blockquote>{html.escape(line[2:].strip())}</blockquote>")
+            body_lines.append(f"<blockquote>{inline_markdown(line[2:].strip())}</blockquote>")
+        elif re.fullmatch(r"\s*---+\s*", line):
+            body_lines.append("<hr>")
         elif line:
-            body_lines.append(f"<p>{escaped}</p>")
-        else:
-            body_lines.append("")
+            body_lines.append(f"<p>{inline_markdown(line)}</p>")
+        idx += 1
+    if in_list:
+        body_lines.append("</ul>")
     return "\n".join([
         "<!doctype html>",
         "<html lang=\"en\">",
         "<head>",
         "<meta charset=\"utf-8\">",
         f"<title>{html.escape(title)}</title>",
-        "<style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:980px;margin:40px auto;line-height:1.55;color:#1f2937}pre{white-space:pre-wrap;background:#f8fafc;padding:16px;border:1px solid #e5e7eb}blockquote{border-left:4px solid #0f766e;padding-left:12px;color:#475569}table{border-collapse:collapse}td,th{border:1px solid #e5e7eb;padding:4px 8px}</style>",
+        "<style>body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC',sans-serif;max-width:980px;margin:40px auto;padding:0 20px;line-height:1.55;color:#1f2937}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f8fafc;padding:16px;border:1px solid #e5e7eb}code{font-family:ui-monospace,SFMono-Regular,monospace}blockquote{border-left:4px solid #0f766e;padding-left:12px;color:#475569}table{width:100%;border-collapse:collapse;margin:16px 0;font-size:.94rem}td,th{border:1px solid #cbd5e1;padding:6px 8px;text-align:left;vertical-align:top}th{background:#f1f5f9}details{border:1px solid #e2e8f0;padding:10px 12px;margin:12px 0}@media print{body{max-width:none;margin:0}details{display:block}details>*{display:block!important}}</style>",
         "</head>",
         "<body>",
         *body_lines,
@@ -751,25 +825,86 @@ def markdown_to_basic_html(markdown_text: str, title: str) -> str:
     ])
 
 
+def markdown_to_pdf_text(markdown_text: str) -> str:
+    lines: list[str] = []
+    in_code = False
+    for raw in human_report_markdown(markdown_text).splitlines():
+        line = raw.strip()
+        if line.startswith("```"):
+            in_code = not in_code
+            continue
+        if line in {"<details>", "</details>"}:
+            continue
+        line = re.sub(r"^<summary>(.*?)</summary>$", r"\1", line)
+        if not in_code:
+            line = re.sub(r"^#{1,6}\s+", "", line)
+            line = re.sub(r"^>\s?", "", line)
+            line = re.sub(r"^[-*]\s+", "• ", line)
+            line = line.replace("**", "").replace("`", "")
+            if is_markdown_table_separator(line):
+                continue
+        lines.append(line)
+    return "\n".join(lines)
+
+
+def display_width(text: str) -> int:
+    return sum(2 if unicodedata.east_asian_width(char) in {"W", "F"} else 1 for char in text)
+
+
+def wrap_display_text(text: str, width: int = 88) -> list[str]:
+    if not text:
+        return [""]
+    wrapped: list[str] = []
+    current = ""
+    last_space = -1
+    for char in text:
+        candidate = current + char
+        if display_width(candidate) <= width:
+            current = candidate
+            if char.isspace():
+                last_space = len(current) - 1
+            continue
+        if last_space > 0:
+            wrapped.append(current[:last_space].rstrip())
+            current = current[last_space + 1:] + char
+        else:
+            wrapped.append(current.rstrip())
+            current = char
+        last_space = current.rfind(" ")
+    if current or not wrapped:
+        wrapped.append(current.rstrip())
+    return wrapped
+
+
 def write_basic_pdf(path: Path, text: str) -> bool:
     try:
         import fitz  # type: ignore
     except Exception:
         return False
-    doc = fitz.open()
-    page = doc.new_page(width=595, height=842)
-    y = 50
-    for paragraph in text.splitlines():
-        lines = textwrap.wrap(paragraph, width=92) or [""]
-        for line in lines:
-            if y > 800:
-                page = doc.new_page(width=595, height=842)
-                y = 50
-            page.insert_text((50, y), line, fontsize=9)
-            y += 12
-    doc.save(path)
-    doc.close()
-    return True
+    try:
+        doc = fitz.open()
+
+        def new_page():
+            created = doc.new_page(width=595, height=842)
+            created.insert_font(fontname="china-s")
+            return created
+
+        page = new_page()
+        y = 50.0
+        for paragraph in markdown_to_pdf_text(text).splitlines():
+            for line in wrap_display_text(paragraph):
+                if y > 800:
+                    page = new_page()
+                    y = 50.0
+                page.insert_text((50, y), line, fontsize=9, fontname="china-s")
+                y += 12.5
+        doc.set_metadata({"title": "Biomedical submission QC report", "subject": "Human-readable research integrity audit output"})
+        doc.save(path)
+        doc.close()
+        return True
+    except Exception:  # noqa: BLE001 - PDF is an optional derivative; Markdown/HTML remain authoritative.
+        path.unlink(missing_ok=True)
+        return False
 
 
 def risk_label(summary: dict[str, Any]) -> str:

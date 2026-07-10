@@ -1979,6 +1979,22 @@ def update_action_trackers(output_dir: Path, action_id: str, request: ActionUpda
         rows[:] = [row for row in rows if row.get("action_id") != action_id]
 
     normalized_status = updated.get("status", "").strip().lower()
+    rationale = updated.get("accepted_with_reason", "").strip() or updated.get("human_note", "").strip()
+    if normalized_status in ACCEPTED_STATUSES | NON_ACTIONABLE_STATUSES:
+        if not rationale:
+            raise HTTPException(
+                status_code=400,
+                detail="Accepted or non-actionable actions require a reason",
+            )
+        if not updated.get("accepted_with_reason", "").strip():
+            updated["accepted_with_reason"] = rationale
+    if normalized_status in RESOLVED_STATUSES and not (
+        updated.get("human_note", "").strip() or updated.get("attachment_reference", "").strip()
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="Resolved actions require a review note or attachment reference",
+        )
     if (
         normalized_status in ACCEPTED_STATUSES
         or normalized_status in NON_ACTIONABLE_STATUSES

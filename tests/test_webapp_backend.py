@@ -442,7 +442,9 @@ class WebappBackendTests(unittest.TestCase):
                 with (output_dir / "unresolved_actions.csv").open(newline="", encoding="utf-8") as handle:
                     rows = list(csv.DictReader(handle))
                 self.assertEqual(rows[0]["attachment_reference"], reference)
-                self.assertEqual(reference, list(csv.DictReader((packet / "unresolved_actions.csv").open(newline="", encoding="utf-8")))[0]["attachment_reference"])
+                with (packet / "unresolved_actions.csv").open(newline="", encoding="utf-8") as handle:
+                    packet_rows = list(csv.DictReader(handle))
+                self.assertEqual(reference, packet_rows[0]["attachment_reference"])
 
                 artifact_path = f"submission_qc_packet/{reference}"
                 self.assertTrue(webapp_app.artifact_download_allowed(artifact_path))
@@ -494,11 +496,70 @@ class WebappBackendTests(unittest.TestCase):
                 payload = response.json()["action_trackers"]
                 self.assertEqual(payload["unresolved"], [])
                 self.assertEqual(payload["accepted_with_reason"][0]["status"], "false_positive")
+                self.assertEqual(
+                    payload["accepted_with_reason"][0]["accepted_with_reason"],
+                    "manual review found this non-actionable",
+                )
 
             accepted_text = (output_dir / "accepted_with_reason.csv").read_text(encoding="utf-8")
             self.assertIn("false_positive", accepted_text)
             self.assertIn("manual review found this non-actionable", accepted_text)
             self.assertEqual(accepted_text, (packet / "accepted_with_reason.csv").read_text(encoding="utf-8"))
+
+    def test_webapp_action_patch_requires_rationale_or_resolution_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            app = create_app(output_root=tmp_path / "runs")
+            settings = app.state.settings
+            audit_id = "20260710-action-requirements"
+            output_dir = settings.audits_dir / audit_id
+            output_dir.mkdir(parents=True)
+            job = webapp_app.AuditJob(
+                audit_id=audit_id,
+                status="completed",
+                package_path=str(ROOT / "examples" / "minimal_package"),
+                mode="internal_presubmission",
+                scan_profile="standard",
+                domains="wetlab",
+                external_literature_provider="none",
+                reference_check_provider="none",
+                output_dir=str(output_dir),
+                created_at=time.time(),
+                updated_at=time.time(),
+                command=[],
+            )
+            webapp_app.save_job(settings, job)
+            header = "action_id,action_category,risk_level,action_type,location,required_action,owner,status,human_note,accepted_with_reason,source\n"
+            (output_dir / "unresolved_actions.csv").write_text(
+                header
+                + "ACT-0003,low_priority_checks,R1,review,Figure 1,Review candidate,,unresolved,,,finding\n"
+                + "ACT-0004,low_priority_checks,R1,review,Figure 2,Review candidate,,unresolved,,,finding\n",
+                encoding="utf-8",
+            )
+            (output_dir / "resolved_actions.csv").write_text(header, encoding="utf-8")
+            (output_dir / "accepted_with_reason.csv").write_text(header, encoding="utf-8")
+
+            with TestClient(app) as client:
+                response = client.patch(
+                    f"/api/audits/{audit_id}/actions/ACT-0003",
+                    json={"status": "false_positive"},
+                )
+                self.assertEqual(response.status_code, 400)
+                self.assertIn("require a reason", response.json()["detail"])
+
+                response = client.patch(
+                    f"/api/audits/{audit_id}/actions/ACT-0004",
+                    json={"status": "resolved"},
+                )
+                self.assertEqual(response.status_code, 400)
+                self.assertIn("review note or attachment", response.json()["detail"])
+
+                response = client.patch(
+                    f"/api/audits/{audit_id}/actions/ACT-0004",
+                    json={"status": "resolved", "attachment_reference": "source_data/rechecked.csv"},
+                )
+                response.raise_for_status()
+                self.assertEqual(response.json()["action_trackers"]["resolved"][0]["status"], "resolved")
 
     def test_webapp_marks_orphaned_running_audits_failed_on_startup(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

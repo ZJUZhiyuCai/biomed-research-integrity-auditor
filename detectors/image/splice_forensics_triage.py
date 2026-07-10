@@ -20,7 +20,7 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
 
-from detectors.image.image_io import normalized_rgb
+from detectors.image.image_io import DEFAULT_MAX_FRAMES, normalized_frame_inventory, normalized_rgb
 
 
 DETECTOR_NAME = "image.splice_forensics_triage"
@@ -81,8 +81,14 @@ def tile_stats(array: Any, tile_size: int, stride: int) -> list[dict[str, Any]]:
     tiles: list[dict[str, Any]] = []
     if width < tile_size or height < tile_size:
         return tiles
-    for y in range(0, height - tile_size + 1, stride):
-        for x in range(0, width - tile_size + 1, stride):
+    x_positions = list(range(0, width - tile_size + 1, stride))
+    y_positions = list(range(0, height - tile_size + 1, stride))
+    if x_positions[-1] != width - tile_size:
+        x_positions.append(width - tile_size)
+    if y_positions[-1] != height - tile_size:
+        y_positions.append(height - tile_size)
+    for y in y_positions:
+        for x in x_positions:
             tile = array[y:y + tile_size, x:x + tile_size]
             tiles.append({
                 "x": int(x),
@@ -223,6 +229,7 @@ def candidate(
     analysis_type: str,
     tile: dict[str, Any],
     image_size: tuple[int, int],
+    source_image_size: tuple[int, int],
     risk_suggestion: str = "R2",
 ) -> dict[str, Any]:
     metric_labels = {
@@ -251,16 +258,33 @@ def candidate(
             "This is a weak triage signal requiring raw acquisition files and specialist review."
         ),
     )
+    scale_x = source_image_size[0] / max(1, image_size[0])
+    scale_y = source_image_size[1] / max(1, image_size[1])
+    working_region = {
+        "x": tile.get("x"),
+        "y": tile.get("y"),
+        "width": tile.get("width"),
+        "height": tile.get("height"),
+    }
+    source_region = {
+        "x": round(float(tile.get("x", 0)) * scale_x),
+        "y": round(float(tile.get("y", 0)) * scale_y),
+        "width": round(float(tile.get("width", 0)) * scale_x),
+        "height": round(float(tile.get("height", 0)) * scale_y),
+    }
     evidence = {
         "analysis_type": analysis_type,
         "path": path,
         "metric": metric_label,
-        "region": {
-            "x": tile.get("x"),
-            "y": tile.get("y"),
-            "width": tile.get("width"),
-            "height": tile.get("height"),
-        },
+        "region": working_region,
+        "coordinate_space": "resized_working_image",
+        "source_region": source_region,
+        "working_image_width": image_size[0],
+        "working_image_height": image_size[1],
+        "source_image_width": source_image_size[0],
+        "source_image_height": source_image_size[1],
+        "working_to_source_scale_x": round(scale_x, 6),
+        "working_to_source_scale_y": round(scale_y, 6),
         "tile_mean": round(float(tile.get("mean", 0.0)), 4),
         "tile_stddev": round(float(tile.get("stddev", 0.0)), 4),
         "robust_z": round(float(tile.get("robust_z", 0.0)), 4),
@@ -327,10 +351,14 @@ def analyze_image(
     jpeg_ghost_range_threshold: float,
     jpeg_ghost_qualities: list[int],
     min_tiles: int,
+    frame_label: str = "",
+    frame_image: Any | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     candidates: list[dict[str, Any]] = []
-    rel = relpath(package, path)
-    img = resize_for_screen(open_rgb(path), max_dimension)
+    rel = f"{relpath(package, path)}{frame_label}"
+    original = frame_image.copy() if frame_image is not None else open_rgb(path)
+    source_image_size = original.size
+    img = resize_for_screen(original, max_dimension)
     image_size = img.size
     diagnostics: dict[str, Any] = {
         "path": rel,
@@ -351,7 +379,7 @@ def analyze_image(
             diagnostics["ela_tile_count"] = int(best["tile_count"])
             if best["tile_count"] >= min_tiles and best["robust_z"] >= ela_z_threshold:
                 diagnostics["signals"].append("jpeg_ela_residual_outlier")
-                candidates.append(candidate(0, rel, "jpeg_ela_residual_outlier", best, image_size))
+                candidates.append(candidate(0, rel, "jpeg_ela_residual_outlier", best, image_size, source_image_size))
         ghost = jpeg_ghost_profile_tile(img, jpeg_ghost_qualities, tile_size, stride)
         if ghost:
             diagnostics["jpeg_ghost_best_robust_z"] = round(float(ghost["robust_z"]), 4)
@@ -364,7 +392,7 @@ def analyze_image(
                 and ghost["profile_range"] >= jpeg_ghost_range_threshold
             ):
                 diagnostics["signals"].append("jpeg_ghost_profile_outlier")
-                candidates.append(candidate(0, rel, "jpeg_ghost_profile_outlier", ghost, image_size))
+                candidates.append(candidate(0, rel, "jpeg_ghost_profile_outlier", ghost, image_size, source_image_size))
 
     noise_tiles = tile_stats(highpass_noise_array(img), tile_size, stride)
     best_noise = strongest_tile(noise_tiles, key="stddev")
@@ -373,7 +401,7 @@ def analyze_image(
         diagnostics["noise_tile_count"] = int(best_noise["tile_count"])
         if best_noise["tile_count"] >= min_tiles and best_noise["robust_z"] >= noise_z_threshold:
             diagnostics["signals"].append("noise_residual_outlier")
-            candidates.append(candidate(0, rel, "noise_residual_outlier", best_noise, image_size))
+            candidates.append(candidate(0, rel, "noise_residual_outlier", best_noise, image_size, source_image_size))
 
     cfa_tiles = tile_stats(cfa_grid_energy_array(img), tile_size, stride)
     best_cfa = strongest_tile(cfa_tiles)
@@ -387,7 +415,7 @@ def analyze_image(
             and float(best_cfa.get("mean", 0.0)) >= cfa_mean_threshold
         ):
             diagnostics["signals"].append("cfa_grid_consistency_outlier")
-            candidates.append(candidate(0, rel, "cfa_grid_consistency_outlier", best_cfa, image_size))
+            candidates.append(candidate(0, rel, "cfa_grid_consistency_outlier", best_cfa, image_size, source_image_size))
 
     return candidates, diagnostics
 
@@ -413,6 +441,7 @@ def build_payload(
     diagnostics: list[dict[str, Any]] = []
     screened = 0
     limit_reached = False
+    frame_limits: list[dict[str, Any]] = []
     jpeg_ghost_qualities = jpeg_ghost_qualities or [65, 75, 85, 95]
 
     for path in images:
@@ -420,26 +449,43 @@ def build_payload(
             limit_reached = True
             break
         try:
-            found, diag = analyze_image(
-                package,
-                path,
-                tile_size,
-                stride,
-                max_dimension,
-                ela_z_threshold,
-                noise_z_threshold,
-                cfa_z_threshold,
-                cfa_mean_threshold,
-                jpeg_ghost_z_threshold,
-                jpeg_ghost_range_threshold,
-                jpeg_ghost_qualities,
-                min_tiles,
-            )
-            screened += 1
-            diagnostics.append(diag)
-            for item in found:
-                item["candidate_id"] = f"IMG-SPLICE-TRIAGE-{len(candidates) + 1:04d}"
-                candidates.append(item)
+            from PIL import Image
+
+            with Image.open(path) as source_image:
+                frames, total_frames, frames_truncated = normalized_frame_inventory(source_image)
+            if frames_truncated:
+                frame_limits.append({
+                    "path": relpath(package, path),
+                    "frames_total": total_frames,
+                    "frames_screened": len(frames),
+                    "max_frames": DEFAULT_MAX_FRAMES,
+                })
+            for frame_label, frame_image in frames:
+                if screened >= max_images:
+                    limit_reached = True
+                    break
+                found, diag = analyze_image(
+                    package,
+                    path,
+                    tile_size,
+                    stride,
+                    max_dimension,
+                    ela_z_threshold,
+                    noise_z_threshold,
+                    cfa_z_threshold,
+                    cfa_mean_threshold,
+                    jpeg_ghost_z_threshold,
+                    jpeg_ghost_range_threshold,
+                    jpeg_ghost_qualities,
+                    min_tiles,
+                    frame_label,
+                    frame_image,
+                )
+                screened += 1
+                diagnostics.append(diag)
+                for item in found:
+                    item["candidate_id"] = f"IMG-SPLICE-TRIAGE-{len(candidates) + 1:04d}"
+                    candidates.append(item)
         except Exception as exc:  # noqa: BLE001 - surface unreadable images as detector errors.
             errors.append({
                 "path": relpath(package, path),
@@ -474,7 +520,7 @@ def build_payload(
 
     return {
         "detector_name": DETECTOR_NAME,
-        "detector_version": DETECTOR_VERSION,
+        "detector_version": "0.3.0",
         "input": {
             "package": str(package),
             "tile_size": tile_size,
@@ -496,6 +542,7 @@ def build_payload(
             1 for item in candidates if item.get("candidate_type") == "splice_forensics_triage_signal"
         ),
         "coverage_limit_reached": limit_reached,
+        "frame_screening_limits": frame_limits,
         "diagnostics": diagnostics[:200],
         "scope_note": (
             "ELA/JPEG residual, noise-map, JPEG ghost-profile, and CFA-like grid outliers are weak triage prompts. "

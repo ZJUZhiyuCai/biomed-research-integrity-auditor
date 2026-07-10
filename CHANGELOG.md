@@ -3,6 +3,17 @@
 ## Unreleased
 
 ### Added
+- Audit publication is now transactional: each output directory has a single-writer lock, detector
+  artifacts are built in a sibling staging directory, failed runs preserve the previous audit, and
+  successful runs atomically replace generated files while retaining unrelated user files.
+- Image evidence now records working and source coordinate spaces. Multi-frame global screening
+  skips ordinary within-stack frame comparisons, reports the frame cap as an R1 coverage gap, and
+  presentation-derived PDF/PPTX copies are not misreported as independent cross-context reuse.
+- XLSX statistical and pseudoreplication intake can locate a real header row below workbook title
+  lines. Column relationship screens now require at least eight paired values and use a
+  multiplicity-adjusted correlation threshold.
+- Submission-QC HTML now renders Markdown tables and lists, while the PDF uses searchable CJK text;
+  both human derivatives omit the machine JSON appendix and point readers to its separate file.
 - Portable local parallel workstreams are now the default audit execution mode. Independent intake
   and detector workstreams run concurrently, write `workstreams.json`, and surface the effective
   execution mode in coverage, pipeline summaries, and human reports; `--execution-mode sequential`

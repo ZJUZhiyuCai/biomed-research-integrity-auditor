@@ -24,6 +24,8 @@ detector_caps:
     max: R2
   p_value_clustering:
     max: R2
+  p_value_range:
+    max: R2
 
   image_similarity_candidate:
     max: R3
@@ -67,7 +69,7 @@ detector_caps:
     report_as: positive_evidence
 
   pseudoreplication_candidate:
-    max: R3
+    max: R2
   detector_execution_failure:
     max: R1
   audit_coverage_gap:

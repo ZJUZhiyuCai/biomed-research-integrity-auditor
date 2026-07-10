@@ -29,16 +29,19 @@ from calibrators.contract_validation import ContractError, validate_instance
 from calibrators.risk_cap_engine import calibrate_payload, load_rules
 from detectors.image.image_io import iter_normalized_frames, normalized_rgb
 from provenance.panel_modality import normalize_modality, resolve_panel_modality_routing
-from scripts.pipeline.detector_registry import run_registered_detectors
+from scripts.pipeline.detector_registry import RESERVED_OUTPUT_PATHS, run_registered_detectors
 from scripts.pipeline.common import DetectorRunResult
 from scripts.pipeline.detectors import append_contextual_or_raw, run_detector
-from scripts.pipeline.orchestrator import clean_previous_run_artifacts
+from scripts.pipeline.orchestrator import RUN_ARTIFACTS, clean_previous_run_artifacts, validate_run_paths
+from scripts.pipeline.orchestrator import output_run_lock, run_pipeline
 from scripts.pipeline.guardrails import (
     PackageGuardrailLimits,
     scan_package_guardrails,
     write_package_guardrail_candidates,
 )
 from scripts.submission_qc import (
+    markdown_to_basic_html,
+    write_basic_pdf,
     write_claim_coverage_csv,
     write_correction_plan_csv,
     write_missing_materials_csv,
@@ -888,6 +891,26 @@ class ContractPipelineTests(unittest.TestCase):
             transforms = {edge["best_transform"] for edge in candidate["evidence"]["edges"]}
             self.assertIn("flip_h", transforms)
 
+    def test_global_image_detector_excludes_solid_low_information_images(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "images"
+            package.mkdir()
+            write_png(package / "solid_red.png", Image.new("RGB", (128, 128), (255, 0, 0)))
+            write_png(package / "solid_blue.png", Image.new("RGB", (128, 128), (0, 0, 255)))
+            output = Path(tmp) / "global.json"
+            run([
+                PYTHON,
+                "detectors/image/global_near_duplicate.py",
+                str(package),
+                "--output",
+                str(output),
+            ])
+            payload = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual(payload["candidates"], [])
+            self.assertEqual(payload["pairwise_edges"], 0)
+            self.assertEqual(payload["low_information_image_count"], 2)
+            self.assertEqual(payload["pairwise_comparisons_skipped_low_information"], 1)
+
     def test_image_normalization_preserves_16bit_contrast(self) -> None:
         img = Image.new("I;16", (16, 16))
         img.putdata([idx * 257 for idx in range(256)])
@@ -938,6 +961,56 @@ class ContractPipelineTests(unittest.TestCase):
             ]
             self.assertIn("stack.tif#frame0001", locations)
             self.assertIn("matching_frame.png", locations)
+
+    def test_global_image_detector_treats_within_stack_frames_as_stack_context_and_reports_truncation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "pkg"
+            package.mkdir()
+            frame = textured_image(303, (48, 48))
+            stack = package / "stack_65.tif"
+            frame.save(stack, save_all=True, append_images=[frame.copy() for _ in range(64)])
+            output = Path(tmp) / "global.json"
+            run([
+                PYTHON,
+                "detectors/image/global_near_duplicate.py",
+                str(package),
+                "--output",
+                str(output),
+            ])
+            payload = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual(payload["images_screened"], 64)
+            self.assertEqual(payload["intra_stack_pairs_skipped"], 2016)
+            self.assertEqual(payload["frame_screening_limits"][0]["frames_total"], 65)
+            self.assertFalse(any(item["candidate_type"] == "image_reuse_cluster" for item in payload["candidates"]))
+            gap = next(item for item in payload["candidates"] if item["candidate_type"] == "audit_coverage_gap")
+            self.assertEqual(gap["risk_suggestion"], "R1_max")
+
+    def test_splice_forensics_screens_each_multiframe_item_and_reports_source_coordinates(self) -> None:
+        splice = importlib.import_module("detectors.image.splice_forensics_triage")
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "pkg"
+            package.mkdir()
+            first = textured_image(401, (160, 120))
+            second = textured_image(402, (160, 120))
+            first.save(package / "stack.tif", save_all=True, append_images=[second])
+            payload = splice.build_payload(package, tile_size=32, stride=32, max_dimension=80, min_tiles=4)
+            self.assertEqual(payload["images_screened"], 2)
+            self.assertEqual(
+                {item["path"] for item in payload["diagnostics"]},
+                {"stack.tif#frame0000", "stack.tif#frame0001"},
+            )
+
+            finding = splice.candidate(
+                1,
+                "stack.tif#frame0001",
+                "noise_residual_outlier",
+                {"x": 10, "y": 5, "width": 20, "height": 10, "mean": 2.0, "stddev": 1.0, "robust_z": 9.0},
+                (80, 60),
+                (160, 120),
+            )
+            evidence = finding["evidence"]
+            self.assertEqual(evidence["coordinate_space"], "resized_working_image")
+            self.assertEqual(evidence["source_region"], {"x": 20, "y": 10, "width": 40, "height": 20})
 
     def test_image_metadata_extractor_reads_ome_channel_and_z_hints(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1210,6 +1283,7 @@ class ContractPipelineTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             source_dir = Path(tmp) / "source_data"
             write_xlsx(source_dir / "Figure_summary.xlsx", [
+                ["Table S1. Summary statistics", None, None, None, None],
                 ["group", "mean", "sd", "sem", "n"],
                 ["control", 1.0, 0.2, 0.1, 4],
                 ["treated", 1.5, 0.5, 0.1, 4],
@@ -1230,6 +1304,30 @@ class ContractPipelineTests(unittest.TestCase):
                 and item["finding_type"] == "SD is not consistent with SEM * sqrt(n)"
                 for item in payload["candidates"]
             ))
+
+    def test_column_relationship_screen_requires_enough_paired_values(self) -> None:
+        stats = load_stats_consistency_check()
+        small_rows = [
+            {"group_a": str(value), "group_b": str(other)}
+            for value, other in [(1.1, 3.7), (2.8, 1.2), (4.0, 5.9), (3.3, 2.4)]
+        ]
+        small_profiles = stats.infer_numeric_format_profiles(small_rows)
+        small_columns = stats.numeric_columns(small_rows, small_profiles)
+        self.assertEqual(
+            stats.check_column_relationships(Path("small.csv"), small_columns, 4, 1e-9),
+            [],
+        )
+
+        shifted_rows = [
+            {"control": str(value), "treated": str(value + 10)}
+            for value in (1.1, 2.4, 3.8, 5.2, 6.7, 8.3, 9.9, 11.6)
+        ]
+        shifted_profiles = stats.infer_numeric_format_profiles(shifted_rows)
+        shifted_columns = stats.numeric_columns(shifted_rows, shifted_profiles)
+        findings = stats.check_column_relationships(Path("shifted.csv"), shifted_columns, 4, 1e-9)
+        self.assertEqual(len(findings), 1)
+        self.assertIn("additive/subtractive shift", findings[0]["finding_type"])
+        self.assertEqual(findings[0]["evidence"]["minimum_relationship_pairs"], 8)
 
     def test_xlsx_structure_extractor_records_workbook_sheet_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1410,6 +1508,42 @@ class ContractPipelineTests(unittest.TestCase):
         messages = [item["finding_type"] for item in stats.check_rows(Path("decimal_comma.csv"), rows, 1e-3, numeric_profiles=profiles)]
         self.assertNotIn("p value is outside [0, 1]", messages)
 
+    def test_out_of_range_p_value_is_capped_as_weak_statistical_signal(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            source_dir = Path(tmp) / "source_data"
+            source_dir.mkdir()
+            (source_dir / "p_values.csv").write_text(
+                "group,p_value\nA,1.2\n",
+                encoding="utf-8",
+            )
+            output = Path(tmp) / "stats.json"
+            run([
+                PYTHON,
+                "skill/biomed-research-integrity-auditor/scripts/stats_consistency_check.py",
+                str(source_dir),
+                "--output",
+                str(output),
+            ])
+            payload = json.loads(output.read_text(encoding="utf-8"))
+            candidate = next(
+                item for item in payload["candidates"]
+                if item["finding_type"] == "p value is outside [0, 1]"
+            )
+            self.assertEqual(candidate["candidate_type"], "weak_statistical_signal")
+            self.assertEqual(candidate["risk_suggestion"], "R2_max")
+            self.assertIn("p_value_range", candidate["risk_cap_tags"])
+
+            calibrated = calibrate_payload(
+                [output],
+                "internal_presubmission",
+                ROOT / "schemas" / "risk_rules.yaml",
+            )
+            finding = next(
+                item for item in calibrated["findings"]
+                if item["finding_type"] == "p value is outside [0, 1]"
+            )
+            self.assertEqual(finding["calibrated_risk_level"], "R2")
+
     def test_stats_detector_parses_percent_values_and_ignores_identifier_columns(self) -> None:
         stats = load_stats_consistency_check()
         self.assertEqual(stats.parse_float("10%"), 10.0)
@@ -1491,6 +1625,33 @@ class ContractPipelineTests(unittest.TestCase):
             gaps = [item for item in payload["candidates"] if item["finding_type"] == "source data extraction gap"]
             self.assertTrue(gaps)
             self.assertIn("source_table_extraction_failed", gaps[0]["risk_cap_tags"])
+
+    def test_stats_detector_does_not_count_header_only_table_as_screened(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            source_dir = Path(tmp) / "source_data"
+            source_dir.mkdir()
+            (source_dir / "header_only.csv").write_text(
+                "group,mean,sd,n\n",
+                encoding="utf-8",
+            )
+            output = Path(tmp) / "stats.json"
+            run([
+                PYTHON,
+                "skill/biomed-research-integrity-auditor/scripts/stats_consistency_check.py",
+                str(source_dir),
+                "--output",
+                str(output),
+            ])
+            payload = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual(len(payload["files_screened"]), 1)
+            self.assertEqual(payload["tables_screened"], 0)
+            self.assertEqual(payload["files_with_screenable_tables"], [])
+            gap = next(
+                item for item in payload["candidates"]
+                if item["finding_type"] == "source data table has no machine-screenable numeric records"
+            )
+            self.assertEqual(gap["risk_suggestion"], "R1_max")
+            self.assertIn("audit_coverage_gap", gap["risk_cap_tags"])
 
     def test_stats_detector_reads_semicolon_csv_with_decimal_comma(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1694,6 +1855,7 @@ class ContractPipelineTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             source_dir = Path(tmp) / "source_data"
             write_xlsx(source_dir / "Figure_fields.xlsx", [
+                ["Table S2. Field-level records", None, None, None, None],
                 ["group", "animal_id", "field_id", "value", "reported_n_basis"],
                 ["control", "m1", "f1", 1.0, "field"],
                 ["control", "m1", "f2", 1.1, "field"],
@@ -1712,6 +1874,14 @@ class ContractPipelineTests(unittest.TestCase):
             validate_instance(payload, ROOT / "schemas" / "detector_output.schema.json", "xlsx pseudoreplication detector")
             self.assertEqual(len(payload["candidates"]), 1)
             self.assertIn("Figure_fields.xlsx#Fields", payload["candidates"][0]["locations"][0])
+            self.assertEqual(payload["candidates"][0]["risk_suggestion"], "R2_possible")
+
+            calibrated = calibrate_payload(
+                [output],
+                "internal_presubmission",
+                ROOT / "schemas" / "risk_rules.yaml",
+            )
+            self.assertEqual(calibrated["findings"][0]["calibrated_risk_level"], "R2")
 
     def test_pseudoreplication_detector_recognizes_patient_and_well_number_headers(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1739,6 +1909,38 @@ class ContractPipelineTests(unittest.TestCase):
             evidence = payload["candidates"][0]["evidence"]
             self.assertEqual(evidence["biological_id_column"], "patient")
             self.assertEqual(evidence["technical_id_column"], "well_num")
+
+    def test_pseudoreplication_hierarchy_without_technical_n_is_r1_model_check(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            source_dir = Path(tmp) / "source_data"
+            source_dir.mkdir()
+            (source_dir / "patient_visits.csv").write_text(
+                "group,patient_id,visit_id,value\n"
+                "control,p1,v1,1.0\n"
+                "control,p1,v2,1.1\n"
+                "control,p2,v1,0.9\n"
+                "control,p2,v2,1.2\n",
+                encoding="utf-8",
+            )
+            output = Path(tmp) / "pseudo.json"
+            run([
+                PYTHON,
+                "detectors/stats/pseudoreplication_screen.py",
+                str(source_dir),
+                "--output",
+                str(output),
+            ])
+            payload = json.loads(output.read_text(encoding="utf-8"))
+            self.assertEqual(len(payload["candidates"]), 1)
+            candidate = payload["candidates"][0]
+            self.assertEqual(candidate["risk_suggestion"], "R1_possible")
+            self.assertFalse(candidate["evidence"]["reported_n_appears_technical"])
+            calibrated = calibrate_payload(
+                [output],
+                "internal_presubmission",
+                ROOT / "schemas" / "risk_rules.yaml",
+            )
+            self.assertEqual(calibrated["findings"][0]["calibrated_risk_level"], "R1")
 
     def test_reporter_rejects_uncalibrated_candidates(self) -> None:
         report_assembler = load_report_assembler()
@@ -1773,6 +1975,11 @@ class ContractPipelineTests(unittest.TestCase):
             edge = candidate["evidence"]["edges"][0]
             self.assertGreater(edge["tile_hit_count"], 1)
             self.assertGreaterEqual(edge["score"], 0.985)
+            self.assertIn(edge["coordinate_space"], {"panel_local_pixels", "source_image_pixels"})
+            self.assertIn("width", edge["left_source_dimensions"])
+            self.assertIn("height", edge["right_source_dimensions"])
+            self.assertIn("x", edge["left_source_region"])
+            self.assertIn("y", edge["right_source_region"])
             self.assertTrue(Path(edge["evidence_crops"]["side_by_side"]).exists())
 
     def test_keypoint_detector_finds_rotated_scaled_crop_candidate(self) -> None:
@@ -1797,6 +2004,11 @@ class ContractPipelineTests(unittest.TestCase):
             self.assertGreaterEqual(edge["inlier_count"], 24)
             self.assertGreaterEqual(edge["inlier_ratio"], 0.25)
             self.assertGreater(abs(edge["rotation_degrees"]), 5)
+            self.assertEqual(edge["coordinate_space"], "resized_working_images")
+            self.assertGreaterEqual(edge["left_working_to_source_scale"], 1.0)
+            self.assertGreaterEqual(edge["right_working_to_source_scale"], 1.0)
+            self.assertIn("width", edge["left_source_dimensions"])
+            self.assertIn("height", edge["right_source_dimensions"])
 
     def test_local_patch_detector_finds_same_image_copy_move(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -2824,6 +3036,40 @@ class ContractPipelineTests(unittest.TestCase):
             self.assertTrue((packet / "pdf_embedded_images").is_dir())
             packet_readme = (packet / "QC_PACKET_README.md").read_text(encoding="utf-8")
             self.assertIn("pdf_embedded_images", packet_readme)
+
+    def test_manuscript_embedded_copy_is_not_reported_as_cross_context_image_reuse(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "embedded_copy_pkg"
+            figure = textured_image(777, (220, 180))
+            write_png(package / "figures" / "Figure_1A.png", figure)
+            write_pdf_with_embedded_image(package / "manuscript.pdf", figure)
+            out = Path(tmp) / "out"
+            run([
+                PYTHON,
+                "scripts/audit_package.py",
+                str(package),
+                "--scan-profile",
+                "quick",
+                "--external-literature-provider",
+                "none",
+                "--output-dir",
+                str(out),
+                "--case-id",
+                "embedded-copy",
+            ])
+            global_payload = json.loads((out / "global_image_candidates.json").read_text(encoding="utf-8"))
+            self.assertTrue(global_payload["candidates"])
+            contextual = json.loads((out / "contextual_image_candidates.json").read_text(encoding="utf-8"))
+            self.assertFalse(any(
+                item.get("candidate_type") == "cross_context_reuse_candidate"
+                for item in contextual["candidates"]
+            ))
+            calibrated = json.loads((out / "calibrated_findings.json").read_text(encoding="utf-8"))
+            self.assertFalse(any(
+                item.get("finding_type") in {"cross_context_reuse_candidate", "image_reuse_cluster"}
+                and "_derived_pdf_embedded" in item.get("location", "")
+                for item in calibrated["findings"]
+            ))
 
     def test_derived_image_screening_records_reject_path_escape(self) -> None:
         from scripts.pipeline.detectors import derived_image_records
@@ -3949,6 +4195,44 @@ class EndToEndTests(unittest.TestCase):
             packet_readme = (packet / "QC_PACKET_README.md").read_text(encoding="utf-8")
             self.assertIn("fcs_metadata_intake.json", packet_readme)
 
+    def test_failed_pptx_intake_emits_r1_coverage_finding(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "broken_pptx_case"
+            assembly = package / "figure_assembly"
+            assembly.mkdir(parents=True)
+            (assembly / "broken.pptx").write_bytes(b"not a valid pptx container")
+            out = Path(tmp) / "out"
+            run([
+                PYTHON,
+                "scripts/audit_package.py",
+                str(package),
+                "--scan-profile",
+                "quick",
+                "--external-literature-provider",
+                "none",
+                "--output-dir",
+                str(out),
+                "--case-id",
+                "broken_pptx_case",
+            ])
+            intake_payload = json.loads((out / "intake_coverage_candidates.json").read_text(encoding="utf-8"))
+            self.assertTrue(intake_payload["candidates"])
+            self.assertTrue(all(
+                item["candidate_type"] == "audit_coverage_gap"
+                for item in intake_payload["candidates"]
+            ))
+            calibrated = json.loads((out / "calibrated_findings.json").read_text(encoding="utf-8"))
+            gaps = [
+                item for item in calibrated["findings"]
+                if item["finding_type"] == "material intake extraction gap"
+            ]
+            self.assertTrue(gaps)
+            self.assertTrue(all(item["calibrated_risk_level"] == "R1" for item in gaps))
+            coverage = json.loads((out / "coverage.json").read_text(encoding="utf-8"))
+            self.assertTrue(coverage["audit_coverage_gap"])
+            summary = json.loads((out / "AUDIT_JSON_SUMMARY.json").read_text(encoding="utf-8"))
+            self.assertNotEqual(summary["overall_risk"], "R0")
+
     def test_unparseable_pzfx_source_data_emits_r1_extraction_gap(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             package = Path(tmp) / "bad_pzfx_source_case"
@@ -5070,6 +5354,16 @@ class EndToEndTests(unittest.TestCase):
                             "output": "extension_unknown_placeholder.json",
                             "command": ["{python}", "-c", "print('{unknown}')"],
                         },
+                        {
+                            "name": "built_in_stats_collision",
+                            "output": "stats_consistency_candidates.json",
+                            "command": ["{python}", "-c", "print('collision')"],
+                        },
+                        {
+                            "name": "reserved_directory_collision",
+                            "output": "submission_qc_packet/extension.json",
+                            "command": ["{python}", "-c", "print('collision')"],
+                        },
                     ]
                 }),
                 encoding="utf-8",
@@ -5089,6 +5383,13 @@ class EndToEndTests(unittest.TestCase):
             ]
             self.assertTrue(any("reserved pipeline artifact" in reason for reason in reasons))
             self.assertTrue(any("Unsupported command placeholder" in reason for reason in reasons))
+            self.assertGreaterEqual(
+                sum("reserved pipeline artifact" in reason for reason in reasons),
+                3,
+            )
+
+    def test_detector_registry_reserves_every_core_run_artifact(self) -> None:
+        self.assertEqual(sorted(set(RUN_ARTIFACTS) - RESERVED_OUTPUT_PATHS), [])
 
     def test_run_detector_unlinks_stale_expected_output_before_command(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -5141,6 +5442,92 @@ class EndToEndTests(unittest.TestCase):
             self.assertFalse((output_dir / "registered_detector_registry_01_failure_candidates.json").exists())
             self.assertTrue((output_dir / "unrelated_note.txt").is_file())
 
+    def test_pipeline_rejects_output_and_comparison_path_overlap_before_cleanup(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            package = root / "package"
+            package.mkdir()
+            sentinel = package / "manifest.json"
+            sentinel.write_text("source package record", encoding="utf-8")
+            outside = root / "outside"
+            previous = root / "previous"
+            previous.mkdir()
+
+            for unsafe_output in (package, package / "audit_output", root):
+                with self.subTest(output=unsafe_output):
+                    with self.assertRaisesRegex(ValueError, "must not be the package directory"):
+                        validate_run_paths(package, unsafe_output)
+            with self.assertRaisesRegex(ValueError, "previous audit directory"):
+                validate_run_paths(package, previous, previous)
+            with self.assertRaisesRegex(ValueError, "previous audit directory"):
+                validate_run_paths(package, outside, outside / "previous")
+
+            self.assertEqual(sentinel.read_text(encoding="utf-8"), "source package record")
+
+    def test_output_run_lock_rejects_concurrent_writer(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            output_dir = Path(tmp) / "audit"
+            with output_run_lock(output_dir):
+                with self.assertRaisesRegex(RuntimeError, "already writing"):
+                    with output_run_lock(output_dir):
+                        self.fail("second writer unexpectedly acquired the lock")
+            self.assertFalse((Path(tmp) / ".audit.biomed-audit.lock").exists())
+
+    def test_transactional_pipeline_preserves_previous_output_on_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            package = root / "package"
+            package.mkdir()
+            output_dir = root / "audit"
+            output_dir.mkdir()
+            previous = output_dir / "pipeline_summary.json"
+            previous.write_text('{"status":"previous"}\n', encoding="utf-8")
+            with mock.patch(
+                "scripts.pipeline.orchestrator._run_pipeline_in_workspace",
+                side_effect=RuntimeError("synthetic pipeline failure"),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "synthetic pipeline failure"):
+                    run_pipeline(package, "internal_presubmission", output_dir, "wetlab", "transaction-test")
+            self.assertEqual(previous.read_text(encoding="utf-8"), '{"status":"previous"}\n')
+            self.assertFalse(any(root.glob(".audit.staging-*")))
+            self.assertFalse((root / ".audit.biomed-audit.lock").exists())
+
+    def test_transactional_pipeline_publishes_final_paths_and_removes_stale_detector_output(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            package = root / "package"
+            package.mkdir()
+            write_minimal_source(package)
+            output_dir = root / "audit"
+            output_dir.mkdir()
+            (output_dir / "pipeline_summary.json").write_text("{}\n", encoding="utf-8")
+            (output_dir / "stale_extension_candidates.json").write_text("{}\n", encoding="utf-8")
+            (output_dir / "lab_note.txt").write_text("preserve me\n", encoding="utf-8")
+
+            result = run_pipeline(
+                package,
+                "internal_presubmission",
+                output_dir,
+                "wetlab",
+                "transaction-success",
+                scan_profile="quick",
+                external_literature_provider="none",
+                detector_registry=None,
+            )
+
+            output_dir = output_dir.resolve()
+            self.assertEqual(result["output_dir"], str(output_dir))
+            self.assertFalse((output_dir / "stale_extension_candidates.json").exists())
+            self.assertEqual((output_dir / "lab_note.txt").read_text(encoding="utf-8"), "preserve me\n")
+            marker = json.loads((output_dir / ".biomed-audit-run.json").read_text(encoding="utf-8"))
+            self.assertIn("pipeline_summary.json", marker["generated_top_level"])
+            self.assertIn("lab_note.txt", marker["preserved_top_level"])
+            self.assertFalse(any(root.glob(".audit.staging-*")))
+            self.assertFalse(any(root.glob(".audit.backup-*")))
+            for path in output_dir.rglob("*"):
+                if path.is_file() and path.suffix.lower() in {".csv", ".html", ".json", ".md", ".txt", ".yaml", ".yml"}:
+                    self.assertNotIn(".audit.staging-", path.read_text(encoding="utf-8", errors="ignore"))
+
     def test_human_outputs_redact_local_package_absolute_path(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             package = Path(tmp) / "private_lab_package"
@@ -5175,6 +5562,37 @@ class EndToEndTests(unittest.TestCase):
             self.assertEqual(manifest["package_name"], package.name)
             self.assertEqual(snapshot["package_root"], ".")
             self.assertEqual(file_hash_manifest["package_root"], ".")
+
+    def test_human_report_derivatives_render_tables_cjk_and_omit_machine_json(self) -> None:
+        report = (
+            "# 审计报告 / Audit Report\n\n"
+            "| 风险 / Risk | 位置 / Location |\n"
+            "| --- | --- |\n"
+            "| R1 | Figure 1 |\n\n"
+            "- 先核对原始记录 / Review source records first\n\n"
+            "```json AUDIT_JSON_SUMMARY\n"
+            '{"private_machine_field":"should-not-appear"}\n'
+            "```\n"
+        )
+        rendered = markdown_to_basic_html(report, "审计报告")
+        self.assertIn("<table>", rendered)
+        self.assertIn("<li>", rendered)
+        self.assertIn("机器可读明细", rendered)
+        self.assertNotIn("private_machine_field", rendered)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            pdf_path = Path(tmp) / "report.pdf"
+            self.assertTrue(write_basic_pdf(pdf_path, report))
+            import fitz
+
+            document = fitz.open(pdf_path)
+            extracted = "".join(page.get_text() for page in document)
+            page_count = len(document)
+            document.close()
+            self.assertIn("审计报告", extracted)
+            self.assertIn("先核对原始记录", extracted)
+            self.assertNotIn("private_machine_field", extracted)
+            self.assertLessEqual(page_count, 2)
 
     def test_submission_qc_artifacts_snapshot_and_claim_coverage(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

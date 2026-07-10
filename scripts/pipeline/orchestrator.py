@@ -2,8 +2,13 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
+import json
+import os
 from pathlib import Path
 import shutil
+import socket
+import uuid
 from typing import Any
 
 from scripts.methodology_checklist import (
@@ -25,6 +30,7 @@ from scripts.pipeline.detectors import (
     run_text_detectors,
     write_audit_coverage_gap,
     write_format_coverage_gaps,
+    write_intake_coverage_gaps,
 )
 from scripts.pipeline.guardrails import (
     scan_package_guardrails,
@@ -105,6 +111,7 @@ RUN_ARTIFACTS = (
     "key_embedded_images.json",
     "psd_preview_images.json",
     "image_metadata.json",
+    "intake_coverage_candidates.json",
     "package_guardrail_candidates.json",
     "figure_source_map.json",
     "figure_source_links.json",
@@ -160,6 +167,29 @@ RUN_DIRECTORIES = (
     "image_screening_package",
     "submission_qc_packet",
 )
+RUN_OWNERSHIP_FILE = ".biomed-audit-run.json"
+TEXT_REMAP_SUFFIXES = {".csv", ".html", ".json", ".md", ".txt", ".yaml", ".yml"}
+
+
+def paths_overlap(left: Path, right: Path) -> bool:
+    left_resolved = left.expanduser().resolve()
+    right_resolved = right.expanduser().resolve()
+    return (
+        left_resolved == right_resolved
+        or left_resolved in right_resolved.parents
+        or right_resolved in left_resolved.parents
+    )
+
+
+def validate_run_paths(package: Path, output_dir: Path, compare_to: Path | None = None) -> None:
+    if paths_overlap(package, output_dir):
+        raise ValueError(
+            "Audit output directory must not be the package directory, its parent, or a directory inside it"
+        )
+    if compare_to is not None and paths_overlap(output_dir, compare_to):
+        raise ValueError(
+            "Audit output directory must not equal, contain, or be contained by the previous audit directory"
+        )
 
 
 def clean_previous_run_artifacts(output_dir: Path) -> None:
@@ -177,7 +207,165 @@ def clean_previous_run_artifacts(output_dir: Path) -> None:
             shutil.rmtree(path)
 
 
-def run_pipeline(
+def lock_path_for_output(output_dir: Path) -> Path:
+    return output_dir.parent / f".{output_dir.name}.biomed-audit.lock"
+
+
+def lock_owner_is_active(payload: dict[str, Any]) -> bool:
+    if str(payload.get("hostname", "")) != socket.gethostname():
+        # A foreign-host lock cannot be proven stale locally. Treat it as
+        # active so a shared filesystem never admits a second writer.
+        return True
+    try:
+        pid = int(payload.get("pid", 0) or 0)
+    except (TypeError, ValueError):
+        return False
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+@contextmanager
+def output_run_lock(output_dir: Path):  # type: ignore[no-untyped-def]
+    output_dir.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = lock_path_for_output(output_dir)
+    owner = {
+        "pid": os.getpid(),
+        "hostname": socket.gethostname(),
+        "token": uuid.uuid4().hex,
+    }
+    fd: int | None = None
+    for _attempt in range(2):
+        try:
+            fd = os.open(lock_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            break
+        except FileExistsError:
+            try:
+                existing = json.loads(lock_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                existing = {}
+            if lock_owner_is_active(existing):
+                raise RuntimeError(
+                    f"Another audit is already writing this output directory: {output_dir}"
+                )
+            lock_path.unlink(missing_ok=True)
+    if fd is None:
+        raise RuntimeError(f"Could not acquire audit output lock: {lock_path}")
+    try:
+        os.write(fd, (json.dumps(owner, sort_keys=True) + "\n").encode("utf-8"))
+        os.close(fd)
+        fd = None
+        yield
+    finally:
+        if fd is not None:
+            os.close(fd)
+        try:
+            current = json.loads(lock_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            current = {}
+        if current.get("token") == owner["token"]:
+            lock_path.unlink(missing_ok=True)
+
+
+def legacy_generated_top_level(name: str) -> bool:
+    if name in set(RUN_ARTIFACTS) | set(RUN_DIRECTORIES) | {RUN_OWNERSHIP_FILE}:
+        return True
+    if name.endswith("_candidates.json") or name.endswith("_failure_candidates.json"):
+        return True
+    return False
+
+
+def copy_preserved_output_entries(output_dir: Path, staging_dir: Path) -> set[str]:
+    if not output_dir.is_dir():
+        return set()
+    marker_path = output_dir / RUN_OWNERSHIP_FILE
+    generated: set[str]
+    if marker_path.is_file():
+        try:
+            marker = json.loads(marker_path.read_text(encoding="utf-8"))
+            generated = {str(item) for item in marker.get("generated_top_level", []) or []}
+        except (OSError, json.JSONDecodeError):
+            generated = {item.name for item in output_dir.iterdir() if legacy_generated_top_level(item.name)}
+    else:
+        generated = {item.name for item in output_dir.iterdir() if legacy_generated_top_level(item.name)}
+
+    preserved: set[str] = set()
+    for source in output_dir.iterdir():
+        if source.name in generated or source.name == RUN_OWNERSHIP_FILE or source.is_symlink():
+            continue
+        target = staging_dir / source.name
+        if source.is_dir():
+            shutil.copytree(source, target)
+        elif source.is_file():
+            shutil.copy2(source, target)
+        preserved.add(source.name)
+    return preserved
+
+
+def replace_path_strings(value: Any, source: Path, target: Path) -> Any:
+    if isinstance(value, str):
+        return value.replace(str(source), str(target))
+    if isinstance(value, list):
+        return [replace_path_strings(item, source, target) for item in value]
+    if isinstance(value, dict):
+        return {key: replace_path_strings(item, source, target) for key, item in value.items()}
+    return value
+
+
+def remap_staging_text_paths(staging_dir: Path, output_dir: Path) -> None:
+    source_text = str(staging_dir)
+    target_text = str(output_dir)
+    if source_text == target_text:
+        return
+    for path in staging_dir.rglob("*"):
+        if path.is_symlink() or not path.is_file() or path.suffix.lower() not in TEXT_REMAP_SUFFIXES:
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            continue
+        if source_text in text:
+            path.write_text(text.replace(source_text, target_text), encoding="utf-8")
+
+
+def write_run_ownership(staging_dir: Path, output_dir: Path, preserved: set[str]) -> None:
+    generated = sorted(
+        item.name
+        for item in staging_dir.iterdir()
+        if item.name not in preserved and item.name != RUN_OWNERSHIP_FILE
+    )
+    write_json(staging_dir / RUN_OWNERSHIP_FILE, {
+        "schema_version": "1.0",
+        "output_dir": str(output_dir),
+        "generated_top_level": generated,
+        "preserved_top_level": sorted(preserved),
+    })
+
+
+def publish_staging_directory(staging_dir: Path, output_dir: Path) -> None:
+    backup_dir = output_dir.parent / f".{output_dir.name}.backup-{uuid.uuid4().hex}"
+    replaced_existing = False
+    try:
+        if output_dir.exists():
+            os.replace(output_dir, backup_dir)
+            replaced_existing = True
+        os.replace(staging_dir, output_dir)
+    except Exception:
+        if replaced_existing and backup_dir.exists() and not output_dir.exists():
+            os.replace(backup_dir, output_dir)
+        raise
+    finally:
+        if backup_dir.exists():
+            shutil.rmtree(backup_dir)
+
+
+def _run_pipeline_in_workspace(
     package: Path,
     mode: str,
     output_dir: Path,
@@ -267,6 +455,9 @@ def run_pipeline(
     detector_outputs = []
     if package_guardrail_output is not None:
         detector_outputs.append(package_guardrail_output)
+    intake_coverage_output = write_intake_coverage_gaps(package, output_dir)
+    if intake_coverage_output is not None:
+        detector_outputs.append(intake_coverage_output)
     effective_external_provider = "none" if scan_profile == "quick" else external_literature_provider
     detector_tasks = [
         WorkstreamTask(
@@ -440,3 +631,54 @@ def run_pipeline(
     result["positive_provenance_count"] = positive_count
     write_json(output_dir / "pipeline_summary.json", result)
     return result
+
+
+def run_pipeline(
+    package: Path,
+    mode: str,
+    output_dir: Path,
+    domains: str,
+    case_id: str | None,
+    scan_profile: str = "standard",
+    external_literature_provider: str = "auto",
+    external_literature_fixture: Path | None = None,
+    claim_manifest: Path | None = None,
+    compare_to: Path | None = None,
+    reference_check_provider: str = "none",
+    detector_registry: Path | None = DEFAULT_REGISTRY,
+    execution_mode: str = "parallel",
+) -> dict[str, Any]:
+    package = package.expanduser().resolve()
+    output_dir = output_dir.expanduser().resolve()
+    compare_to = compare_to.expanduser().resolve() if compare_to is not None else None
+    validate_run_paths(package, output_dir, compare_to)
+    with output_run_lock(output_dir):
+        staging_dir = output_dir.parent / f".{output_dir.name}.staging-{uuid.uuid4().hex}"
+        staging_dir.mkdir(parents=False, exist_ok=False)
+        preserved = copy_preserved_output_entries(output_dir, staging_dir)
+        try:
+            result = _run_pipeline_in_workspace(
+                package,
+                mode,
+                staging_dir,
+                domains,
+                case_id,
+                scan_profile,
+                external_literature_provider,
+                external_literature_fixture,
+                claim_manifest,
+                compare_to,
+                reference_check_provider,
+                detector_registry,
+                execution_mode,
+            )
+            result = replace_path_strings(result, staging_dir, output_dir)
+            remap_staging_text_paths(staging_dir, output_dir)
+            write_json(staging_dir / "pipeline_summary.json", result)
+            write_run_ownership(staging_dir, output_dir, preserved)
+            publish_staging_directory(staging_dir, output_dir)
+            return result
+        except Exception:
+            if staging_dir.exists():
+                shutil.rmtree(staging_dir)
+            raise

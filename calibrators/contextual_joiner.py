@@ -206,6 +206,36 @@ def load_provenance(path: Path | None) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def load_screening_inputs(path: Path | None) -> dict[str, dict[str, Any]]:
+    if path is None or not path.is_file():
+        return {}
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    records: dict[str, dict[str, Any]] = {}
+    for item in payload.get("derived_images", []) or []:
+        if not isinstance(item, dict):
+            continue
+        target = str(item.get("target_relative_path", "")).strip()
+        if target:
+            records[target] = item
+    return records
+
+
+def without_frame_suffix(path: str) -> str:
+    return re.sub(r"#frame\d+$", "", path)
+
+
+def presentation_derivative_for_edge(
+    edge: dict[str, Any],
+    derived_images: dict[str, dict[str, Any]],
+) -> dict[str, Any] | None:
+    left, right = edge_paths(edge)
+    left_record = derived_images.get(without_frame_suffix(left))
+    right_record = derived_images.get(without_frame_suffix(right))
+    if bool(left_record) == bool(right_record):
+        return None
+    return left_record or right_record
+
+
 def role_from_path(path: str, provenance: dict[str, Any]) -> str:
     for node in provenance.get("nodes", []) or []:
         if node.get("path") == path:
@@ -290,6 +320,7 @@ def classify_similarity_edge(
     context: dict[str, Any],
     provenance: dict[str, Any],
     declared_pairs: dict[tuple[str, str], dict[str, Any]],
+    derived_images: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     left, right = edge_paths(edge)
     left_provenance_path, right_provenance_path = edge_provenance_paths(edge)
@@ -300,6 +331,19 @@ def classify_similarity_edge(
     classified["right_role"] = right_role
     is_local_patch = edge.get("similarity_scope") == "local_patch"
     is_keypoint_geometric = edge.get("similarity_scope") == "keypoint_geometric"
+
+    derivative = presentation_derivative_for_edge(edge, derived_images or {})
+    if derivative is not None and not is_same_image_copy_move_edge(edge):
+        classified.update({
+            "contextual_tag": "presentation_derivative_copy",
+            "reportable_as_risk": False,
+            "positive_evidence": False,
+            "risk_suggestion": "R0_presentation_derivative",
+            "presentation_derivative": True,
+            "source_container": str(derivative.get("source_container", "")),
+            "derivation_artifact": str(derivative.get("artifact", "")),
+        })
+        return classified
 
     if is_same_image_copy_move_edge(edge):
         classified.update({
@@ -569,10 +613,16 @@ def candidate_from_edges(candidate: dict[str, Any], risk_edges: list[dict[str, A
     return item
 
 
-def enrich_candidates(payload: dict[str, Any], package: Path, provenance_path: Path | None = None) -> dict[str, Any]:
+def enrich_candidates(
+    payload: dict[str, Any],
+    package: Path,
+    provenance_path: Path | None = None,
+    screening_inputs_path: Path | None = None,
+) -> dict[str, Any]:
     validate_instance(payload, DETECTOR_SCHEMA, "detector output before contextual join")
     context = package_context(package)
     provenance = load_provenance(provenance_path)
+    derived_images = load_screening_inputs(screening_inputs_path)
     declared_pairs = declared_traceability_pairs(provenance)
     enriched = []
     positive_evidence = []
@@ -581,7 +631,7 @@ def enrich_candidates(payload: dict[str, Any], package: Path, provenance_path: P
         if is_image_candidate(item):
             raw_edges = item.get("evidence", {}).get("edges", [])
             classified_edges = [
-                classify_similarity_edge(edge, context, provenance, declared_pairs)
+                classify_similarity_edge(edge, context, provenance, declared_pairs, derived_images)
                 for edge in raw_edges
             ]
             positive_edges = [edge for edge in classified_edges if edge.get("positive_evidence")]
@@ -620,6 +670,7 @@ def enrich_candidates(payload: dict[str, Any], package: Path, provenance_path: P
             "source_detector": payload.get("detector_name", ""),
             "package": str(package),
             "provenance_graph": str(provenance_path) if provenance_path else None,
+            "screening_inputs": str(screening_inputs_path) if screening_inputs_path else None,
         },
         "candidates": enriched,
         "positive_evidence": positive_evidence,
@@ -634,6 +685,7 @@ def main() -> int:
     parser.add_argument("--input", type=Path, required=True)
     parser.add_argument("--package", type=Path, required=True)
     parser.add_argument("--provenance", type=Path)
+    parser.add_argument("--screening-inputs", type=Path)
     parser.add_argument("--output", type=Path, default=Path("contextual_candidates.json"))
     args = parser.parse_args()
 
@@ -642,6 +694,7 @@ def main() -> int:
         payload,
         args.package.expanduser().resolve(),
         args.provenance.expanduser().resolve() if args.provenance else None,
+        args.screening_inputs.expanduser().resolve() if args.screening_inputs else None,
     )
     args.output.write_text(json.dumps(result, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     print(json.dumps({"output": str(args.output), "candidates": len(result["candidates"])}, indent=2))

@@ -196,6 +196,14 @@ def keypoint_candidate(
         "estimated_transform": transform,
         "homography": homography_payload(homography),
         "projected_left_corners_in_right": projected_corners(left["width"], left["height"], homography),
+        "coordinate_space": "resized_working_images",
+        "left_working_dimensions": {"width": left["width"], "height": left["height"]},
+        "right_working_dimensions": {"width": right["width"], "height": right["height"]},
+        "left_source_dimensions": {"width": left["source_width"], "height": left["source_height"]},
+        "right_source_dimensions": {"width": right["source_width"], "height": right["source_height"]},
+        "left_working_to_source_scale": round_float(1.0 / max(float(left["resize_scale"]), 1e-12), 6),
+        "right_working_to_source_scale": round_float(1.0 / max(float(right["resize_scale"]), 1e-12), 6),
+        "coordinate_note": "Projected corners and homography coordinates are in resized working-image pixels; use the recorded scales for source-image coordinates.",
         "thresholds": thresholds,
     }
     return {
@@ -320,6 +328,8 @@ def scan(
                         "frame_label": frame_label or None,
                         "width": int(gray.shape[1]),
                         "height": int(gray.shape[0]),
+                        "source_width": int(base.size[0]),
+                        "source_height": int(base.size[1]),
                         "resize_scale": round_float(resize_scale, 6),
                         "keypoints": keypoints,
                         "descriptors": descriptors,
@@ -340,7 +350,11 @@ def scan(
     candidates: list[dict[str, Any]] = []
     pair_count = 0
     exhausted = False
+    intra_stack_pairs_skipped = 0
     for left, right in itertools.combinations(images, 2):
+        if left["source_file"] == right["source_file"]:
+            intra_stack_pairs_skipped += 1
+            continue
         if max_pair_comparisons and pair_count >= max_pair_comparisons:
             exhausted = True
             break
@@ -391,7 +405,7 @@ def scan(
 
     return {
         "detector_name": "image.keypoint_geometric_match",
-        "detector_version": "0.1.0",
+        "detector_version": "0.2.0",
         "input": {
             "root": str(root),
             "provenance_graph": str(provenance_path) if provenance_path else None,
@@ -409,6 +423,7 @@ def scan(
         },
         "images_screened": len(images),
         "pairwise_comparisons_attempted": pair_count,
+        "intra_stack_pairs_skipped": intra_stack_pairs_skipped,
         "candidate_pair_count": len([item for item in candidates if item["candidate_type"] != "audit_coverage_gap"]),
         "panels_excluded_from_keypoint_scan": list(routing.excluded_panels),
         "modality_conflicts": list(routing.modality_conflicts),

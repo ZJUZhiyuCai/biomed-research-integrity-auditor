@@ -71,7 +71,7 @@ function AppInner() {
   const [packagePath, setPackagePath] = useState("");
   const [examplePackages, setExamplePackages] = useState<ExamplePackage[]>([]);
   const [mode, setMode] = useState("internal_presubmission");
-  const [scanProfile, setScanProfile] = useState("quick");
+  const [scanProfile, setScanProfile] = useState("standard");
   const [domains, setDomains] = useState("wetlab,animal,cell");
   const [provider, setProvider] = useState("auto");
   const [referenceProvider, setReferenceProvider] = useState("none");

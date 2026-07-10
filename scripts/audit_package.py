@@ -171,21 +171,24 @@ def main() -> int:
     detector_registry = None if str(args.detector_registry).lower() == "none" else args.detector_registry.expanduser().resolve()
     if detector_registry is not None and not detector_registry.is_file():
         raise SystemExit(f"Detector registry not found: {detector_registry}")
-    result = run_pipeline(
-        package,
-        args.mode,
-        output_dir,
-        args.domains,
-        args.case_id or package.name,
-        args.scan_profile,
-        args.external_literature_provider,
-        args.external_literature_fixture.expanduser().resolve() if args.external_literature_fixture else None,
-        claim_manifest,
-        compare_to,
-        args.reference_check_provider,
-        detector_registry,
-        args.execution_mode,
-    )
+    try:
+        result = run_pipeline(
+            package,
+            args.mode,
+            output_dir,
+            args.domains,
+            args.case_id or package.name,
+            args.scan_profile,
+            args.external_literature_provider,
+            args.external_literature_fixture.expanduser().resolve() if args.external_literature_fixture else None,
+            claim_manifest,
+            compare_to,
+            args.reference_check_provider,
+            detector_registry,
+            args.execution_mode,
+        )
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
     print(json.dumps(result, indent=2, ensure_ascii=False))
     return 0
 

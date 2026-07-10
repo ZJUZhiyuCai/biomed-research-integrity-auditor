@@ -339,6 +339,11 @@ export interface Coverage {
   image_panels_screened?: number;
   image_files_unreadable?: number;
   source_tables_screened?: number;
+  source_table_files_attempted?: number;
+  global_low_information_images_excluded?: number;
+  global_low_information_image_files?: string[];
+  multi_frame_screening_limits?: Array<Record<string, unknown>>;
+  intra_stack_pairs_skipped?: number;
   prism_tables_indexed?: number;
   prism_graphs_indexed?: number;
   prism_possible_graph_table_links?: number;

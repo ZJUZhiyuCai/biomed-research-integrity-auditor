@@ -1062,6 +1062,16 @@ def best_displacement_cluster(
     return max(eligible, key=lambda item: (item[0], item[1], item[2]))[-1]
 
 
+def region_in_source_coordinates(item: dict[str, Any], region: dict[str, int]) -> dict[str, int]:
+    panel_region = item.get("panel_region") or {}
+    return {
+        "x": int(region["x"]) + int(panel_region.get("x", 0) or 0),
+        "y": int(region["y"]) + int(panel_region.get("y", 0) or 0),
+        "width": int(region["width"]),
+        "height": int(region["height"]),
+    }
+
+
 def candidate_from_hits(
     root: Path,
     evidence_dir: Path,
@@ -1112,6 +1122,13 @@ def candidate_from_hits(
         "same_image": same_image,
         "region_a": region_a,
         "region_b": region_b,
+        "coordinate_space": "panel_local_pixels" if left.get("panel_id") or right.get("panel_id") else "source_image_pixels",
+        "left_source_region": region_in_source_coordinates(left, region_a),
+        "right_source_region": region_in_source_coordinates(right, region_b),
+        "left_source_dimensions": left.get("source_dimensions"),
+        "right_source_dimensions": right.get("source_dimensions"),
+        "tile_hit_coordinate_space": "panel_local_pixels",
+        "coordinate_note": "region_a/region_b and tile hits are local to the screening unit; *_source_region maps them to the supplied source image.",
         "tile_hits": hits,
         "tile_hit_count": len(hits),
         "best_transform": best_hit["best_transform"],
@@ -1188,7 +1205,7 @@ def scan(
     errors: list[dict[str, str]] = []
     limit_records: list[dict[str, Any]] = []
     comparison_budget = ComparisonBudget(max_total_tile_comparisons)
-    panels_excluded_from_deep_scan = list(routing.excluded_panels)
+    panels_excluded_from_deep_scan: list[dict[str, Any]] = []
     modality_conflicts = list(routing.modality_conflicts)
     graphic_tile_suppression_records: list[dict[str, Any]] = []
     graphic_tiles_suppressed = 0
@@ -1217,8 +1234,6 @@ def scan(
 
     for path in image_paths:
         rel_path = str(path.relative_to(root))
-        if rel_path.startswith("figures/") and rel_path in excluded_panel_paths:
-            continue
         try:
             with Image.open(path) as img:
                 for frame_label, base in iter_normalized_frames(img):
@@ -1232,9 +1247,19 @@ def scan(
                             **cut_result["record"],
                         }
                         composite_panel_cut_records.append(record)
-                        composite_image_like_panels_screened += int(record["image_like_panels"])
                         composite_presentation_regions_skipped += int(record["presentation_regions_skipped"])
-                        for panel in cut_result["panels"]:
+                        cut_panels = list(cut_result["panels"])
+                        if rel_path in excluded_panel_paths:
+                            has_distinct_subpanels = any(not panel.get("is_full_image") for panel in cut_panels)
+                            if has_distinct_subpanels:
+                                record["modality_exclusion_deferred_to_composite_cutter"] = True
+                            else:
+                                cut_panels = []
+                                panels_excluded_from_deep_scan.extend(
+                                    item for item in routing.excluded_panels if item.get("panel") == rel_path
+                                )
+                        composite_image_like_panels_screened += len(cut_panels)
+                        for panel in cut_panels:
                             is_full_image = bool(panel.get("is_full_image"))
                             panel_id = str(panel["panel_id"])
                             screening_units.append({
@@ -1245,6 +1270,7 @@ def scan(
                                 "panel_id": None if is_full_image else panel_id,
                                 "panel_region": None if is_full_image else panel["bounds"],
                                 "panel_classification": panel["classification"],
+                                "source_dimensions": {"width": base.size[0], "height": base.size[1]},
                                 "image": panel["image"],
                             })
                     else:
@@ -1256,6 +1282,7 @@ def scan(
                             "panel_id": None,
                             "panel_region": None,
                             "panel_classification": "full_non_figure_image",
+                            "source_dimensions": {"width": base.size[0], "height": base.size[1]},
                             "image": base,
                         })
 
@@ -1326,6 +1353,7 @@ def scan(
                             "panel_id": unit["panel_id"],
                             "panel_region": unit["panel_region"],
                             "panel_classification": unit["panel_classification"],
+                            "source_dimensions": unit["source_dimensions"],
                             "image": unit_image.copy(),
                             "tiles": tiles,
                             "low_contrast_tiles": low_contrast_tiles,
@@ -1337,12 +1365,21 @@ def scan(
     candidates: list[dict[str, Any]] = []
     same_image_candidate_count = 0
     excluded_pair_count = 0
+    intra_stack_pairs_skipped = 0
     for i, left in enumerate(images):
         if comparison_budget.exhausted:
             break
         for right in images[i + 1:]:
             if comparison_budget.exhausted:
                 break
+            if (
+                left["source_file"] == right["source_file"]
+                and left.get("frame_label")
+                and right.get("frame_label")
+                and left.get("frame_label") != right.get("frame_label")
+            ):
+                intra_stack_pairs_skipped += 1
+                continue
             if undirected_pair(provenance_comparison_path(left), provenance_comparison_path(right)) in excluded_pairs:
                 excluded_pair_count += 1
                 continue
@@ -1426,7 +1463,7 @@ def scan(
 
     return {
         "detector_name": "image.local_patch_reuse",
-        "detector_version": "0.6.0",
+        "detector_version": "0.7.0",
         "input": {
             "root": str(root),
             "provenance_graph": str(provenance_path) if provenance_path else None,
@@ -1465,6 +1502,7 @@ def scan(
         "candidate_pair_count": len(candidates),
         "same_image_candidate_count": same_image_candidate_count,
         "excluded_expected_traceability_pairs": excluded_pair_count,
+        "intra_stack_pairs_skipped": intra_stack_pairs_skipped,
         "tile_limit_records": limit_records,
         "tile_comparisons_attempted": comparison_budget.used,
         "comparison_budget_exhausted": comparison_budget.exhausted,
