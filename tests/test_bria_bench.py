@@ -2988,6 +2988,18 @@ class BriaBenchMatchingTests(unittest.TestCase):
                 self.assertFalse(result.compatible)
                 self.assertFalse(result.location_compatible)
 
+    def test_supplementary_figure_aliases_remain_supplemental(self) -> None:
+        supplemental_label = self.label("L1", "Supplementary Figure 1A")
+        for observed in ("Supplemental Figure 1A", "Supp. Figure 1A", "S1A", "Supplementary Figure 1A"):
+            with self.subTest(observed=observed):
+                self.assertTrue(
+                    label_observation_compatible(supplemental_label, self.observation("O1", observed)).compatible
+                )
+        main_label = self.label("L2", "Figure 1A")
+        self.assertFalse(
+            label_observation_compatible(main_label, self.observation("O2", "Supplementary Figure 1A")).compatible
+        )
+
     def test_parent_figure_is_asymmetric_and_bare_figure_is_not_positive(self) -> None:
         parent = label_observation_compatible(
             self.label("L1", "Figure 1"),
@@ -3030,8 +3042,11 @@ class BriaBenchMatchingTests(unittest.TestCase):
             label_observation_compatible(label, self.observation("O1", "Fig. 3 panel 3B")).compatible
             is False
         )
-        self.assertTrue(
+        self.assertFalse(
             label_observation_compatible(label, self.observation("O2", "Figure 3C")).compatible
+        )
+        self.assertTrue(
+            label_observation_compatible(label, self.observation("O2", "Figure 3C and Figure 3D")).compatible
         )
         self.assertTrue(
             label_observation_compatible(
@@ -3049,6 +3064,79 @@ class BriaBenchMatchingTests(unittest.TestCase):
         self.assertTrue(label_observation_compatible(label, self.observation("O1", overlap)).compatible)
         self.assertFalse(label_observation_compatible(label, self.observation("O2", disjoint)).compatible)
         self.assertFalse(label_observation_compatible(label, self.observation("O3", pixels)).compatible)
+
+    def test_region_rule_reports_iou_and_smaller_area_separately(self) -> None:
+        expected = {"x": 0.0, "y": 0.0, "width": 0.1, "height": 0.1, "coordinate_space": "normalized_0_1"}
+        iou_pass = {"x": 0.08, "y": 0.0, "width": 0.1, "height": 0.1, "coordinate_space": "normalized_0_1"}
+        both_fail = {"x": 0.08, "y": 0.08, "width": 0.1, "height": 0.1, "coordinate_space": "normalized_0_1"}
+        passing = label_observation_compatible(self.label("L1", {"region": expected}), self.observation("O1", {"region": iou_pass}))
+        failing = label_observation_compatible(self.label("L1", {"region": expected}), self.observation("O2", {"region": both_fail}))
+        self.assertTrue(passing.compatible)
+        self.assertAlmostEqual(passing.components["region_iou"], 1 / 9, places=3)
+        self.assertAlmostEqual(passing.components["region_intersection_over_smaller"], 0.2, places=3)
+        self.assertFalse(failing.compatible)
+        self.assertLess(failing.components["region_iou"], 0.10)
+        self.assertLess(failing.components["region_intersection_over_smaller"], 0.50)
+
+    def test_mixed_region_spaces_keep_a_valid_same_space_pair(self) -> None:
+        expected = {"regions": [
+            {"x": 0.0, "y": 0.0, "width": 0.2, "height": 0.2, "coordinate_space": "normalized_0_1"},
+            {"x": 0, "y": 0, "width": 10, "height": 10, "coordinate_space": "pixels"},
+        ]}
+        observed = {"regions": [
+            {"x": 0.05, "y": 0.05, "width": 0.2, "height": 0.2, "coordinate_space": "normalized_0_1"},
+            {"x": 100, "y": 100, "width": 10, "height": 10, "coordinate_space": "pixels"},
+        ]}
+        result = label_observation_compatible(self.label("L1", expected), self.observation("O1", observed))
+        self.assertTrue(result.compatible)
+
+    def test_structured_cell_range_matches_textual_sheet_and_cells(self) -> None:
+        label = self.label("L1", {"sheet": "Data", "cell_range": "A1:B2"})
+        self.assertTrue(label_observation_compatible(label, self.observation("O1", "Sheet Data, cells A1:B2")).compatible)
+        self.assertFalse(label_observation_compatible(label, self.observation("O2", "Sheet Data, cells A1:C2")).compatible)
+
+    def test_paragraph_accepts_canonical_positive_integer_string(self) -> None:
+        label = self.label("L1", {"paragraph": "3"})
+        self.assertTrue(label_observation_compatible(label, self.observation("O1", "paragraph 3")).compatible)
+
+    def test_filename_text_extracts_token_without_prose(self) -> None:
+        label = self.label("L1", {"file": "foo.png"})
+        self.assertTrue(label_observation_compatible(label, self.observation("O1", "See foo.png")).compatible)
+
+    def test_unmatched_early_label_is_a_valid_tie_break_choice(self) -> None:
+        result = match_labels(
+            [self.label("L1", "Figure 2"), self.label("L2", "Figure 1")],
+            [self.observation("O1", "Figure 1")],
+        )
+        self.assertEqual([(item.label_id, item.observation_id) for item in result.matches], [("L2", "O1")])
+        self.assertEqual(result.unmatched_label_ids, ("L1",))
+
+    def test_roles_reject_string_and_empty_or_blank_values(self) -> None:
+        labels = [self.label("L1", "Figure 1A")]
+        observations = [self.observation("O1", "Figure 1A")]
+        for roles in (None, "recall_label", (), ("",), ("  ",), ("recall_label", "")):
+            with self.subTest(roles=roles), self.assertRaises(ValueError):
+                match_labels(labels, observations, roles=roles)
+
+    def test_nonpositive_structured_and_textual_location_numbers_fail(self) -> None:
+        invalid_locations = (
+            {"figure": "0"},
+            {"page": 0},
+            {"table": "Table 0"},
+            {"sheet": "Sheet0"},
+            {"paragraph": "0"},
+        )
+        for location in invalid_locations:
+            with self.subTest(location=location), self.assertRaises(ValueError):
+                label_observation_compatible(self.label("L1", location), self.observation("O1", "Figure 1A"))
+
+    def test_risk_swaps_do_not_change_selected_assignment(self) -> None:
+        labels = [self.label("L1", "Figure 1A"), self.label("L2", "Figure 2A")]
+        observations = [self.observation("O1", "Figure 1A", risk="R0"), self.observation("O2", "Figure 2A", risk="R4")]
+        swapped = [self.observation("O1", "Figure 1A", risk="R4"), self.observation("O2", "Figure 2A", risk="R0")]
+        first = match_labels(labels, observations)
+        second = match_labels(labels, swapped)
+        self.assertEqual([(item.label_id, item.observation_id) for item in first.matches], [(item.label_id, item.observation_id) for item in second.matches])
 
     def test_issue_family_compatibility_is_explicit_and_risk_is_separate(self) -> None:
         label = self.label("L1", "Figure 4A", family="image_local_reuse", compatible=["image_copy_move"])

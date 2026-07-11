@@ -11,7 +11,7 @@ from typing import Any, Mapping, Sequence
 
 _RISK_RE = re.compile(r"^R([0-4])$")
 _FIGURE_RE = re.compile(
-    r"(?<![a-z0-9])(?:(supplemental|supp\.?|s)\s*)?"
+    r"(?<![a-z0-9])(?:(supplemental|supplementary|supp\.?|s)\s*)?"
     r"(?:figure|fig\.?)\s*[_ .-]*(\d+)\s*([a-z])?",
     re.IGNORECASE,
 )
@@ -26,7 +26,9 @@ _PARAGRAPH_RE = re.compile(r"\bparagraphs?\s*[_ .-]*(\d+)\b", re.IGNORECASE)
 _SECTION_RE = re.compile(r"\b(?:section\s*[:#-]?\s*)?(introduction|background|methods?|materials?|results?|discussion|conclusion|abstract|supplement(?:ary)?)\s+section\b|\bsection\s*[:#-]?\s*([a-z][a-z0-9 _-]*)", re.IGNORECASE)
 _TIME_DAY_RE = re.compile(r"(?<![a-z0-9])(?:day\s*(\d+)|(\d+)\s*days?|d\s*(\d+))\b", re.IGNORECASE)
 _CELL_RE = re.compile(r"(?<![a-z0-9])([a-z]{1,3})(\d+)(?::([a-z]{1,3})(\d+))?\b", re.IGNORECASE)
-_FILE_RE = re.compile(r"(?<![a-z0-9])(?:[~./\\_-]*[a-z0-9][a-z0-9 ./\\_-]*)\.(?:pdf|png|jpe?g|tiff?|xlsx?|csv|docx?)\b", re.IGNORECASE)
+_FILE_RE = re.compile(r"(?<![a-z0-9])(?:[~./\\_-]*[a-z0-9][a-z0-9._/\\_-]*)\.(?:pdf|png|jpe?g|tiff?|xlsx?|csv|docx?)\b", re.IGNORECASE)
+_CELL_TEXT_RE = re.compile(r"\b(?:cells?|cell\s+range|range)\s*[:#-]?\s*([a-z]{1,3}\d+(?::[a-z]{1,3}\d+)?)\b", re.IGNORECASE)
+_NAMED_SHEET_RE = re.compile(r"\bsheet\s+([a-z][a-z0-9 _-]*?)(?=\s*(?:,|;|\bcell|\brange|$))", re.IGNORECASE)
 _GENERIC_WORDS = frozenset({"figure", "fig", "panel", "table", "sheet", "page", "pages", "region", "day", "days", "column", "columns", "row", "rows"})
 
 
@@ -128,6 +130,7 @@ class _Location:
     paragraphs: set[int] = field(default_factory=set)
     timepoints: set[int] = field(default_factory=set)
     terms: set[str] = field(default_factory=set)
+    cell_ranges: set[tuple[str, int, str, int]] = field(default_factory=set)
     regions: list[tuple[float, float, float, float, str]] = field(default_factory=list)
 
 
@@ -179,7 +182,7 @@ def _expand_numbers(value: object) -> set[int]:
         if not piece.isdigit() or int(piece) < 1:
             raise ValueError("row values must be positive integers")
         result.add(int(piece))
-    if len(pieces) >= 2 and "-" in text or re.search(r"\bto\b", text, re.IGNORECASE):
+    if len(pieces) >= 2 and ("-" in text or re.search(r"\bto\b", text, re.IGNORECASE)):
         bounds = [int(piece) for piece in pieces if piece.isdigit()]
         if len(bounds) == 2:
             if bounds[0] > bounds[1] or bounds[1] - bounds[0] > 10000:
@@ -227,8 +230,9 @@ def _cell_range(location: _Location, value: object) -> None:
     last_row = last_row or first_row
     start_col, end_col = _column_number(first_col), _column_number(last_col)
     start_row, end_row = int(first_row), int(last_row)
-    if start_col > end_col or start_row > end_row or end_col - start_col > 10000 or end_row - start_row > 10000:
+    if start_row < 1 or start_col > end_col or start_row > end_row or end_col - start_col > 10000 or end_row - start_row > 10000:
         raise ValueError("invalid cell_range bounds")
+    location.cell_ranges.add((first_col, start_row, last_col, end_row))
     location.columns.update(_column_name(item) for item in range(start_col, end_col + 1))
     location.rows.update(range(start_row, end_row + 1))
 
@@ -238,6 +242,8 @@ def _add_figures(location: _Location, text: str) -> None:
     for match in figure_matches:
         supplement = bool(match.group(1))
         number = int(match.group(2))
+        if number < 1:
+            raise ValueError("figure numbers must be positive")
         panel = match.group(3).upper() if match.group(3) else None
         location.figures.add(_Figure(supplement, number, panel))
         if panel:
@@ -249,6 +255,8 @@ def _add_figures(location: _Location, text: str) -> None:
                 location.figures.add(_Figure(supplement, number, panel))
                 location.panels.add(panel)
     for match in _SHORT_SUPP_FIGURE_RE.finditer(text):
+        if int(match.group(1)) < 1:
+            raise ValueError("figure numbers must be positive")
         panel = match.group(2).upper() if match.group(2) else None
         location.figures.add(_Figure(True, int(match.group(1)), panel))
         if panel:
@@ -257,6 +265,8 @@ def _add_figures(location: _Location, text: str) -> None:
         panel = match.group(2).upper()
         location.panels.add(panel)
         if match.group(1):
+            if int(match.group(1)) < 1:
+                raise ValueError("figure numbers must be positive")
             location.figures.add(_Figure(False, int(match.group(1)), panel))
 
 
@@ -277,17 +287,31 @@ def _add_text(location: _Location, value: object, *, terms: bool = False) -> Non
     text = _norm(value)
     _add_figures(location, text)
     for match in _PAGE_RE.finditer(text):
+        if int(match.group(1)) < 1:
+            raise ValueError("page numbers must be positive")
         location.pages.add(int(match.group(1)))
     for match in _TABLE_RE.finditer(text):
+        if int(re.match(r"\d+", match.group(1)).group()) < 1:
+            raise ValueError("table numbers must be positive")
         location.tables.add(match.group(1).casefold())
     for match in _SHEET_RE.finditer(text):
+        if int(match.group(1)) < 1:
+            raise ValueError("sheet numbers must be positive")
         location.sheets.add(("index", int(match.group(1))))
+    for match in _NAMED_SHEET_RE.finditer(text):
+        name = _norm(match.group(1))
+        if name and not name.isdigit():
+            location.sheets.add(("name", name))
     for match in _COLUMN_RE.finditer(text):
         location.columns.update(_columns(match.group(1)))
     for match in _ROW_RE.finditer(text):
         location.rows.update(_expand_numbers(match.group(1)))
     for match in _PARAGRAPH_RE.finditer(text):
+        if int(match.group(1)) < 1:
+            raise ValueError("paragraph numbers must be positive")
         location.paragraphs.add(int(match.group(1)))
+    for match in _CELL_TEXT_RE.finditer(text):
+        _cell_range(location, match.group(1))
     for match in _SECTION_RE.finditer(text):
         section = next(item for item in match.groups() if item is not None)
         section = _norm(section).removesuffix(" section").strip()
@@ -366,6 +390,8 @@ def _parse_location(value: object) -> _Location:
             location.panels.add(panel)
             number = panel_match.group(1)
             if number:
+                if int(number) < 1:
+                    raise ValueError("figure numbers must be positive")
                 location.figures.add(_Figure(panel_text.startswith("s"), int(number), panel))
             elif before or location.figures:
                 for figure in list(location.figures):
@@ -380,17 +406,28 @@ def _parse_location(value: object) -> _Location:
             raise ValueError("invalid panel")
         location.panels.add(panel_match.group(2).upper())
         if panel_match.group(1):
+            if int(panel_match.group(1)) < 1:
+                raise ValueError("figure numbers must be positive")
             location.figures.add(_Figure(panel_text.startswith("s"), int(panel_match.group(1)), panel_match.group(2).upper()))
     if "table" in value:
         table = _norm(value["table"])
         table_match = re.fullmatch(r"(?:table\s*)?([0-9]+[a-z]?)", table, re.IGNORECASE)
         if table_match is None:
             raise ValueError("invalid table")
+        if int(re.match(r"\d+", table_match.group(1)).group()) < 1:
+            raise ValueError("table numbers must be positive")
         location.tables.add(table_match.group(1))
     if "sheet" in value:
         sheet = _norm(value["sheet"])
         sheet_match = re.fullmatch(r"sheet\s*(\d+)", sheet, re.IGNORECASE)
-        location.sheets.add(("index", int(sheet_match.group(1))) if sheet_match else ("name", sheet))
+        if sheet_match:
+            if int(sheet_match.group(1)) < 1:
+                raise ValueError("sheet numbers must be positive")
+            location.sheets.add(("index", int(sheet_match.group(1))))
+        else:
+            if not sheet:
+                raise ValueError("sheet must not be empty")
+            location.sheets.add(("name", sheet))
     if "columns" in value:
         location.columns.update(_columns(value["columns"]))
     if "rows" in value:
@@ -406,11 +443,20 @@ def _parse_location(value: object) -> _Location:
         location.sections.add(section)
     if "paragraph" in value:
         paragraph = value["paragraph"]
+        if isinstance(paragraph, str):
+            if re.fullmatch(r"[1-9][0-9]*", paragraph) is None:
+                raise ValueError("paragraph must be a canonical positive integer")
+            paragraph = int(paragraph)
         if isinstance(paragraph, bool) or not isinstance(paragraph, int) or paragraph < 1:
             raise ValueError("paragraph must be a positive integer")
         location.paragraphs.add(paragraph)
-    if "region" in value:
-        _add_region(location, value["region"])
+    if "region" in value or "regions" in value:
+        regions = value.get("regions", value.get("region"))
+        if isinstance(regions, (list, tuple)):
+            for region in regions:
+                _add_region(location, region)
+        else:
+            _add_region(location, regions)
     return location
 
 
@@ -430,10 +476,12 @@ def _figure_relation(expected: _Location, observed: _Location, components: dict[
     for wanted in expected.figures:
         candidates = [item for item in observed.figures if item.supplement == wanted.supplement and item.number == wanted.number]
         if not candidates:
-            continue
+            reasons.append("observation lacks one expected figure or supplement")
+            return False
         if wanted.panel is not None:
             if not any(item.panel == wanted.panel for item in candidates):
-                continue
+                reasons.append("observation lacks one expected figure panel")
+                return False
             exact_panel += 1
             satisfied = True
         else:
@@ -471,7 +519,8 @@ def _region_relation(expected: _Location, observed: _Location, reasons: list[str
     if not observed.regions:
         reasons.append("observation lacks the expected region")
         return False
-    best = 0.0
+    best_any: tuple[float, float] | None = None
+    best: tuple[float, float] | None = None
     for left in expected.regions:
         for right in observed.regions:
             if left[4] != right[4]:
@@ -484,15 +533,24 @@ def _region_relation(expected: _Location, observed: _Location, reasons: list[str
             left_area, right_area = left[2] * left[3], right[2] * right[3]
             iou = intersection / (left_area + right_area - intersection)
             smaller = intersection / min(left_area, right_area)
-            best = max(best, iou, smaller)
-    if any(left[4] != right[4] for left in expected.regions for right in observed.regions):
-        reasons.append("regions use different coordinate spaces")
+            if best_any is None or (iou, smaller) > best_any:
+                best_any = (iou, smaller)
+            if iou >= 0.10 or smaller >= 0.50:
+                if best is None or (iou, smaller) > best:
+                    best = (iou, smaller)
+    if best is None:
+        if best_any is not None:
+            components["region_iou"] = round(best_any[0], 6)
+            components["region_intersection_over_smaller"] = round(best_any[1], 6)
+        if any(left[4] == right[4] for left in expected.regions for right in observed.regions):
+            reasons.append("same-space regions are disjoint or have insufficient overlap")
+        else:
+            reasons.append("regions have no comparable same-space pair")
         return False
-    if best < 0.10:
-        reasons.append("same-space regions are disjoint or have insufficient overlap")
-        return False
-    components["region_overlap"] = round(best, 6)
-    reasons.append(f"same-space regions overlap ({best:.3f})")
+    components["region_iou"] = round(best[0], 6)
+    components["region_intersection_over_smaller"] = round(best[1], 6)
+    components["region_overlap"] = round(max(best), 6)
+    reasons.append(f"same-space regions overlap (IoU={best[0]:.3f}, smaller={best[1]:.3f})")
     return True
 
 
@@ -530,6 +588,8 @@ def _location_compare(expected: _Location, observed: _Location) -> tuple[bool, t
     independent_expected_panels = expected.panels - expected_figure_panels
     if independent_expected_panels and not _subset_relation("panel", independent_expected_panels, observed.panels | {item.panel for item in observed.figures if item.panel}, reasons, components):
         return False, (0, 0, 0, 0, 0, 0, 0), reasons, components
+    if expected.cell_ranges and not _subset_relation("cell_range", expected.cell_ranges, observed.cell_ranges, reasons, components):
+        return False, (0, 0, 0, 0, 0, 0, 0), reasons, components
     dimensions = (
         ("page", expected.pages, observed.pages),
         ("table", expected.tables, observed.tables),
@@ -558,7 +618,7 @@ def _location_compare(expected: _Location, observed: _Location) -> tuple[bool, t
 
     exact_file_panel = int(bool(components.get("file_exact")))
     panel_score = int(bool(components.get("figure_panel_exact") or components.get("panel_agree")))
-    structured_score = sum(int(components.get(f"{name}_agree", False)) for name in ("page", "table", "sheet", "column", "row", "section", "paragraph", "timepoint"))
+    structured_score = sum(int(components.get(f"{name}_agree", False)) for name in ("page", "table", "sheet", "column", "row", "cell_range", "section", "paragraph", "timepoint"))
     parent_score = int(bool(components.get("parent_figure")))
     term_score = int(bool(expected.terms and components.get("term_agree")))
     region_score = int(float(components.get("region_overlap", 0.0)) * 1000)
@@ -707,9 +767,11 @@ def match_labels(labels: Sequence[Mapping[str, Any]], observations: Sequence[Map
 
     if not isinstance(labels, Sequence) or isinstance(labels, (str, bytes)) or not isinstance(observations, Sequence) or isinstance(observations, (str, bytes)):
         raise ValueError("labels and observations must be sequences")
+    if isinstance(roles, (str, bytes)) or not isinstance(roles, Sequence) or not roles:
+        raise ValueError("roles must be a non-empty sequence of strings")
+    if any(not isinstance(role, str) or not role.strip() for role in roles):
+        raise ValueError("roles must be a non-empty sequence of non-empty strings")
     selected_roles = set(roles)
-    if not selected_roles or any(not isinstance(role, str) for role in selected_roles):
-        raise ValueError("roles must contain strings")
     all_label_ids: set[str] = set()
     label_records: dict[str, Mapping[str, Any]] = {}
     for item in labels:
@@ -765,7 +827,7 @@ def match_labels(labels: Sequence[Mapping[str, Any]], observations: Sequence[Map
         remaining_labels.remove(label_id)
         options = sorted(observation_id for left, observation_id in candidate_edges if left == label_id and observation_id not in used_observations)
         options.append("")
-        chosen: str | None = None
+        choice_found = False
         for option in options:
             candidate_score = 0
             remaining_observations = [item for item in observation_ids if item not in used_observations and item != option]
@@ -777,13 +839,13 @@ def match_labels(labels: Sequence[Mapping[str, Any]], observations: Sequence[Map
                 candidate_score = encoded(candidate.compatibility.score)
             possible_flow, possible_score, _ = _flow_solution(remaining_labels, remaining_observations, candidate_edges, target, set(), score_base=score_base)
             if possible_flow == target and fixed_score + candidate_score + possible_score == best_score:
-                chosen = option or None
+                choice_found = True
                 if option:
                     fixed.add((label_id, option))
                     used_observations.add(option)
                     fixed_score += candidate_score
                 break
-        if chosen is None and cardinality - len(fixed) > 0:
+        if not choice_found:
             raise ValueError("assignment tie-break could not preserve the optimum")
     selected_matches = tuple(candidate_edges[pair] for pair in sorted(fixed))
     ambiguous = False
