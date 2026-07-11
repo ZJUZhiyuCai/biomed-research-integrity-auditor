@@ -189,7 +189,10 @@ def intake_error_location(package: Path, artifact_name: str, error: Any) -> str:
     if not raw_path:
         return artifact_name
     try:
-        return Path(raw_path).expanduser().resolve().relative_to(package.resolve()).as_posix()
+        candidate = Path(raw_path).expanduser()
+        if not candidate.is_absolute():
+            candidate = package / candidate
+        return candidate.resolve().relative_to(package.resolve()).as_posix()
     except (OSError, ValueError):
         return artifact_name
 

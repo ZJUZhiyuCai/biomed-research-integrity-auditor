@@ -1,0 +1,38 @@
+{
+  "case_id": "dev_001_global_flip",
+  "expected_observations": [
+    {
+      "benign_explanations": [
+        "the panels may be documented derivatives of one acquisition",
+        "a declared orientation correction may explain the horizontal flip"
+      ],
+      "issue_family": "image_global_similarity",
+      "location": {
+        "file": "figures/Figure_1A.png",
+        "terms": [
+          "figures/Figure_1A.png",
+          "figures/Figure_1B.png",
+          "Figure 1A",
+          "Figure 1B"
+        ]
+      },
+      "observation_id": "dev_001_global_flip_001",
+      "presence": "present",
+      "required_materials": [
+        "original image files",
+        "image acquisition metadata",
+        "figure assembly history"
+      ],
+      "risk_range": [
+        "R3",
+        "R3"
+      ],
+      "role": "recall_label"
+    }
+  ],
+  "negative_control": false,
+  "notes": "First-party controlled development ground truth for detector and pipeline verification; excluded from public-realism and headline-accuracy reporting.",
+  "review_status": "controlled_ground_truth",
+  "schema_version": "1.0.0",
+  "source_annotation_path": "benchmarks/bria_bench/annotations/dev/dev_001_global_flip.json"
+}

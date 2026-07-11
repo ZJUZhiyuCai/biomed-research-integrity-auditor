@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import copy
+import csv
+import hashlib
 import json
 import os
 import random
@@ -20,13 +22,20 @@ from unittest.mock import patch
 
 from jsonschema import Draft202012Validator
 import tomllib
+from PIL import Image
 
+import benchmarks.bria_bench.generate_dev_cases as dev_cases_module
 import benchmarks.bria_bench.hashing as hashing_module
 import benchmarks.bria_bench.legacy_regression as legacy_regression_module
 import benchmarks.bria_bench.matching as matching_module
 from benchmarks.bria_bench import ContractError, __version__, validate_contract
 from benchmarks.bria_bench.contracts import SCHEMA_ROOT, load_schema
 from benchmarks.bria_bench.hashing import HashingError, hash_file, hash_tree
+from benchmarks.bria_bench.generate_dev_cases import (
+    DEV_CASE_IDS,
+    DevelopmentCaseError,
+    generate_dev_cases,
+)
 from benchmarks.bria_bench.legacy_regression import (
     LegacyRegressionError,
     evaluate_legacy_contract,
@@ -310,8 +319,12 @@ class BriaBenchLegacyRegressionTests(unittest.TestCase):
         frozen = load_manifest(
             BRIA_BENCH_ROOT / "benchmark_manifest.json", require_frozen=True
         )
-        self.assertEqual([case["case_id"] for case in source["cases"]], list(self.CASE_IDS))
-        self.assertEqual([case["case_id"] for case in frozen["cases"]], list(self.CASE_IDS))
+        self.assertEqual(
+            [case["case_id"] for case in source["cases"][:30]], list(self.CASE_IDS)
+        )
+        self.assertEqual(
+            [case["case_id"] for case in frozen["cases"][:30]], list(self.CASE_IDS)
+        )
 
         package_files: list[Path] = []
         package_hashes: list[str] = []
@@ -348,7 +361,7 @@ class BriaBenchLegacyRegressionTests(unittest.TestCase):
                 for case_id in ("case_025", "case_026", "case_027", "case_028")
             },
         }
-        for case in frozen["cases"]:
+        for case in frozen["cases"][:30]:
             case_id = case["case_id"]
             self.assertEqual(case["track"], "regression")
             self.assertEqual(case["split"], "reference")
@@ -933,6 +946,682 @@ class BriaBenchLegacyRegressionTests(unittest.TestCase):
                 "findings": [],
             }
             self.assertFalse(evaluate_legacy_contract(weak_contract, weak_summary, ""))
+
+
+class BriaBenchDevelopmentCaseTests(unittest.TestCase):
+    CASE_IDS = (
+        "dev_001_global_flip",
+        "dev_002_independent_images",
+        "dev_003_stats_shift",
+        "dev_004_stats_independent",
+        "dev_005_corrupt_image",
+        "dev_006_manifest_laundering",
+    )
+    SOURCE_FIRST_30_SHA256 = (
+        "eba372319be72e548e864650d49d309c78f552b9748ecebb620b5761fb8216fd"
+    )
+    FROZEN_FIRST_30_SHA256 = (
+        "74dad970602843ebc40ae038bc5c9d835a4d2ae218569d5bdde80cba891e3c24"
+    )
+
+    @staticmethod
+    def tree_files(root: Path) -> dict[str, bytes]:
+        return {
+            path.relative_to(root).as_posix(): path.read_bytes()
+            for path in sorted(root.rglob("*"))
+            if path.is_file()
+        }
+
+    @staticmethod
+    def tree_snapshot(root: Path) -> dict[str, tuple[str, bytes | str | None]]:
+        snapshot: dict[str, tuple[str, bytes | str | None]] = {}
+        for path in (root, *sorted(root.rglob("*"))):
+            relative = "." if path == root else path.relative_to(root).as_posix()
+            metadata = path.lstat()
+            if stat.S_ISLNK(metadata.st_mode):
+                snapshot[relative] = ("symlink", os.readlink(path))
+            elif stat.S_ISDIR(metadata.st_mode):
+                snapshot[relative] = ("directory", None)
+            elif stat.S_ISREG(metadata.st_mode):
+                snapshot[relative] = ("file", path.read_bytes())
+            else:
+                snapshot[relative] = ("other", None)
+        return snapshot
+
+    @staticmethod
+    def canonical_sha(payload: Any) -> str:
+        serialized = json.dumps(
+            payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+        return hashlib.sha256(serialized).hexdigest()
+
+    def test_generation_is_deterministic_first_party_and_layout_exact(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            left_packages = root / "left-packages"
+            left_annotations = root / "left-annotations"
+            right_packages = root / "right-packages"
+            right_annotations = root / "right-annotations"
+
+            left = generate_dev_cases(
+                left_packages, annotations_root=left_annotations
+            )
+            right = generate_dev_cases(
+                right_packages, annotations_root=right_annotations
+            )
+
+            self.assertEqual(tuple(DEV_CASE_IDS), self.CASE_IDS)
+            self.assertEqual(left, right)
+            self.assertEqual([case["case_id"] for case in left], list(self.CASE_IDS))
+            self.assertEqual(self.tree_files(left_packages), self.tree_files(right_packages))
+            self.assertEqual(
+                self.tree_files(left_annotations), self.tree_files(right_annotations)
+            )
+            self.assertTrue(
+                all(
+                    case["redistributable"] is True
+                    and case["license"] == "CC0-1.0"
+                    for case in left
+                )
+            )
+
+            expected_layouts = {
+                "dev_001_global_flip": {
+                    "LICENSE.txt",
+                    "PACKAGE_NOTE.txt",
+                    "manuscript/manuscript.txt",
+                    "figures/Figure_1A.png",
+                    "figures/Figure_1B.png",
+                },
+                "dev_002_independent_images": {
+                    "LICENSE.txt",
+                    "PACKAGE_NOTE.txt",
+                    "manuscript/manuscript.txt",
+                    "figures/Figure_2A.png",
+                    "figures/Figure_2B.png",
+                },
+                "dev_003_stats_shift": {
+                    "LICENSE.txt",
+                    "PACKAGE_NOTE.txt",
+                    "manuscript/manuscript.txt",
+                    "source_data/Figure_3_source.csv",
+                },
+                "dev_004_stats_independent": {
+                    "LICENSE.txt",
+                    "PACKAGE_NOTE.txt",
+                    "manuscript/manuscript.txt",
+                    "source_data/Figure_4_source.csv",
+                },
+                "dev_005_corrupt_image": {
+                    "LICENSE.txt",
+                    "PACKAGE_NOTE.txt",
+                    "manuscript/manuscript.txt",
+                    "figures/Figure_5A_valid.png",
+                    "figures/Figure_5B_truncated.png",
+                },
+                "dev_006_manifest_laundering": {
+                    "LICENSE.txt",
+                    "PACKAGE_NOTE.txt",
+                    "manuscript/manuscript.txt",
+                    "figures/Figure_6A.png",
+                    "figures/Figure_6B.png",
+                    "figure_assembly/assembly_manifest.csv",
+                },
+            }
+            for case_id, expected in expected_layouts.items():
+                package = left_packages / case_id
+                actual = {
+                    path.relative_to(package).as_posix()
+                    for path in package.rglob("*")
+                    if path.is_file()
+                }
+                self.assertEqual(actual, expected, case_id)
+                self.assertFalse(list(package.rglob("*.pdf")), case_id)
+                self.assertIn("CC0-1.0", (package / "LICENSE.txt").read_text())
+                self.assertIn("CC0 1.0", (package / "LICENSE.txt").read_text())
+                note = (package / "PACKAGE_NOTE.txt").read_text(encoding="utf-8")
+                for phrase in (
+                    "no real paper",
+                    "no real person",
+                    "no real patient",
+                    "no private record",
+                    "no third-party asset",
+                ):
+                    self.assertIn(phrase, note.lower(), (case_id, phrase))
+
+            for case_id in self.CASE_IDS:
+                annotation = left_annotations / f"{case_id}.json"
+                self.assertTrue(annotation.is_file())
+                payload = json.loads(annotation.read_text(encoding="utf-8"))
+                validate_contract("annotation.schema.json", payload)
+
+    def test_generated_images_and_tables_encode_exact_controlled_relations(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            packages = Path(temporary) / "packages"
+            generate_dev_cases(packages)
+
+            with Image.open(
+                packages / "dev_001_global_flip/figures/Figure_1A.png"
+            ) as image_a, Image.open(
+                packages / "dev_001_global_flip/figures/Figure_1B.png"
+            ) as image_b:
+                self.assertEqual(image_a.mode, "RGB")
+                self.assertEqual(image_a.size, (256, 192))
+                self.assertEqual(image_a.info, {})
+                self.assertEqual(image_b.info, {})
+                self.assertEqual(
+                    image_a.transpose(Image.Transpose.FLIP_LEFT_RIGHT).tobytes(),
+                    image_b.tobytes(),
+                )
+
+            with Image.open(
+                packages / "dev_002_independent_images/figures/Figure_2A.png"
+            ) as image_a, Image.open(
+                packages / "dev_002_independent_images/figures/Figure_2B.png"
+            ) as image_b:
+                differing = sum(
+                    left != right for left, right in zip(image_a.tobytes(), image_b.tobytes())
+                )
+                self.assertGreater(differing / len(image_a.tobytes()), 0.99)
+
+            valid = packages / "dev_005_corrupt_image/figures/Figure_5A_valid.png"
+            truncated = (
+                packages
+                / "dev_005_corrupt_image/figures/Figure_5B_truncated.png"
+            )
+            self.assertGreater(valid.stat().st_size, 24)
+            self.assertEqual(truncated.read_bytes(), valid.read_bytes()[:24])
+
+            with (
+                packages
+                / "dev_003_stats_shift/source_data/Figure_3_source.csv"
+            ).open(newline="", encoding="utf-8") as handle:
+                shifted = list(csv.DictReader(handle))
+            controls = [
+                "1.13",
+                "2.47",
+                "3.82",
+                "5.26",
+                "6.91",
+                "8.34",
+                "9.78",
+                "11.05",
+            ]
+            self.assertEqual([row["control"] for row in shifted], controls)
+            self.assertEqual(len(shifted), 8)
+            self.assertTrue(
+                all(
+                    Decimal(row["treatment"]) - Decimal(row["control"])
+                    == Decimal("10")
+                    for row in shifted
+                )
+            )
+
+            with (
+                packages
+                / "dev_004_stats_independent/source_data/Figure_4_source.csv"
+            ).open(newline="", encoding="utf-8") as handle:
+                independent = list(csv.DictReader(handle))
+            self.assertEqual([row["control"] for row in independent], controls)
+            self.assertEqual(
+                [row["treatment"] for row in independent],
+                ["7.62", "3.19", "10.44", "1.87", "8.53", "12.26", "4.71", "9.38"],
+            )
+
+            with (
+                packages
+                / "dev_006_manifest_laundering/figure_assembly/assembly_manifest.csv"
+            ).open(newline="", encoding="utf-8") as handle:
+                manifest = csv.DictReader(handle)
+                rows = list(manifest)
+            self.assertEqual(
+                manifest.fieldnames,
+                ["figure_panel", "source_record", "relation_type", "modality", "notes"],
+            )
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["relation_type"], "same_field_different_channel")
+
+    def test_committed_generation_matches_and_cleans_only_owned_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            packages = root / "packages"
+            annotations = root / "annotations"
+            generate_dev_cases(packages, annotations_root=annotations)
+
+            for case_id in self.CASE_IDS:
+                self.assertEqual(
+                    self.tree_files(packages / case_id),
+                    self.tree_files(BRIA_BENCH_ROOT / "cases" / "dev" / case_id),
+                    case_id,
+                )
+                self.assertEqual(
+                    (annotations / f"{case_id}.json").read_bytes(),
+                    (
+                        BRIA_BENCH_ROOT
+                        / "annotations"
+                        / "dev"
+                        / f"{case_id}.json"
+                    ).read_bytes(),
+                    case_id,
+                )
+
+            sibling = packages / "future_case"
+            sibling.mkdir()
+            (sibling / "keep.txt").write_bytes(b"future package\n")
+            annotation_sibling = annotations / "future_case.json"
+            annotation_sibling.write_bytes(b"{\"future\": true}\n")
+            stale = packages / self.CASE_IDS[0] / "stale-owned.bin"
+            stale.write_bytes(b"remove me")
+            (annotations / f"{self.CASE_IDS[0]}.json").write_bytes(b"stale annotation")
+
+            generate_dev_cases(packages, annotations_root=annotations)
+
+            self.assertFalse(stale.exists())
+            self.assertEqual((sibling / "keep.txt").read_bytes(), b"future package\n")
+            self.assertEqual(
+                annotation_sibling.read_bytes(), b"{\"future\": true}\n"
+            )
+            validate_contract(
+                "annotation.schema.json",
+                json.loads(
+                    (annotations / f"{self.CASE_IDS[0]}.json").read_text(
+                        encoding="utf-8"
+                    )
+                ),
+            )
+
+    def test_generation_and_publish_failures_leave_public_data_unchanged(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            packages = root / "packages"
+            annotations = root / "annotations"
+            generate_dev_cases(packages, annotations_root=annotations)
+            before = self.tree_snapshot(root)
+            original_write = dev_cases_module._write_package
+
+            def fail_during_build(case_id: str, destination: Path) -> None:
+                if case_id == "dev_003_stats_shift":
+                    raise OSError("injected build failure")
+                original_write(case_id, destination)
+
+            with patch.object(
+                dev_cases_module, "_write_package", side_effect=fail_during_build
+            ):
+                with self.assertRaises(DevelopmentCaseError):
+                    generate_dev_cases(packages, annotations_root=annotations)
+            self.assertEqual(self.tree_snapshot(root), before)
+
+            original_replace = dev_cases_module.os.replace
+            publication_count = 0
+
+            def fail_during_publish(source: Path, destination: Path) -> None:
+                nonlocal publication_count
+                source_path = Path(source)
+                destination_path = Path(destination)
+                staged_source = any(
+                    part.startswith(".bria-dev-stage-") for part in source_path.parts
+                )
+                staged_destination = any(
+                    part.startswith(".bria-dev-stage-")
+                    for part in destination_path.parts
+                )
+                if staged_source and not staged_destination:
+                    publication_count += 1
+                    if publication_count == 3:
+                        raise OSError("injected publish failure")
+                original_replace(source_path, destination_path)
+
+            with patch.object(
+                dev_cases_module.os, "replace", side_effect=fail_during_publish
+            ):
+                with self.assertRaises(DevelopmentCaseError):
+                    generate_dev_cases(packages, annotations_root=annotations)
+            self.assertGreaterEqual(publication_count, 3)
+            self.assertEqual(self.tree_snapshot(root), before)
+
+    def test_annotations_and_36_case_manifest_are_exact_and_frozen(self) -> None:
+        source = load_manifest(BRIA_BENCH_ROOT / "benchmark_manifest.source.json")
+        frozen = load_manifest(
+            BRIA_BENCH_ROOT / "benchmark_manifest.json", require_frozen=True
+        )
+        self.assertEqual(len(source["cases"]), 36)
+        self.assertEqual(len(frozen["cases"]), 36)
+        self.assertEqual(
+            self.canonical_sha(source["cases"][:30]), self.SOURCE_FIRST_30_SHA256
+        )
+        self.assertEqual(
+            self.canonical_sha(frozen["cases"][:30]), self.FROZEN_FIRST_30_SHA256
+        )
+        self.assertEqual(
+            [case["case_id"] for case in frozen["cases"][30:]], list(self.CASE_IDS)
+        )
+        self.assertEqual(len({case["case_id"] for case in frozen["cases"]}), 36)
+        self.assertEqual(frozen["frozen_at"], "2026-07-11T00:00:00Z")
+
+        expected_tracks = {
+            **{case_id: "blinded_challenge" for case_id in self.CASE_IDS[:4]},
+            **{case_id: "robustness_scale" for case_id in self.CASE_IDS[4:]},
+        }
+        expected_labels = {
+            "dev_001_global_flip": [
+                ("recall_label", "image_global_similarity", ["R3", "R3"], "present")
+            ],
+            "dev_002_independent_images": [
+                ("negative_guardrail", "image_global_similarity", ["R2", "R4"], "absent")
+            ],
+            "dev_003_stats_shift": [
+                ("recall_label", "statistics_or_numeric", ["R1", "R2"], "present")
+            ],
+            "dev_004_stats_independent": [
+                ("negative_guardrail", "statistics_or_numeric", ["R1", "R2"], "absent")
+            ],
+            "dev_005_corrupt_image": [
+                (
+                    "coverage_gap",
+                    "material_or_coverage_gap",
+                    ["R1", "R1"],
+                    "insufficient_materials",
+                )
+            ],
+            "dev_006_manifest_laundering": [
+                ("recall_label", "image_global_similarity", ["R3", "R3"], "present"),
+                (
+                    "coverage_gap",
+                    "image_channel_metadata_gap",
+                    ["R1", "R1"],
+                    "insufficient_materials",
+                ),
+            ],
+        }
+        legacy_hashes = {case["expected_sha256"] for case in frozen["cases"][:30]}
+        dev_hashes: set[str] = set()
+        for case in frozen["cases"]:
+            self.assertEqual(verify_frozen_case(BRIA_BENCH_ROOT, case), case["expected_sha256"])
+            if case["case_id"] not in self.CASE_IDS:
+                continue
+            case_id = case["case_id"]
+            dev_hashes.add(case["expected_sha256"])
+            self.assertEqual(case["track"], expected_tracks[case_id])
+            self.assertEqual(case["split"], "dev")
+            self.assertEqual(case["mode"], "internal_presubmission")
+            self.assertEqual(case["scan_profile"], "quick")
+            self.assertIs(case["redistributable"], True)
+            self.assertEqual(case["license"], "CC0-1.0")
+            self.assertIs(case["headline_eligible"], False)
+
+            _, annotation_path = resolve_case_paths(BRIA_BENCH_ROOT, case)
+            annotation = json.loads(annotation_path.read_text(encoding="utf-8"))
+            validate_contract("annotation.schema.json", annotation)
+            self.assertEqual(annotation["schema_version"], "1.0.0")
+            self.assertEqual(annotation["case_id"], case_id)
+            self.assertEqual(annotation["review_status"], "controlled_ground_truth")
+            self.assertEqual(
+                annotation["source_annotation_path"],
+                f"benchmarks/bria_bench/annotations/dev/{case_id}.json",
+            )
+            actual_labels = [
+                (
+                    item["role"],
+                    item["issue_family"],
+                    item["risk_range"],
+                    item["presence"],
+                )
+                for item in annotation["expected_observations"]
+            ]
+            self.assertEqual(actual_labels, expected_labels[case_id])
+            for item in annotation["expected_observations"]:
+                self.assertIsInstance(item["location"], dict)
+                self.assertTrue(item["location"].get("terms"))
+                self.assertTrue(item["benign_explanations"])
+                self.assertTrue(item["required_materials"])
+                self.assertNotEqual(item["issue_family"], "manifest_conflict")
+
+        self.assertEqual(len(dev_hashes), 6)
+        self.assertTrue(dev_hashes.isdisjoint(legacy_hashes))
+        shift_annotation = json.loads(
+            (
+                BRIA_BENCH_ROOT
+                / "annotations/dev/dev_003_stats_shift.json"
+            ).read_text(encoding="utf-8")
+        )
+        self.assertEqual(
+            shift_annotation["expected_observations"][0]["expected_fact"],
+            "eight paired rows with a constant +10 shift",
+        )
+
+    def test_dev_package_mutation_invalidates_frozen_hash(self) -> None:
+        manifest = load_manifest(
+            BRIA_BENCH_ROOT / "benchmark_manifest.json", require_frozen=True
+        )
+        committed = next(
+            case for case in manifest["cases"] if case["case_id"] == self.CASE_IDS[0]
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            package_target = root / committed["package_path"]
+            annotation_target = root / committed["annotation_path"]
+            shutil.copytree(BRIA_BENCH_ROOT / committed["package_path"], package_target)
+            annotation_target.parent.mkdir(parents=True)
+            shutil.copy2(
+                BRIA_BENCH_ROOT / committed["annotation_path"], annotation_target
+            )
+            verify_frozen_case(root, committed)
+            (package_target / "PACKAGE_NOTE.txt").write_text(
+                "mutated\n", encoding="utf-8"
+            )
+            with self.assertRaisesRegex(RegistryError, "package hash mismatch"):
+                verify_frozen_case(root, committed)
+
+    def test_generated_data_has_no_paths_identities_secrets_symlinks_or_intent_labels(
+        self,
+    ) -> None:
+        roots = (
+            BRIA_BENCH_ROOT / "cases" / "dev",
+            BRIA_BENCH_ROOT / "annotations" / "dev",
+        )
+        all_paths = [path for root in roots for path in (root, *root.rglob("*"))]
+        self.assertFalse(any(path.is_symlink() for path in all_paths))
+        text_suffixes = {".txt", ".csv", ".json"}
+        text = "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in all_paths
+            if path.is_file() and path.suffix.lower() in text_suffixes
+        )
+        lowered = text.lower()
+        self.assertIsNone(re.search(r"(?:/Users/|/home/|[A-Za-z]:\\\\)", text))
+        self.assertIsNone(re.search(r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}", text))
+        for forbidden in (
+            "api_key",
+            "password",
+            "private key",
+            "secret token",
+            "misconduct",
+            "fraud",
+            "fake",
+            "guilty",
+            "intent label",
+        ):
+            self.assertNotIn(forbidden, lowered)
+
+    def test_raw_detectors_separate_positive_and_negative_controls(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary)
+
+            def detector_payload(script: str, package: Path, name: str) -> dict[str, Any]:
+                target = output / f"{name}.json"
+                subprocess.run(
+                    [sys.executable, script, str(package), "--output", str(target)],
+                    cwd=REPOSITORY_ROOT,
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                )
+                return json.loads(target.read_text(encoding="utf-8"))
+
+            global_script = "detectors/image/global_near_duplicate.py"
+            global_positive = detector_payload(
+                global_script,
+                BRIA_BENCH_ROOT / "cases/dev/dev_001_global_flip",
+                "global-positive",
+            )
+            global_negative = detector_payload(
+                global_script,
+                BRIA_BENCH_ROOT / "cases/dev/dev_002_independent_images",
+                "global-negative",
+            )
+            self.assertEqual(
+                [item["candidate_type"] for item in global_positive["candidates"]],
+                ["image_reuse_cluster"],
+            )
+            self.assertEqual(global_negative["candidates"], [])
+
+            stats_script = (
+                "skill/biomed-research-integrity-auditor/scripts/"
+                "stats_consistency_check.py"
+            )
+            stats_positive = detector_payload(
+                stats_script,
+                BRIA_BENCH_ROOT / "cases/dev/dev_003_stats_shift/source_data",
+                "stats-positive",
+            )
+            stats_negative = detector_payload(
+                stats_script,
+                BRIA_BENCH_ROOT / "cases/dev/dev_004_stats_independent/source_data",
+                "stats-negative",
+            )
+            shift_candidates = [
+                item
+                for item in stats_positive["candidates"]
+                if "additive/subtractive shift" in item["finding_type"]
+            ]
+            self.assertEqual(len(shift_candidates), 1)
+            self.assertEqual(shift_candidates[0]["evidence"]["paired_rows"], 8)
+            self.assertEqual(stats_negative["candidates"], [])
+
+    def test_full_adapter_dev_split_smoke_and_metrics_truth(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            runs = root / "runs"
+            summary = run_benchmark(
+                BRIA_BENCH_ROOT / "benchmark_manifest.json",
+                runs,
+                splits=["dev"],
+                adapter_name="full",
+                timeout_seconds=300,
+            )
+            self.assertEqual(
+                [item["case_id"] for item in summary["cases"]], list(self.CASE_IDS)
+            )
+            self.assertTrue(
+                all(item["status"] == "success" for item in summary["cases"])
+            )
+
+            results: dict[str, dict[str, Any]] = {}
+            for item in summary["cases"]:
+                results[item["case_id"]] = json.loads(
+                    (runs / item["run_result"]).read_text(encoding="utf-8")
+                )
+            observations = {
+                case_id: result["normalized_observation"]["observations"]
+                for case_id, result in results.items()
+            }
+            self.assertEqual(observations["dev_002_independent_images"], [])
+            self.assertEqual(observations["dev_004_stats_independent"], [])
+
+            global_flip = [
+                item
+                for item in observations["dev_001_global_flip"]
+                if item["issue_family"] == "image_global_similarity"
+            ]
+            self.assertEqual(len(global_flip), 1)
+            self.assertIn("Figure_1A.png", json.dumps(global_flip[0]))
+            self.assertIn("Figure_1B.png", json.dumps(global_flip[0]))
+
+            stats_shift = [
+                item
+                for item in observations["dev_003_stats_shift"]
+                if item["issue_family"] == "statistics_or_numeric"
+            ]
+            self.assertEqual(len(stats_shift), 1)
+            self.assertIn("Figure_3_source.csv", json.dumps(stats_shift[0]))
+
+            corrupt_gaps = [
+                item
+                for item in observations["dev_005_corrupt_image"]
+                if item["issue_family"] == "material_or_coverage_gap"
+            ]
+            self.assertTrue(corrupt_gaps)
+            self.assertTrue(
+                any("Figure_5B_truncated.png" in json.dumps(item) for item in corrupt_gaps)
+            )
+
+            laundering = observations["dev_006_manifest_laundering"]
+            self.assertTrue(
+                any(
+                    item["issue_family"] == "image_global_similarity"
+                    and item["risk_level"] == "R3"
+                    for item in laundering
+                )
+            )
+            self.assertTrue(
+                any(
+                    item["issue_family"] == "image_channel_metadata_gap"
+                    and item["risk_level"] == "R1"
+                    for item in laundering
+                )
+            )
+            laundering_summary = json.loads(
+                (
+                    runs
+                    / results["dev_006_manifest_laundering"]["output_paths"][
+                        "audit_summary"
+                    ]
+                ).read_text(encoding="utf-8")
+            )
+            self.assertEqual(laundering_summary["positive_provenance"], [])
+            laundering_output = (
+                runs
+                / results["dev_006_manifest_laundering"]["output_paths"][
+                    "case_output"
+                ]
+            )
+            contextual = json.loads(
+                (laundering_output / "contextual_image_candidates.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertEqual(contextual["positive_evidence"], [])
+            self.assertTrue(
+                any(
+                    "manifest_conflict" in item.get("risk_cap_tags", [])
+                    for item in contextual["candidates"]
+                )
+            )
+
+            metrics = evaluate_benchmark(
+                BRIA_BENCH_ROOT / "benchmark_manifest.json",
+                runs,
+                root / "metrics.json",
+                splits=["dev"],
+            )
+            self.assertEqual(len(metrics["case_results"]), 6)
+            for name in (
+                "expected_finding_recall",
+                "negative_package_false_alert_rate",
+                "location_match_rate",
+                "risk_band_agreement",
+                "coverage_gap_recall",
+                "public_concern_location_coverage",
+            ):
+                self.assertEqual(metrics["detection"][name]["denominator"], 0, name)
+            self.assertEqual(
+                metrics["reliability"]["report_contract_validity"],
+                {"numerator": 6, "denominator": 6, "value": 1.0},
+            )
 
 
 class BriaBenchContractTests(unittest.TestCase):
@@ -6381,6 +7070,134 @@ class BriaBenchCliTests(unittest.TestCase):
                         adapters={"fake": self.adapter},
                     )
 
+    def test_run_and_evaluate_split_filters_and_case_intersection(self) -> None:
+        test_package = self.root / "test-package"
+        test_package.mkdir()
+        (test_package / "input.txt").write_text("test input\n", encoding="utf-8")
+        test_annotation = self.root / "test-annotation.json"
+        annotation = minimal_annotation()
+        annotation["case_id"] = "case_002"
+        test_annotation.write_text(json.dumps(annotation), encoding="utf-8")
+        source = json.loads(self.source.read_text(encoding="utf-8"))
+        second = copy.deepcopy(source["cases"][0])
+        second.update(
+            {
+                "case_id": "case_002",
+                "split": "test",
+                "package_path": "test-package",
+                "annotation_path": "test-annotation.json",
+            }
+        )
+        source["cases"].append(second)
+        self.source.write_text(json.dumps(source), encoding="utf-8")
+        freeze_manifest(self.source, self.manifest, "2026-07-11T00:00:00Z")
+
+        test_runs = self.root / "test-split-runs"
+        test_summary = run_benchmark(
+            self.manifest,
+            test_runs,
+            splits="test",
+            adapter_name="fake",
+            adapters={"fake": self.adapter},
+        )
+        self.assertEqual([item["case_id"] for item in test_summary["cases"]], ["case_002"])
+        test_metrics = evaluate_benchmark(
+            self.manifest,
+            test_runs,
+            self.root / "test-split-metrics.json",
+            splits="test",
+            adapters={"fake": self.adapter},
+        )
+        self.assertEqual(
+            [item["case_id"] for item in test_metrics["case_results"]], ["case_002"]
+        )
+
+        intersection_runs = self.root / "intersection-runs"
+        intersection = run_benchmark(
+            self.manifest,
+            intersection_runs,
+            case_ids=["case_002", "case_001"],
+            splits=["dev"],
+            adapter_name="fake",
+            adapters={"fake": self.adapter},
+        )
+        self.assertEqual([item["case_id"] for item in intersection["cases"]], ["case_001"])
+        with self.assertRaisesRegex(CliError, "selection is empty"):
+            run_benchmark(
+                self.manifest,
+                self.root / "empty-intersection-runs",
+                case_ids=["case_002"],
+                splits=["dev"],
+                adapter_name="fake",
+                adapters={"fake": self.adapter},
+            )
+
+        for splits, message in (
+            (["unknown"], "unknown split"),
+            ([], "split selection is empty"),
+            (["dev", "dev"], "duplicate split"),
+        ):
+            with self.subTest(splits=splits):
+                with self.assertRaisesRegex(CliError, message):
+                    run_benchmark(
+                        self.manifest,
+                        self.root / f"invalid-split-{len(splits)}",
+                        splits=splits,
+                        adapter_name="fake",
+                        adapters={"fake": self.adapter},
+                    )
+
+    def test_run_and_evaluate_cli_accept_repeatable_split(self) -> None:
+        with patch.object(cli_module, "default_adapters", return_value={"fake": self.adapter}):
+            self.assertEqual(
+                bria_bench_main(
+                    [
+                        "run",
+                        "--manifest",
+                        str(self.manifest),
+                        "--runs-dir",
+                        str(self.runs),
+                        "--case",
+                        "case_001",
+                        "--split",
+                        "dev",
+                        "--adapter",
+                        "fake",
+                    ]
+                ),
+                0,
+            )
+            output = self.root / "split-cli-metrics.json"
+            self.assertEqual(
+                bria_bench_main(
+                    [
+                        "evaluate",
+                        "--manifest",
+                        str(self.manifest),
+                        "--runs-dir",
+                        str(self.runs),
+                        "--output",
+                        str(output),
+                        "--split",
+                        "dev",
+                    ]
+                ),
+                0,
+            )
+        self.assertTrue(output.is_file())
+        with self.assertRaises(SystemExit):
+            cli_module.build_parser().parse_args(
+                [
+                    "run",
+                    "--manifest",
+                    str(self.manifest),
+                    "--runs-dir",
+                    str(self.runs),
+                    "--split",
+                    "unknown",
+                ]
+            )
+
     def test_runner_command_and_environment_changes_invalidate(self) -> None:
         run_benchmark(self.manifest, self.runs, adapter_name="fake", adapters={"fake": self.adapter})
         original_key = json.loads(
@@ -6931,9 +7748,13 @@ class BriaBenchCliTests(unittest.TestCase):
             "assert cli._hash_files(cli._runner_inputs(a,cmd)); "
             "root=pathlib.Path(sys.argv[1])/'benchmarks'/'bria_bench'; "
             "manifest=json.loads((root/'benchmark_manifest.json').read_text()); "
-            "assert len(manifest['cases']) == 30; "
-            "assert sum(1 for c in manifest['cases'] for p in (root/c['package_path']).rglob('*') if p.is_file()) == 148; "
-            "assert sum((root/c['annotation_path']).is_file() for c in manifest['cases']) == 30; "
+            "assert len(manifest['cases']) == 36; "
+            "assert sum(1 for c in manifest['cases'] for p in (root/c['package_path']).rglob('*') if p.is_file()) == 177; "
+            "assert sum((root/c['annotation_path']).is_file() for c in manifest['cases']) == 36; "
+            "assert (root/'cases/dev/dev_001_global_flip/figures/Figure_1A.png').is_file(); "
+            "assert (root/'cases/dev/dev_003_stats_shift/source_data/Figure_3_source.csv').is_file(); "
+            "assert (root/'cases/dev/dev_001_global_flip/LICENSE.txt').is_file(); "
+            "assert (root/'annotations/dev/dev_006_manifest_laundering.json').is_file(); "
             "assert cli.main(['--help']) == 0"
         )
         completed = subprocess.run(

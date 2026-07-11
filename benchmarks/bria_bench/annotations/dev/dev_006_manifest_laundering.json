@@ -1,0 +1,66 @@
+{
+  "case_id": "dev_006_manifest_laundering",
+  "expected_observations": [
+    {
+      "benign_explanations": [
+        "the panels may be orientation variants from one acquisition",
+        "a same-field relationship may be valid but remains unverified"
+      ],
+      "issue_family": "image_global_similarity",
+      "location": {
+        "file": "figures/Figure_6A.png",
+        "terms": [
+          "figures/Figure_6A.png",
+          "figures/Figure_6B.png",
+          "Figure 6A",
+          "Figure 6B"
+        ]
+      },
+      "observation_id": "dev_006_manifest_laundering_001",
+      "presence": "present",
+      "required_materials": [
+        "original image files for both panels",
+        "per-channel acquisition metadata",
+        "figure assembly history"
+      ],
+      "risk_range": [
+        "R3",
+        "R3"
+      ],
+      "role": "recall_label"
+    },
+    {
+      "benign_explanations": [
+        "channel metadata may exist in an original acquisition container",
+        "the supplied PNG exports may have omitted acquisition metadata"
+      ],
+      "issue_family": "image_channel_metadata_gap",
+      "location": {
+        "file": "figure_assembly/assembly_manifest.csv",
+        "terms": [
+          "figures/Figure_6A.png",
+          "figures/Figure_6B.png",
+          "same_field_different_channel",
+          "assembly_manifest.csv"
+        ]
+      },
+      "observation_id": "dev_006_manifest_laundering_002",
+      "presence": "insufficient_materials",
+      "required_materials": [
+        "original image files",
+        "channel metadata or channel map",
+        "figure assembly history"
+      ],
+      "risk_range": [
+        "R1",
+        "R1"
+      ],
+      "role": "coverage_gap"
+    }
+  ],
+  "negative_control": false,
+  "notes": "First-party controlled development ground truth for detector and pipeline verification; excluded from public-realism and headline-accuracy reporting.",
+  "review_status": "controlled_ground_truth",
+  "schema_version": "1.0.0",
+  "source_annotation_path": "benchmarks/bria_bench/annotations/dev/dev_006_manifest_laundering.json"
+}

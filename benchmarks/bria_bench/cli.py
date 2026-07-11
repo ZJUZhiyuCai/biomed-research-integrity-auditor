@@ -21,6 +21,7 @@ from typing import Any, Callable, Mapping, Protocol, Sequence
 
 
 _CASE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+_SPLITS = ("dev", "test", "reference")
 _ADAPTER_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 _ADAPTER_VERSION = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$")
 _PLACEHOLDERS = frozenset({"package", "mode", "profile", "case_id", "output"})
@@ -422,7 +423,9 @@ def _cache_material(
 
 
 def _select_cases(
-    manifest: Mapping[str, Any], case_ids: Sequence[str] | None
+    manifest: Mapping[str, Any],
+    case_ids: Sequence[str] | None,
+    splits: str | Sequence[str] | None = None,
 ) -> list[Mapping[str, Any]]:
     cases = list(manifest["cases"])
     by_id = {case["case_id"]: case for case in cases}
@@ -440,6 +443,20 @@ def _select_cases(
         if unknown:
             raise CliError(f"unknown case IDs requested: {unknown!r}")
         selected = [by_id[item] for item in values]
+    if splits is not None:
+        split_values = [splits] if isinstance(splits, str) else list(splits)
+        if not split_values:
+            raise CliError("split selection is empty")
+        duplicate_splits = sorted(
+            {item for item in split_values if split_values.count(item) > 1}
+        )
+        if duplicate_splits:
+            raise CliError(f"duplicate splits requested: {duplicate_splits!r}")
+        unknown_splits = sorted(set(split_values) - set(_SPLITS))
+        if unknown_splits:
+            raise CliError(f"unknown splits requested: {unknown_splits!r}")
+        requested_splits = set(split_values)
+        selected = [case for case in selected if case["split"] in requested_splits]
     if not selected:
         raise CliError("case selection is empty")
     return selected
@@ -944,6 +961,7 @@ def run_benchmark(
     runs_dir: Path | str,
     *,
     case_ids: Sequence[str] | None = None,
+    splits: str | Sequence[str] | None = None,
     adapter_name: str = "full",
     timeout_seconds: float = 900,
     adapters: Mapping[str, AdapterProtocol] | None = None,
@@ -956,7 +974,7 @@ def run_benchmark(
 
     manifest_file = Path(manifest_path)
     manifest = load_manifest(manifest_file, require_frozen=True, resolve_paths=False)
-    selected = _select_cases(manifest, case_ids)
+    selected = _select_cases(manifest, case_ids, splits)
     timeout = _normalized_timeout(timeout_seconds)
     registry = _adapter_registry(adapters)
     if adapter_name not in registry:
@@ -1323,6 +1341,7 @@ def evaluate_benchmark(
     output_path: Path | str,
     *,
     case_ids: Sequence[str] | None = None,
+    splits: str | Sequence[str] | None = None,
     adapters: Mapping[str, AdapterProtocol] | None = None,
     assertion_providers: Mapping[str, AssertionProvider] | None = None,
     generated_at: str | None = None,
@@ -1335,7 +1354,7 @@ def evaluate_benchmark(
 
     manifest_file = Path(manifest_path)
     manifest = load_manifest(manifest_file, require_frozen=True, resolve_paths=False)
-    selected = _select_cases(manifest, case_ids)
+    selected = _select_cases(manifest, case_ids, splits)
     registry = _adapter_registry(adapters)
     providers = dict(assertion_providers or {})
     manifest_sha = hashlib.sha256(manifest_file.read_bytes()).hexdigest()
@@ -1440,6 +1459,7 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--manifest", required=True, type=Path)
     run.add_argument("--runs-dir", required=True, type=Path)
     run.add_argument("--case", action="append", dest="case_ids")
+    run.add_argument("--split", action="append", dest="splits", choices=_SPLITS)
     run.add_argument("--adapter", default="full")
     run.add_argument("--timeout-seconds", type=float, default=900)
     evaluate = commands.add_parser("evaluate", help="Validate runs and aggregate metrics.")
@@ -1447,6 +1467,7 @@ def build_parser() -> argparse.ArgumentParser:
     evaluate.add_argument("--runs-dir", required=True, type=Path)
     evaluate.add_argument("--output", required=True, type=Path)
     evaluate.add_argument("--case", action="append", dest="case_ids")
+    evaluate.add_argument("--split", action="append", dest="splits", choices=_SPLITS)
     report = commands.add_parser("report", help="Render Task 8 metrics report (when installed).")
     report.add_argument("--metrics", required=True, type=Path)
     report.add_argument("--output", required=True, type=Path)
@@ -1470,6 +1491,7 @@ def _dispatch(args: argparse.Namespace) -> int:
             args.manifest,
             args.runs_dir,
             case_ids=args.case_ids,
+            splits=args.splits,
             adapter_name=args.adapter,
             timeout_seconds=args.timeout_seconds,
         )
@@ -1489,7 +1511,13 @@ def _dispatch(args: argparse.Namespace) -> int:
             )
         return 1 if failed else 0
     if args.command == "evaluate":
-        evaluate_benchmark(args.manifest, args.runs_dir, args.output, case_ids=args.case_ids)
+        evaluate_benchmark(
+            args.manifest,
+            args.runs_dir,
+            args.output,
+            case_ids=args.case_ids,
+            splits=args.splits,
+        )
         return 0
     if args.command == "report":
         try:

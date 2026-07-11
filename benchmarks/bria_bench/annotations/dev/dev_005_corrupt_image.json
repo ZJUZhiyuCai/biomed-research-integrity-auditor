@@ -1,0 +1,36 @@
+{
+  "case_id": "dev_005_corrupt_image",
+  "expected_observations": [
+    {
+      "benign_explanations": [
+        "the file may have been interrupted during transfer",
+        "a complete readable export may exist outside the supplied package"
+      ],
+      "issue_family": "material_or_coverage_gap",
+      "location": {
+        "file": "figures/Figure_5B_truncated.png",
+        "terms": [
+          "figures/Figure_5B_truncated.png",
+          "Figure_5B_truncated.png"
+        ]
+      },
+      "observation_id": "dev_005_corrupt_image_001",
+      "presence": "insufficient_materials",
+      "required_materials": [
+        "complete readable Figure_5B image",
+        "file-transfer or export record",
+        "manual review of the affected panel"
+      ],
+      "risk_range": [
+        "R1",
+        "R1"
+      ],
+      "role": "coverage_gap"
+    }
+  ],
+  "negative_control": false,
+  "notes": "First-party controlled development ground truth for detector and pipeline verification; excluded from public-realism and headline-accuracy reporting.",
+  "review_status": "controlled_ground_truth",
+  "schema_version": "1.0.0",
+  "source_annotation_path": "benchmarks/bria_bench/annotations/dev/dev_005_corrupt_image.json"
+}

@@ -1,0 +1,6 @@
+License identifier: CC0-1.0
+CC0 1.0 Universal dedication
+
+The repository authors created these first-party fixture materials and dedicate them to the public domain under CC0 1.0 Universal.
+To the extent possible under law, the creators waive copyright and related rights in these fixture materials.
+See https://creativecommons.org/publicdomain/zero/1.0/ for the CC0 1.0 legal terms.

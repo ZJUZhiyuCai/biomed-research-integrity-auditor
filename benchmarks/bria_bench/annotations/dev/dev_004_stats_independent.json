@@ -1,0 +1,37 @@
+{
+  "case_id": "dev_004_stats_independent",
+  "expected_observations": [
+    {
+      "benign_explanations": [
+        "small tables can contain incidental numerical similarities",
+        "ordinary independent variation can produce isolated matching digits"
+      ],
+      "issue_family": "statistics_or_numeric",
+      "location": {
+        "file": "source_data/Figure_4_source.csv",
+        "terms": [
+          "Figure_4_source.csv",
+          "control",
+          "treatment"
+        ]
+      },
+      "observation_id": "dev_004_stats_independent_001",
+      "presence": "absent",
+      "required_materials": [
+        "original source-data table",
+        "analysis code or calculation record",
+        "data export and rounding notes"
+      ],
+      "risk_range": [
+        "R1",
+        "R2"
+      ],
+      "role": "negative_guardrail"
+    }
+  ],
+  "negative_control": true,
+  "notes": "First-party controlled development ground truth for detector and pipeline verification; excluded from public-realism and headline-accuracy reporting.",
+  "review_status": "controlled_ground_truth",
+  "schema_version": "1.0.0",
+  "source_annotation_path": "benchmarks/bria_bench/annotations/dev/dev_004_stats_independent.json"
+}

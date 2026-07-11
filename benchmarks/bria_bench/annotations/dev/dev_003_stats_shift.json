@@ -1,0 +1,38 @@
+{
+  "case_id": "dev_003_stats_shift",
+  "expected_observations": [
+    {
+      "benign_explanations": [
+        "a documented normalization offset may explain the relationship",
+        "an export transformation may have added a constant to one column"
+      ],
+      "expected_fact": "eight paired rows with a constant +10 shift",
+      "issue_family": "statistics_or_numeric",
+      "location": {
+        "file": "source_data/Figure_3_source.csv",
+        "terms": [
+          "Figure_3_source.csv",
+          "control",
+          "treatment"
+        ]
+      },
+      "observation_id": "dev_003_stats_shift_001",
+      "presence": "present",
+      "required_materials": [
+        "original source-data table",
+        "analysis code or calculation record",
+        "data export and rounding notes"
+      ],
+      "risk_range": [
+        "R1",
+        "R2"
+      ],
+      "role": "recall_label"
+    }
+  ],
+  "negative_control": false,
+  "notes": "First-party controlled development ground truth for detector and pipeline verification; excluded from public-realism and headline-accuracy reporting.",
+  "review_status": "controlled_ground_truth",
+  "schema_version": "1.0.0",
+  "source_annotation_path": "benchmarks/bria_bench/annotations/dev/dev_003_stats_shift.json"
+}
