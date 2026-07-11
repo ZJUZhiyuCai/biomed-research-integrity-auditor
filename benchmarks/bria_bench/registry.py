@@ -287,12 +287,39 @@ def freeze_manifest(
     source = _as_path(source_path, label="source manifest path")
     output = _as_path(output_path, label="output manifest path")
     source_manifest = load_manifest(source, require_frozen=False)
+    try:
+        source_resolved = source.resolve(strict=True)
+        output_parent = output.parent.resolve(strict=True)
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise RegistryError("Could not resolve freeze source/output placement") from exc
+    output_resolved = output_parent / output.name
+    if output.is_symlink():
+        raise RegistryError("Frozen output must be a distinct actual file, not a symlink")
+    if output_resolved == source_resolved:
+        raise RegistryError("Frozen output must be a distinct file from the source manifest")
+
+    resolved_cases = [resolve_case_paths(source.parent, case) for case in source_manifest["cases"]]
+    for case, (package, annotation) in zip(source_manifest["cases"], resolved_cases):
+        if output_resolved == annotation:
+            raise RegistryError(
+                f"Frozen output must not equal case {case['case_id']!r} annotation"
+            )
+        if output_resolved.is_relative_to(package):
+            raise RegistryError(
+                f"Frozen output must not be within case {case['case_id']!r} package"
+            )
+    if output_parent != source_resolved.parent:
+        raise RegistryError(
+            "Frozen output must use the same resolved parent directory as the source manifest"
+        )
+    if output_resolved.exists() and not output_resolved.is_file():
+        raise RegistryError("Frozen output must be a file path")
+
     frozen = copy.deepcopy(source_manifest)
     frozen["frozen_at"] = frozen_at
 
-    for case in frozen["cases"]:
+    for case, (package, annotation) in zip(frozen["cases"], resolved_cases):
         try:
-            package, annotation = resolve_case_paths(source.parent, case)
             case["expected_sha256"] = hash_tree(package)
             case["annotation_sha256"] = hash_file(annotation)
         except (HashingError, RegistryError) as exc:
@@ -304,7 +331,7 @@ def freeze_manifest(
         validate_contract(MANIFEST_SCHEMA, frozen)
     except ContractError as exc:
         raise RegistryError(f"Frozen manifest is invalid: {exc}") from exc
-    _publish_manifest(output, frozen)
+    _publish_manifest(output_resolved, frozen)
     return frozen
 
 

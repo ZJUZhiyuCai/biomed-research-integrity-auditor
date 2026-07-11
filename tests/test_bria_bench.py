@@ -1367,6 +1367,108 @@ class BriaBenchRegistryTests(unittest.TestCase):
         with self.assertRaisesRegex(RegistryError, "Case ID first.*expected.*actual"):
             verify_frozen_case(self.root, mismatch)
 
+    def test_freeze_rejects_unsafe_output_placements_without_mutation(self) -> None:
+        self.require_secure_hashing()
+        source = self.write_manifest("source.json", self.manifest())
+        annotation = self.root / "annotations/dev/dev_001.json"
+        package = self.root / "cases/dev_001"
+        package_hash = hash_tree(package)
+        other = self.root / "other"
+        other.mkdir()
+        different_parent = other / "frozen.json"
+        different_parent.write_text("preserve me\n", encoding="utf-8")
+
+        placements = (
+            (different_parent, "same resolved parent"),
+            (source, "distinct"),
+            (annotation, "annotation"),
+            (package / "frozen.json", "within case"),
+        )
+        before_source = source.read_bytes()
+        before_annotation = annotation.read_bytes()
+        for output, message in placements:
+            with self.subTest(output=output):
+                with self.assertRaisesRegex(RegistryError, message):
+                    freeze_manifest(source, output, "2026-07-11T00:00:00Z")
+
+        self.assertEqual(source.read_bytes(), before_source)
+        self.assertEqual(annotation.read_bytes(), before_annotation)
+        self.assertEqual(different_parent.read_text(encoding="utf-8"), "preserve me\n")
+        self.assertFalse((package / "frozen.json").exists())
+        self.assertEqual(hash_tree(package), package_hash)
+
+    def test_module_cli_freeze_enforces_output_contract(self) -> None:
+        self.require_secure_hashing()
+        source = self.write_manifest("source.json", self.manifest())
+        safe = self.root / "frozen.json"
+        repository = Path(__file__).parents[1]
+
+        success = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "benchmarks.bria_bench.cli",
+                "freeze",
+                "--source",
+                str(source),
+                "--output",
+                str(safe),
+                "--frozen-at",
+                "2026-07-11T00:00:00Z",
+            ],
+            cwd=repository,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(success.returncode, 0, success.stderr)
+        load_manifest(safe, require_frozen=True)
+
+        outside = self.root / "outside"
+        outside.mkdir()
+        rejected = outside / "frozen.json"
+        rejected.write_text("old\n", encoding="utf-8")
+        failure = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "benchmarks.bria_bench.cli",
+                "freeze",
+                "--source",
+                str(source),
+                "--output",
+                str(rejected),
+                "--frozen-at",
+                "2026-07-11T00:00:00Z",
+            ],
+            cwd=repository,
+            capture_output=True,
+            text=True,
+        )
+        self.assertNotEqual(failure.returncode, 0)
+        self.assertIn("same resolved parent", failure.stderr)
+        self.assertEqual(rejected.read_text(encoding="utf-8"), "old\n")
+
+        package_output = self.root / "cases/dev_001/frozen.json"
+        package_failure = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "benchmarks.bria_bench.cli",
+                "freeze",
+                "--source",
+                str(source),
+                "--output",
+                str(package_output),
+                "--frozen-at",
+                "2026-07-11T00:00:00Z",
+            ],
+            cwd=repository,
+            capture_output=True,
+            text=True,
+        )
+        self.assertNotEqual(package_failure.returncode, 0)
+        self.assertFalse(package_output.exists())
+
     def test_freeze_fsyncs_containing_directory_after_replace(self) -> None:
         self.require_secure_hashing()
         source = self.write_manifest("source.json", self.manifest())
@@ -4575,6 +4677,50 @@ class BriaBenchCliTests(unittest.TestCase):
                 adapters={"fake": changed_command},
             )
         self.assertEqual(environment["cases"][0]["cache_status"], "invalidated")
+
+    def test_relative_runner_script_content_invalidates_cache(self) -> None:
+        relative_producer = os.path.relpath(self.producer, cli_module.repository_root())
+        adapter = CommandAdapter(
+            "relative",
+            "1",
+            (sys.executable, relative_producer, "{output}", "{case_id}"),
+        )
+        first = run_benchmark(
+            self.manifest,
+            self.runs,
+            adapter_name="relative",
+            adapters={"relative": adapter},
+        )
+        self.producer.write_text(
+            self.producer.read_text(encoding="utf-8") + "# relative runner changed\n",
+            encoding="utf-8",
+        )
+        second = run_benchmark(
+            self.manifest,
+            self.runs,
+            adapter_name="relative",
+            adapters={"relative": adapter},
+        )
+        self.assertEqual(first["cases"][0]["status"], "success")
+        self.assertEqual(second["cases"][0]["cache_status"], "invalidated")
+        self.assertNotEqual(first["cases"][0]["run_result"], second["cases"][0]["run_result"])
+
+    def test_shared_runner_digest_is_computed_once_per_run_invocation(self) -> None:
+        self.make_two_case_manifest()
+        original_hash = cli_module._hash_files
+        calls = 0
+
+        def counted(paths: object) -> str:
+            nonlocal calls
+            calls += 1
+            return original_hash(paths)  # type: ignore[arg-type]
+
+        with patch.object(cli_module, "_hash_files", side_effect=counted):
+            summary = run_benchmark(
+                self.manifest, self.runs, adapter_name="fake", adapters={"fake": self.adapter}
+            )
+        self.assertEqual([case["status"] for case in summary["cases"]], ["success", "success"])
+        self.assertEqual(calls, 1)
 
     def test_timeout_policy_changes_cache_identity_and_shorter_timeout_runs(self) -> None:
         self.producer.write_text(

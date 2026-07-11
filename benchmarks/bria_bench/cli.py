@@ -297,15 +297,21 @@ def _runner_inputs(adapter: AdapterProtocol, actual_command: Sequence[str]) -> l
                 if candidate.is_symlink() or not candidate.is_file():
                     raise CliError(f"Runner metadata input is unsafe: {candidate}")
                 paths.append(candidate.resolve())
+    execution_cwd = _execution_cwd(adapter)
     for argument in actual_command:
-        candidate = Path(argument)
-        if candidate.is_absolute() and candidate.exists():
-            if candidate.resolve() == Path(sys.executable).resolve():
-                continue
-            if candidate.is_symlink():
-                raise CliError(f"Symlinked command input is forbidden: {candidate}")
-            if candidate.is_file():
-                paths.append(candidate.resolve())
+        raw_candidate = Path(argument)
+        is_relative = not raw_candidate.is_absolute()
+        candidate = execution_cwd / raw_candidate if is_relative else raw_candidate
+        if not candidate.exists() and not candidate.is_symlink():
+            continue
+        if candidate.resolve() == Path(sys.executable).resolve():
+            continue
+        if candidate.is_symlink():
+            raise CliError(f"Symlinked command input is forbidden: {raw_candidate}")
+        if candidate.is_file():
+            paths.append(candidate.resolve())
+        elif is_relative and candidate.is_dir():
+            paths.extend(_walk_runner_tree(candidate.resolve()))
     return sorted(set(paths), key=lambda item: item.as_posix())
 
 
@@ -376,11 +382,19 @@ def _cache_material(
     actual_command: Sequence[str],
     manifest_sha256: str,
     timeout_seconds: float,
+    runner_digest_cache: dict[tuple[str, ...], str] | None = None,
 ) -> tuple[str, dict[str, str], list[str]]:
     timeout = _normalized_timeout(timeout_seconds)
     logical = _logical_command(adapter, case) + [_policy_marker(timeout)]
     environment = _environment_payload()
-    runner_sha = _hash_files(_runner_inputs(adapter, actual_command))
+    runner_inputs = _runner_inputs(adapter, actual_command)
+    runner_cache_key = tuple(path.as_posix() for path in runner_inputs)
+    if runner_digest_cache is not None and runner_cache_key in runner_digest_cache:
+        runner_sha = runner_digest_cache[runner_cache_key]
+    else:
+        runner_sha = _hash_files(runner_inputs)
+        if runner_digest_cache is not None:
+            runner_digest_cache[runner_cache_key] = runner_sha
     hashes = {
         "package_sha256": str(case["expected_sha256"]),
         "annotation_sha256": str(case["annotation_sha256"]),
@@ -927,6 +941,7 @@ def run_benchmark(
     _ensure_real_directory(runs, "failures")
     manifest_sha = hashlib.sha256(manifest_file.read_bytes()).hexdigest()
     summary_cases: list[dict[str, Any]] = []
+    runner_digest_cache: dict[tuple[str, ...], str] = {}
 
     for case in selected:
         case_id = str(case["case_id"])
@@ -942,7 +957,13 @@ def run_benchmark(
             package, _ = resolve_case_paths(manifest_file.parent, dict(case))
             probe = adapter.build_command(package=package, case=case, output="{staging_output}")
             cache_key, hashes, logical = _cache_material(
-                manifest, case, adapter, probe, manifest_sha, timeout
+                manifest,
+                case,
+                adapter,
+                probe,
+                manifest_sha,
+                timeout,
+                runner_digest_cache,
             )
 
             case_dir = _ensure_real_directory(runs, Path("cases") / case_id)
@@ -1262,6 +1283,7 @@ def evaluate_benchmark(
         raise CliError(f"Run summary lacks requested cases: {missing!r}")
 
     bundles: list[dict[str, Any]] = []
+    runner_digest_cache: dict[tuple[str, ...], str] = {}
     for case in selected:
         case_id = str(case["case_id"])
         _, annotation = _verified_annotation(manifest_file, case)
@@ -1301,6 +1323,7 @@ def evaluate_benchmark(
                 probe,
                 manifest_sha,
                 _timeout_from_command(run["command"]),
+                runner_digest_cache,
             )
             if run["cache_key"] != expected_key or run["hashes"] != expected_hashes:
                 raise CliError(f"Run result cache/hash mismatch for case {case_id!r}; rerun the case")
