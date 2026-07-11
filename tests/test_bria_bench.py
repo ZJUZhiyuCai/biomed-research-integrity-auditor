@@ -242,6 +242,7 @@ class BriaBenchContractTests(unittest.TestCase):
         manifest = minimal_manifest()
         manifest["frozen_at"] = "2026-07-11T00:00:00Z"
         manifest["cases"][0]["expected_sha256"] = "d" * 64
+        manifest["cases"][0]["annotation_sha256"] = "e" * 64
         validate_contract("benchmark_manifest.schema.json", manifest)
 
     def test_manifest_rejects_invalid_frozen_at_format(self) -> None:
@@ -848,7 +849,12 @@ class BriaBenchRegistryTests(unittest.TestCase):
         path.write_text(json.dumps(payload), encoding="utf-8")
         return path
 
+    def require_secure_hashing(self) -> None:
+        if not hashing_module.secure_hashing_supported():
+            self.skipTest("secure descriptor-relative hashing primitives are unavailable")
+
     def test_tree_hash_is_stable_content_sensitive_and_root_name_independent(self) -> None:
+        self.require_secure_hashing()
         left = self.root / "left-name"
         right = self.root / "right-name"
         for package in (left, right):
@@ -864,6 +870,7 @@ class BriaBenchRegistryTests(unittest.TestCase):
         self.assertNotEqual(first, hash_tree(left))
 
     def test_tree_hash_rejects_root_and_nested_symlinks(self) -> None:
+        self.require_secure_hashing()
         outside_file = self.root / "outside.txt"
         outside_file.write_bytes(b"outside")
         outside_dir = self.root / "outside-dir"
@@ -878,30 +885,44 @@ class BriaBenchRegistryTests(unittest.TestCase):
             with self.subTest(name=name):
                 package = self.root / name
                 package.mkdir()
-                (package / "link").symlink_to(target)
+                try:
+                    (package / "link").symlink_to(target)
+                except (NotImplementedError, OSError) as exc:
+                    self.skipTest(f"symlink creation unavailable: {exc}")
                 with self.assertRaises(HashingError):
                     hash_tree(package)
 
         root_link = self.root / "root-link"
-        root_link.symlink_to(self.root / "cases" / "dev_001", target_is_directory=True)
+        try:
+            root_link.symlink_to(self.root / "cases" / "dev_001", target_is_directory=True)
+        except (NotImplementedError, OSError) as exc:
+            self.skipTest(f"symlink creation unavailable: {exc}")
         with self.assertRaises(HashingError):
             hash_tree(root_link)
 
     def test_tree_hash_rejects_same_size_replacement_before_open(self) -> None:
+        self.require_secure_hashing()
         payload = self.root / "cases" / "dev_001" / "payload.bin"
         replacement = self.root / "replacement-before-open.bin"
         replacement.write_bytes(b"bravo")
         real_open = hashing_module.os.open
 
-        def replace_before_open(path: str | os.PathLike[str], flags: int) -> int:
-            os.replace(replacement, payload)
-            return real_open(path, flags)
+        def replace_before_open(
+            path: str | os.PathLike[str],
+            flags: int,
+            *,
+            dir_fd: int | None = None,
+        ) -> int:
+            if path == payload.name:
+                os.replace(replacement, payload)
+            return real_open(path, flags, dir_fd=dir_fd)
 
         with patch.object(hashing_module.os, "open", side_effect=replace_before_open):
             with self.assertRaisesRegex(HashingError, "changed"):
                 hash_tree(self.root / "cases" / "dev_001")
 
     def test_tree_hash_rejects_same_size_in_place_mutation_after_streaming(self) -> None:
+        self.require_secure_hashing()
         payload = self.root / "cases" / "dev_001" / "payload.bin"
         real_fstat = hashing_module.os.fstat
         calls = 0
@@ -928,6 +949,7 @@ class BriaBenchRegistryTests(unittest.TestCase):
                 hash_tree(self.root / "cases" / "dev_001")
 
     def test_tree_hash_rejects_same_size_replacement_after_close(self) -> None:
+        self.require_secure_hashing()
         payload = self.root / "cases" / "dev_001" / "payload.bin"
         replacement = self.root / "replacement-after-close.bin"
         replacement.write_bytes(b"bravo")
@@ -950,11 +972,114 @@ class BriaBenchRegistryTests(unittest.TestCase):
             with self.assertRaisesRegex(HashingError, "changed"):
                 hash_tree(self.root / "cases" / "dev_001")
 
+    def test_tree_hash_rejects_directory_entry_additions_and_deletions(self) -> None:
+        self.require_secure_hashing()
+        package = self.root / "cases" / "dev_001"
+        root_identity = (os.stat(package).st_dev, os.stat(package).st_ino)
+        real_listdir = hashing_module.os.listdir
+
+        for change in ("addition", "deletion"):
+            with self.subTest(change=change):
+                calls = 0
+
+                def changing_listdir(fd: int) -> list[str]:
+                    nonlocal calls
+                    names = list(real_listdir(fd))
+                    identity = os.fstat(fd)
+                    if (identity.st_dev, identity.st_ino) == root_identity:
+                        calls += 1
+                        if calls == 2:
+                            if change == "addition":
+                                names.append("appeared-during-traversal")
+                            else:
+                                names.remove("payload.bin")
+                    return names
+
+                with patch.object(hashing_module.os, "listdir", side_effect=changing_listdir):
+                    with self.assertRaisesRegex(HashingError, "entries changed"):
+                        hash_tree(package)
+
+    def test_tree_hash_rejects_nested_directory_swap(self) -> None:
+        self.require_secure_hashing()
+        package = self.root / "cases" / "dev_001"
+        nested = package / "nested-swap"
+        nested.mkdir()
+        replacement = self.root / "replacement-nested"
+        replacement.mkdir()
+        nested_identity = (os.stat(nested).st_dev, os.stat(nested).st_ino)
+        real_listdir = hashing_module.os.listdir
+        calls = 0
+
+        def swap_nested(fd: int) -> list[str]:
+            nonlocal calls
+            names = list(real_listdir(fd))
+            identity = os.fstat(fd)
+            if (identity.st_dev, identity.st_ino) == nested_identity:
+                calls += 1
+                if calls == 2:
+                    nested.rmdir()
+                    os.replace(replacement, nested)
+            return names
+
+        with patch.object(hashing_module.os, "listdir", side_effect=swap_nested):
+            with self.assertRaisesRegex(HashingError, "nested-swap"):
+                hash_tree(package)
+
+    def test_tree_hash_rejects_root_path_swap_after_traversal(self) -> None:
+        self.require_secure_hashing()
+        package = self.root / "swap-root"
+        package.mkdir()
+        replacement = self.root / "replacement-root"
+        replacement.mkdir()
+        real_listdir = hashing_module.os.listdir
+        root_identity = (os.stat(package).st_dev, os.stat(package).st_ino)
+        calls = 0
+
+        def swap_root(fd: int) -> list[str]:
+            nonlocal calls
+            names = list(real_listdir(fd))
+            identity = os.fstat(fd)
+            if (identity.st_dev, identity.st_ino) == root_identity:
+                calls += 1
+                if calls == 2:
+                    package.rmdir()
+                    os.replace(replacement, package)
+            return names
+
+        with patch.object(hashing_module.os, "listdir", side_effect=swap_root):
+            with self.assertRaisesRegex(HashingError, "root pathname"):
+                hash_tree(package)
+
+    def test_tree_hash_enforces_nfc_and_casefold_filename_policy(self) -> None:
+        self.require_secure_hashing()
+        package = self.root / "cases" / "dev_001"
+        decomposed = "e\u0301.txt"
+        (package / decomposed).write_text("decomposed", encoding="utf-8")
+        if decomposed not in os.listdir(package):
+            self.skipTest("filesystem normalizes filenames before hashing")
+        with self.assertRaisesRegex(HashingError, "NFC-normalized"):
+            hash_tree(package)
+
+        collision = self.root / "casefold-collision"
+        collision.mkdir()
+        try:
+            (collision / "A").write_text("A", encoding="utf-8")
+            (collision / "a").write_text("a", encoding="utf-8")
+        except OSError as exc:
+            self.skipTest(f"filesystem does not support case-distinct names: {exc}")
+        if set(os.listdir(collision)) != {"A", "a"}:
+            self.skipTest("filesystem does not preserve case-distinct names")
+        with self.assertRaisesRegex(HashingError, "casefold-collide"):
+            hash_tree(collision)
+
     def test_resolver_rejects_empty_absolute_traversal_and_symlink_paths(self) -> None:
         outside = self.root / "outside"
         outside.mkdir()
         (outside / "package").mkdir()
-        (self.root / "link").symlink_to(outside, target_is_directory=True)
+        try:
+            (self.root / "link").symlink_to(outside, target_is_directory=True)
+        except (NotImplementedError, OSError) as exc:
+            self.skipTest(f"symlink creation unavailable: {exc}")
         for value in ("", Path(""), Path("."), "/tmp/absolute", "../private", "link/package"):
             with self.subTest(value=value):
                 with self.assertRaises(RegistryError):
@@ -994,9 +1119,13 @@ class BriaBenchRegistryTests(unittest.TestCase):
 
         incomplete = self.manifest(cases=[first, second])
         incomplete["frozen_at"] = "2026-07-11T00:00:00Z"
-        incomplete["cases"][0]["expected_sha256"] = "a" * 64
         incomplete_path = self.write_manifest("incomplete.json", incomplete)
         with self.assertRaisesRegex(RegistryError, "expected_sha256"):
+            load_manifest(incomplete_path, require_frozen=True)
+
+        incomplete["cases"][0]["expected_sha256"] = "a" * 64
+        incomplete_path.write_text(json.dumps(incomplete), encoding="utf-8")
+        with self.assertRaisesRegex(RegistryError, "annotation_sha256"):
             load_manifest(incomplete_path, require_frozen=True)
 
         invalid_hash = self.manifest(cases=[first])
@@ -1006,6 +1135,7 @@ class BriaBenchRegistryTests(unittest.TestCase):
             load_manifest(invalid_hash_path)
 
     def test_freeze_preserves_case_order_and_verifies_frozen_case(self) -> None:
+        self.require_secure_hashing()
         first = self.case("first")
         second = self.case("second")
         second["package_path"] = "cases/dev_001"
@@ -1022,11 +1152,25 @@ class BriaBenchRegistryTests(unittest.TestCase):
         actual = verify_frozen_case(self.root, frozen["cases"][0])
         self.assertEqual(actual, frozen["cases"][0]["expected_sha256"])
 
+        annotation = self.root / "annotations" / "dev" / "dev_001.json"
+        annotation.write_text("changed annotation bytes", encoding="utf-8")
+        with self.assertRaisesRegex(RegistryError, "annotation hash mismatch"):
+            verify_frozen_case(self.root, frozen["cases"][0])
+
         mismatch = dict(frozen["cases"][0], expected_sha256="0" * 64)
         with self.assertRaisesRegex(RegistryError, "Case ID first.*expected.*actual"):
             verify_frozen_case(self.root, mismatch)
 
+    def test_freeze_fsyncs_containing_directory_after_replace(self) -> None:
+        self.require_secure_hashing()
+        source = self.write_manifest("source.json", self.manifest())
+        output = self.root / "frozen.json"
+        with patch("benchmarks.bria_bench.registry._fsync_directory") as fsync_directory:
+            freeze_manifest(source, output, "2026-07-11T00:00:00Z")
+        fsync_directory.assert_called_once_with(output.parent)
+
     def test_failed_freeze_serialization_and_replace_preserve_previous_output(self) -> None:
+        self.require_secure_hashing()
         source = self.write_manifest("source.json", self.manifest())
         output = self.root / "frozen.json"
         output.write_text('{"status":"old"}\n', encoding="utf-8")
@@ -1046,6 +1190,32 @@ class BriaBenchRegistryTests(unittest.TestCase):
                 freeze_manifest(source, output, "2026-07-11T00:00:00Z")
         self.assertEqual(output.read_text(encoding="utf-8"), before)
         self.assertEqual(list(self.root.glob(".frozen.json.*.tmp")), [])
+
+    def test_load_frozen_checks_shape_only_and_verify_detects_stale_package(self) -> None:
+        self.require_secure_hashing()
+        source = self.write_manifest("source.json", self.manifest())
+        output = self.root / "frozen.json"
+        freeze_manifest(source, output, "2026-07-11T00:00:00Z")
+
+        frozen = load_manifest(output, require_frozen=True)
+        (self.root / "cases" / "dev_001" / "payload.bin").write_bytes(b"stale")
+        loaded_again = load_manifest(output, require_frozen=True)
+        self.assertEqual(loaded_again, frozen)
+        with self.assertRaisesRegex(RegistryError, "package hash mismatch"):
+            verify_frozen_case(self.root, loaded_again["cases"][0])
+
+    def test_registry_error_preserves_case_and_underlying_path_context(self) -> None:
+        case = self.case("context_case")
+        case["package_path"] = "cases/missing"
+        source = self.write_manifest("context.json", self.manifest(cases=[case]))
+        with self.assertRaisesRegex(RegistryError, "context_case.*package"):
+            load_manifest(source)
+
+        case["expected_sha256"] = "a" * 64
+        case["annotation_sha256"] = "b" * 64
+        with self.assertRaisesRegex(RegistryError, "context_case.*package") as caught:
+            verify_frozen_case(self.root, case)
+        self.assertIsNotNone(caught.exception.__cause__)
 
 
 if __name__ == "__main__":

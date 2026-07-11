@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, NamedTuple
 
 from .contracts import ContractError, validate_contract
-from .hashing import HashingError, hash_tree
+from .hashing import HashingError, hash_file, hash_tree
 
 
 MANIFEST_SCHEMA = "benchmark_manifest.schema.json"
@@ -150,11 +150,34 @@ def load_manifest(path: Path | str, *, require_frozen: bool = False) -> dict[str
 
     for case in manifest["cases"]:
         resolve_case_paths(root, case)
-        if require_frozen and "expected_sha256" not in case:
-            raise RegistryError(
-                f"Frozen case {case['case_id']!r} requires expected_sha256"
-            )
+        if require_frozen:
+            for field in ("expected_sha256", "annotation_sha256"):
+                if field not in case:
+                    raise RegistryError(
+                        f"Frozen case {case['case_id']!r} requires {field}"
+                    )
     return manifest
+
+
+def _fsync_directory(directory: Path) -> None:
+    """Best-effort fsync of a containing directory where POSIX supports it."""
+
+    if os.name != "posix" or not hasattr(os, "O_DIRECTORY"):
+        return
+    descriptor = -1
+    try:
+        descriptor = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
+        os.fsync(descriptor)
+    except (OSError, ValueError):
+        # Some POSIX filesystems expose directory open but reject fsync; the
+        # file itself was already fsynced and publication remains atomic.
+        return
+    finally:
+        if descriptor != -1:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
 
 
 def _publish_manifest(path: Path, manifest: dict[str, Any]) -> None:
@@ -174,6 +197,7 @@ def _publish_manifest(path: Path, manifest: dict[str, Any]) -> None:
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temporary, path)
+        _fsync_directory(parent)
     finally:
         if descriptor != -1:
             try:
@@ -203,10 +227,13 @@ def freeze_manifest(
 
     for case in frozen["cases"]:
         try:
-            package, _annotation = resolve_case_paths(source.parent, case)
+            package, annotation = resolve_case_paths(source.parent, case)
             case["expected_sha256"] = hash_tree(package)
+            case["annotation_sha256"] = hash_file(annotation)
         except (HashingError, RegistryError) as exc:
-            raise RegistryError(f"Could not freeze case {case.get('case_id', '<unknown>')!r}") from exc
+            raise RegistryError(
+                f"Could not freeze case {case.get('case_id', '<unknown>')!r}: {exc}"
+            ) from exc
 
     try:
         validate_contract(MANIFEST_SCHEMA, frozen)
@@ -217,22 +244,36 @@ def freeze_manifest(
 
 
 def verify_frozen_case(root: Path | str, case: dict[str, Any]) -> str:
-    """Recompute one frozen package hash, raising with expected and actual values on drift."""
+    """Verify package and annotation hashes without parsing annotation content."""
 
     case_id = case.get("case_id", "<unknown>") if isinstance(case, dict) else "<unknown>"
-    if not isinstance(case, dict) or not isinstance(case.get("expected_sha256"), str):
-        raise RegistryError(f"Case ID {case_id} requires expected_sha256")
-    expected = case["expected_sha256"]
-    if SHA256_PATTERN.fullmatch(expected) is None:
-        raise RegistryError(f"Case ID {case_id} has invalid expected_sha256")
+    if not isinstance(case, dict):
+        raise RegistryError(f"Case ID {case_id} must be an object")
+    expected_package = case.get("expected_sha256")
+    expected_annotation = case.get("annotation_sha256")
+    for field, expected in (
+        ("expected_sha256", expected_package),
+        ("annotation_sha256", expected_annotation),
+    ):
+        if not isinstance(expected, str):
+            raise RegistryError(f"Case ID {case_id} requires {field}")
+        if SHA256_PATTERN.fullmatch(expected) is None:
+            raise RegistryError(f"Case ID {case_id} has invalid {field}")
 
     try:
-        package, _annotation = resolve_case_paths(root, case)
-        actual = hash_tree(package)
+        package, annotation = resolve_case_paths(root, case)
+        actual_package = hash_tree(package)
+        actual_annotation = hash_file(annotation)
     except (HashingError, RegistryError) as exc:
-        raise RegistryError(f"Could not verify case ID {case_id}") from exc
-    if actual != expected:
+        raise RegistryError(f"Could not verify case ID {case_id}: {exc}") from exc
+    if actual_package != expected_package:
         raise RegistryError(
-            f"Case ID {case_id} hash mismatch: expected {expected}, actual {actual}"
+            f"Case ID {case_id} package hash mismatch: expected {expected_package}, "
+            f"actual {actual_package}"
         )
-    return actual
+    if actual_annotation != expected_annotation:
+        raise RegistryError(
+            f"Case ID {case_id} annotation hash mismatch: expected {expected_annotation}, "
+            f"actual {actual_annotation}"
+        )
+    return actual_package
