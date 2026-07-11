@@ -72,6 +72,8 @@ def resolve_inside(root: Path | str, value: Path | str) -> Path:
     candidate = _as_path(value, label="relative path")
     if isinstance(value, str) and not value:
         raise RegistryError("Path must not be empty")
+    if candidate == Path("."):
+        raise RegistryError("Path must not be empty or '.'")
     if candidate.is_absolute():
         raise RegistryError("Absolute paths are not allowed")
     if any(component == ".." for component in candidate.parts):

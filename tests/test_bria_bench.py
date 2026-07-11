@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 import re
 import tempfile
 import unittest
@@ -11,6 +12,7 @@ from unittest.mock import patch
 
 from jsonschema import Draft202012Validator
 
+import benchmarks.bria_bench.hashing as hashing_module
 from benchmarks.bria_bench import ContractError, __version__, validate_contract
 from benchmarks.bria_bench.contracts import SCHEMA_ROOT, load_schema
 from benchmarks.bria_bench.hashing import HashingError, hash_tree
@@ -885,12 +887,75 @@ class BriaBenchRegistryTests(unittest.TestCase):
         with self.assertRaises(HashingError):
             hash_tree(root_link)
 
+    def test_tree_hash_rejects_same_size_replacement_before_open(self) -> None:
+        payload = self.root / "cases" / "dev_001" / "payload.bin"
+        replacement = self.root / "replacement-before-open.bin"
+        replacement.write_bytes(b"bravo")
+        real_open = hashing_module.os.open
+
+        def replace_before_open(path: str | os.PathLike[str], flags: int) -> int:
+            os.replace(replacement, payload)
+            return real_open(path, flags)
+
+        with patch.object(hashing_module.os, "open", side_effect=replace_before_open):
+            with self.assertRaisesRegex(HashingError, "changed"):
+                hash_tree(self.root / "cases" / "dev_001")
+
+    def test_tree_hash_rejects_same_size_in_place_mutation_after_streaming(self) -> None:
+        payload = self.root / "cases" / "dev_001" / "payload.bin"
+        real_fstat = hashing_module.os.fstat
+        calls = 0
+
+        def mutate_before_post_stream_fstat(descriptor: int) -> os.stat_result:
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                payload.write_bytes(b"bravo")
+                current = os.lstat(payload)
+                os.utime(
+                    payload,
+                    ns=(current.st_atime_ns, current.st_mtime_ns + 1),
+                    follow_symlinks=False,
+                )
+            return real_fstat(descriptor)
+
+        with patch.object(
+            hashing_module.os,
+            "fstat",
+            side_effect=mutate_before_post_stream_fstat,
+        ):
+            with self.assertRaisesRegex(HashingError, "changed"):
+                hash_tree(self.root / "cases" / "dev_001")
+
+    def test_tree_hash_rejects_same_size_replacement_after_close(self) -> None:
+        payload = self.root / "cases" / "dev_001" / "payload.bin"
+        replacement = self.root / "replacement-after-close.bin"
+        replacement.write_bytes(b"bravo")
+        real_fstat = hashing_module.os.fstat
+        calls = 0
+
+        def replace_after_stream_fstat(descriptor: int) -> os.stat_result:
+            nonlocal calls
+            calls += 1
+            result = real_fstat(descriptor)
+            if calls == 2:
+                os.replace(replacement, payload)
+            return result
+
+        with patch.object(
+            hashing_module.os,
+            "fstat",
+            side_effect=replace_after_stream_fstat,
+        ):
+            with self.assertRaisesRegex(HashingError, "changed"):
+                hash_tree(self.root / "cases" / "dev_001")
+
     def test_resolver_rejects_empty_absolute_traversal_and_symlink_paths(self) -> None:
         outside = self.root / "outside"
         outside.mkdir()
         (outside / "package").mkdir()
         (self.root / "link").symlink_to(outside, target_is_directory=True)
-        for value in ("", "/tmp/absolute", "../private", "link/package"):
+        for value in ("", Path(""), Path("."), "/tmp/absolute", "../private", "link/package"):
             with self.subTest(value=value):
                 with self.assertRaises(RegistryError):
                     resolve_inside(self.root, value)
