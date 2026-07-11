@@ -3109,6 +3109,9 @@ class BriaBenchMatchingTests(unittest.TestCase):
             "Cell range",
             "Timepoint",
             "File",
+            "Figure and Panel",
+            "See Figure",
+            "Section or Paragraph",
         ):
             with self.subTest(generic=generic):
                 self.assertFalse(
@@ -3164,6 +3167,15 @@ class BriaBenchMatchingTests(unittest.TestCase):
         )
         self.assertFalse(
             label_observation_compatible(label, self.observation("O2", "Fig. 1A and RIGHT HIPPOCAMPUS")).compatible
+        )
+
+    def test_compound_opaque_hyphenation_is_exact(self) -> None:
+        label = self.label("L1", {"terms": ["Figure 1A", "left-hippocampus"]})
+        self.assertTrue(
+            label_observation_compatible(label, self.observation("O1", "Fig. 1A and left-hippocampus")).compatible
+        )
+        self.assertFalse(
+            label_observation_compatible(label, self.observation("O2", "Fig. 1A and right-hippocampus")).compatible
         )
 
     def test_regions_require_same_space_and_thresholded_overlap(self) -> None:

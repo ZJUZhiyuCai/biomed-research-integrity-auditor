@@ -23,7 +23,7 @@ _SHEET_RE = re.compile(r"\bsheets?\s*[_ .-]*(\d+)\b", re.IGNORECASE)
 _COLUMN_RE = re.compile(r"\bcolumns?\s*[:#]?\s*([a-z]{1,3}(?:\s*(?:,|and|to|-)\s*[a-z]{1,3})*)\b", re.IGNORECASE)
 _ROW_RE = re.compile(r"\brows?\s*[:#]?\s*([0-9]+(?:\s*(?:,|and|to|-)\s*[0-9]+)*)\b", re.IGNORECASE)
 _PARAGRAPH_RE = re.compile(r"\bparagraphs?\s*[_ .-]*(\d+)\b", re.IGNORECASE)
-_SECTION_RE = re.compile(r"\b(?:section\s*[:#-]?\s*)?(introduction|background|methods?|materials?|results?|discussion|conclusion|abstract|supplement(?:ary)?)\s+section\b|\bsection\s*[:#-]?\s*([a-z][a-z0-9 _-]*)", re.IGNORECASE)
+_SECTION_RE = re.compile(r"\b(?:section\s*[:#-]?\s*)?(introduction|background|methods?|materials?|results?|discussion|conclusion|abstract|supplement(?:ary)?)\s+section\b|\bsection\s*[:#-]?\s*(introduction|background|methods?|materials?|results?|discussion|conclusion|abstract|supplement(?:ary)?)\b", re.IGNORECASE)
 _TIME_DAY_RE = re.compile(r"(?<![a-z0-9])(?:day\s*(\d+)|(\d+)\s*days?|d\s*(\d+))\b", re.IGNORECASE)
 _CELL_RE = re.compile(r"(?<![a-z0-9])([a-z]{1,3})(\d+)(?::([a-z]{1,3})(\d+))?\b", re.IGNORECASE)
 _FILE_RE = re.compile(r"(?<![a-z0-9])(?:[~./\\_-]*[a-z0-9][a-z0-9._/\\_-]*)\.(?:pdf|png|jpe?g|tiff?|xlsx?|csv|docx?)\b", re.IGNORECASE)
@@ -376,7 +376,7 @@ def _has_structured_location(location: _Location) -> bool:
 
 def _is_generic_location_text(text: str) -> bool:
     tokens = re.findall(r"[a-z]+", unicodedata.normalize("NFKC", text).casefold())
-    return bool(tokens) and all(token in _GENERIC_LOCATION_TOKENS for token in tokens)
+    return not tokens or all(token in _GENERIC_LOCATION_TOKENS or token in _IGNORABLE_REMAINDER_TOKENS for token in tokens)
 
 
 def _filename_span(text: str) -> str | None:
@@ -415,7 +415,7 @@ def _opaque_remainder(text: str) -> str:
     ):
         remainder = pattern.sub(" ", remainder)
     remainder = re.sub(r"\b(?:and|or|with|at|by|from|in|of|on|refer|review|see|source|the|to)\b", " ", remainder)
-    remainder = re.sub(r"[^a-z0-9]+", " ", remainder, flags=re.IGNORECASE)
+    remainder = re.sub(r"[^\w\s_-]+", " ", remainder, flags=re.IGNORECASE)
     remainder = _norm(" ".join(remainder.split()))
     tokens = re.findall(r"[a-z]+", remainder)
     if not tokens or all(token in _IGNORABLE_REMAINDER_TOKENS for token in tokens):
