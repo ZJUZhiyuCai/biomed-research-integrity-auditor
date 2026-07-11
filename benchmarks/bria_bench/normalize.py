@@ -160,9 +160,10 @@ _BOUNDARY_TERM_PATTERNS = (
         "fraud",
         re.compile(
             r"\b(?:authors?|researchers?|research\s+team|study\s+group|investigators?)\b"
-            r".{0,40}\b(?:committed|proven|established|confirmed|guilty\s+of)\s+fraud\b"
-            r"|\b(?:paper|manuscript)\b.{0,20}\b(?:is|was|proven|confirmed)\s+fraudulent\b"
-            r"|^\s*fraud\s*[:!-]\s*(?:confirmed|proven|established)\b",
+            r"\s+(?:committed|commit|proven|established|confirmed)\s+(?:research\s+)?fraud\b"
+            r"|\b(?:authors?|researchers?)\b\s+(?:are|were)\s+guilty\s+of\s+(?:research\s+)?fraud\b"
+            r"|\b(?:evidence|review|investigation)\b\s+(?:confirms?|establishes?|proves?)\s+that\s+"
+            r"(?:the\s+)?(?:authors?|researchers?)\s+(?:committed|commit)\s+(?:research\s+)?fraud\b",
             re.IGNORECASE,
         ),
     ),
@@ -170,29 +171,39 @@ _BOUNDARY_TERM_PATTERNS = (
         "misconduct",
         re.compile(
             r"\b(?:authors?|researchers?|research\s+team|study\s+group|investigators?)\b"
-            r".{0,40}\b(?:committed|proven|established|confirmed|guilty\s+of)\s+(?:research\s+)?misconduct\b"
-            r"|\b(?:paper|manuscript)\b.{0,20}\b(?:contains|shows|demonstrates)\s+misconduct\b"
-            r"|\b(?:this|the\s+report|the\s+evidence|the\s+conduct)\b.{0,20}\b(?:constitutes|proves|establishes)\s+(?:research\s+)?misconduct\b",
+            r"\s+(?:committed|commit|proven|established|confirmed)\s+(?:research\s+)?misconduct\b"
+            r"|\b(?:authors?|researchers?)\b\s+(?:are|were)\s+guilty\s+of\s+(?:research\s+)?misconduct\b"
+            r"|\b(?:evidence|review|investigation)\b\s+(?:confirms?|establishes?|proves?)\s+that\s+"
+            r"(?:the\s+)?(?:authors?|researchers?)\s+(?:committed|commit)\s+(?:research\s+)?misconduct\b",
             re.IGNORECASE,
         ),
     ),
     (
         "fabrication",
         re.compile(
-            r"\b(?:data|results?|figures?|authors?|researchers?|research\s+team|study\s+group)\b"
-            r".{0,35}\b(?:fabricated|fabrication|were\s+fabricated|was\s+fabricated)\b",
+            r"\b(?:authors?|researchers?|research\s+team|study\s+group|investigators?)\b\s+"
+            r"(?:fabricated)\s+(?:the\s+)?(?:data|results?|figures?)\b"
+            r"|\b(?:data|results?|figures?)\b\s+(?:were|are|have\s+been)\s+fabricated\b"
+            r"|\b(?:evidence|review|investigation)\b\s+(?:confirms?|establishes?|proves?)\s+that\s+"
+            r"(?:the\s+)?(?:authors?|researchers?)\s+fabricated\s+(?:the\s+)?(?:data|results?|figures?)\b"
+            r"|\b(?:evidence|review|investigation)\b\s+(?:confirms?|establishes?|proves?)\s+that\s+"
+            r"(?:the\s+)?(?:data|results?|figures?)\s+(?:were|are|have\s+been)\s+fabricated\b",
             re.IGNORECASE,
         ),
     ),
     (
         "falsification",
         re.compile(
-            r"\b(?:data|results?|figures?|authors?|researchers?|research\s+team|study\s+group)\b"
-            r".{0,35}\b(?:falsified|falsification|were\s+falsified|was\s+falsified)\b",
+            r"\b(?:authors?|researchers?|research\s+team|study\s+group|investigators?)\b\s+"
+            r"(?:falsified)\s+(?:the\s+)?(?:data|results?|figures?)\b"
+            r"|\b(?:data|results?|figures?)\b\s+(?:were|are|have\s+been)\s+falsified\b"
+            r"|\b(?:evidence|review|investigation)\b\s+(?:confirms?|establishes?|proves?)\s+that\s+"
+            r"(?:the\s+)?(?:authors?|researchers?)\s+falsified\s+(?:the\s+)?(?:data|results?|figures?)\b"
+            r"|\b(?:evidence|review|investigation)\b\s+(?:confirms?|establishes?|proves?)\s+that\s+"
+            r"(?:the\s+)?(?:data|results?|figures?)\s+(?:were|are|have\s+been)\s+falsified\b",
             re.IGNORECASE,
         ),
     ),
-    ("author guilt", re.compile(r"\bauthor(?:s)?\s+(?:are|were|is|was)\s+(?:guilty|responsible)\b", re.IGNORECASE)),
     (
         "integrity conclusion",
         re.compile(
@@ -238,8 +249,10 @@ _BOUNDARY_NEGATIONS = (
     re.compile(r"\bnot\s+certified\s+clean\b", re.I),
     re.compile(r"\bnot\s+certified[- ]clean\b", re.I),
     re.compile(r"\b(?:no\s+evidence\s+of|do(?:es)?\s+not\s+allege|did\s+not\s+allege)\s+(?:fraud|misconduct|fabrication|falsification)\b", re.I),
-    re.compile(r"\b(?:investigation|investigating|allegation|alleged|alleges|claim|claims)\b.{0,45}\b(?:fraud|misconduct|fabrication|falsification)\b", re.I),
-    re.compile(r"\b(?:fraud|misconduct|fabrication|falsification)\b.{0,45}\b(?:investigation|allegation|alleged|claim)\b", re.I),
+    re.compile(r"\b(?:authors?|researchers?|research\s+team|study\s+group)\b\s+(?:deny|denies|denied|report|reported|state|stated|claim|claimed|allege|alleged)\s+(?:that\s+)?[^.!?\n;]{0,140}\b(?:fraud|misconduct|fabricat(?:ed|ion)|falsif(?:ied|ication))\b", re.I),
+    re.compile(r"\bit\s+was\s+(?:alleged|reported)\s+that\b[^.!?\n;]{0,140}\b(?:fraud|misconduct|fabricat(?:ed|ion)|falsif(?:ied|ication))\b", re.I),
+    re.compile(r"\baccording\s+to\b[^.!?\n;]{0,140}\b(?:fraud|misconduct|fabricat(?:ed|ion)|falsif(?:ied|ication))\b", re.I),
+    re.compile(r"\b(?:data|results?|figures?)\b\s+(?:were|are|have\s+been)\s+not\s+(?:fabricated|falsified)\b", re.I),
     re.compile(r"\b(?:integrity\s+)?certificate\s+(?:generation|creation|execution|verification)\s+(?:failed|error|crashed)\b", re.I),
     re.compile(r"\bintegrity(?:\s+audit)?\s+(?:check|audit)?\s+fail(?:ed)?\s+to\s+(?:run|execute|start|complete)\b", re.I),
     re.compile(r"\bintegrity(?:\s+audit)?\s+(?:check|audit)?\s+fail(?:ed)?\s+(?:because|due|from)\b", re.I),
@@ -253,6 +266,7 @@ _BOUNDARY_NEGATIONS = (
     re.compile(r"(?:未|不曾|没有).{0,8}(?:认定|判定|证明).{0,8}(?:学术不端|欺诈|造假)", re.I),
     re.compile(r"(?:不|未)存在学术不端", re.I),
     re.compile(r"(?:研究团队|研究人员|课题组|作者)(?:没有|未|不曾|并非).{0,8}(?:造假|伪造|篡改|学术不端)", re.I),
+    re.compile(r"(?:据报道|据称|作者称|作者否认).{0,40}(?:造假|伪造|篡改|学术不端)", re.I),
 )
 
 
@@ -636,15 +650,15 @@ def _normalize_finding(
     if isinstance(source_artifact, str) and source_artifact.strip():
         result["source_artifact"] = source_artifact
     confidence = finding.get("confidence")
-    if "confidence" in finding and (
-        not isinstance(confidence, (int, float))
-        or isinstance(confidence, bool)
-        or not math.isfinite(confidence)
-        or not 0 <= confidence <= 1
-    ):
-        _record_malformed_finding(index, "Finding has an invalid confidence.", contract_errors, technical_entries)
-        return None
-    if isinstance(confidence, (int, float)) and not isinstance(confidence, bool) and math.isfinite(confidence) and 0 <= confidence <= 1:
+    if "confidence" in finding:
+        valid_confidence = False
+        if isinstance(confidence, int) and not isinstance(confidence, bool):
+            valid_confidence = 0 <= confidence <= 1
+        elif isinstance(confidence, float):
+            valid_confidence = math.isfinite(confidence) and 0 <= confidence <= 1
+        if not valid_confidence:
+            _record_malformed_finding(index, "Finding has an invalid confidence.", contract_errors, technical_entries)
+            return None
         result["confidence"] = confidence
     result["issue_family"] = _issue_family(finding)
     return result
@@ -786,8 +800,19 @@ def _failure_semantics_match(record: dict[str, Any], clause: str) -> bool:
 def _report_discloses_failure(record: dict[str, Any], report: str) -> bool:
     module = str(record.get("module", "")).lower()
     leaf = module.rsplit(".", 1)[-1]
+
+    def matches_identifier(identifier: str, clause: str) -> bool:
+        if not identifier:
+            return False
+        pattern = re.compile(
+            rf"(?<![A-Za-z0-9_.-]){re.escape(identifier)}(?![A-Za-z0-9_.-])",
+            re.IGNORECASE,
+        )
+        return pattern.search(clause) is not None
+
     return any(
-        (module in clause.lower() or leaf in clause.lower()) and _failure_semantics_match(record, clause)
+        (matches_identifier(module, clause) or matches_identifier(leaf, clause))
+        and _failure_semantics_match(record, clause)
         for clause in _report_clauses(report)
     )
 
@@ -960,7 +985,7 @@ def normalize_audit_output(
                 if normalized is not None:
                     _validate_candidate_observation(case_id, normalized)
                     normalized_observations.append(normalized)
-            except (RecursionError, TypeError, ValueError) as exc:
+            except (RecursionError, TypeError, ValueError, OverflowError) as exc:
                 _record_malformed_finding(
                     index,
                     f"Finding is malformed and was dropped: {type(exc).__name__}.",
@@ -968,12 +993,12 @@ def normalize_audit_output(
                     technical_entries,
                 )
 
-    failure_artifacts: list[tuple[str, dict[str, Any] | None, bool]] = [
+    failure_artifacts: list[tuple[str, dict[str, Any] | None, bool]] = [] if case_mismatch else [
         ("AUDIT_JSON_SUMMARY.json", summary, True),
         ("coverage.json", coverage, False),
         ("pipeline_summary.json", pipeline, False),
     ]
-    if summary is not None and isinstance(summary.get("audit_coverage"), dict):
+    if not case_mismatch and summary is not None and isinstance(summary.get("audit_coverage"), dict):
         failure_artifacts.append(("AUDIT_JSON_SUMMARY.json", summary["audit_coverage"], True))
 
     def collect_failure_values(
@@ -1106,19 +1131,19 @@ def normalize_audit_output(
 
     observed_failures, disclosed_ids = _dedupe_failures(technical_entries)
     report_disclosed: set[tuple[Any, ...]] = set()
-    if report:
+    if report and not case_mismatch:
         for record in observed_failures:
             if _report_discloses_failure(record, report):
                 report_disclosed.add(_failure_identity(record))
     all_disclosed = disclosed_ids | report_disclosed
-    reported_failures = [
+    reported_failures = [] if case_mismatch else [
         dict(record, reported=True)
         for record in observed_failures
         if _failure_identity(record) in all_disclosed
     ]
 
     package_discovered = package_path
-    if package_discovered is None and pipeline is not None:
+    if package_discovered is None and pipeline is not None and not case_mismatch:
         candidate = pipeline.get("package", pipeline.get("package_root"))
         if isinstance(candidate, str):
             package_discovered = _file_uri_path(candidate)
@@ -1129,7 +1154,7 @@ def normalize_audit_output(
                     package_discovered = None
     roots = _redaction_roots(output_path, package_discovered, staging_paths, artifacts, report)
     try:
-        boundary_violations = _boundary_violations(report, artifacts)
+        boundary_violations = [] if case_mismatch else _boundary_violations(report, artifacts)
     except (RecursionError, TypeError, ValueError) as exc:
         message = f"Boundary scan failed: {type(exc).__name__}."
         _add_contract_error(contract_errors, message, "boundary_scanner")

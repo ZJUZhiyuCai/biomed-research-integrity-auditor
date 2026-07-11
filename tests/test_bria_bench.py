@@ -2501,6 +2501,151 @@ class BriaBenchNormalizationTests(unittest.TestCase):
             self.assertNotIn(raw_root, payload_text)
         self.assertIn("?case=1#panel&x=2", payload_text)
 
+    def test_case_mismatch_quarantines_all_foreign_content_channels(self) -> None:
+        self.write_fixture(
+            findings=[
+                {
+                    "finding_id": "FOREIGN-FINDING",
+                    "finding_type": "numeric consistency candidate",
+                    "location": "Table 9",
+                    "risk_level": "R2",
+                    "evidence_type": "candidate",
+                }
+            ],
+            coverage={
+                "detector_failures": [
+                    {"module": "foreign.detector", "failure_type": "timeout", "message": "timed out"}
+                ],
+                "audit_coverage_gap": True,
+            },
+            pipeline={
+                "package": str(self.package_dir),
+                "producer_failures": ["foreign.pipeline: execution_failure"],
+            },
+            report="The authors committed fraud. foreign.detector timed out.",
+        )
+        summary_path = self.output_dir / "AUDIT_JSON_SUMMARY.json"
+        summary = json.loads(summary_path.read_text(encoding="utf-8"))
+        summary["case_id"] = "foreign_case"
+        summary["producer_failures"] = ["foreign.summary: execution_failure"]
+        summary["audit_coverage"] = {
+            "audit_coverage_gap": True,
+            "producer_failures": ["foreign.coverage: timeout"],
+        }
+        summary_path.write_text(json.dumps(summary), encoding="utf-8")
+
+        normalized = normalize_audit_output("dev_001", self.output_dir)
+
+        self.assertEqual(normalized["observations"], [])
+        self.assertEqual(normalized["reported_technical_failures"], [])
+        self.assertEqual(normalized["boundary_violations"], [])
+        self.assertEqual(
+            {item["failure_type"] for item in normalized["technical_failures"]},
+            {"case_id_mismatch"},
+        )
+        self.assertEqual(len(normalized["contract_errors"]), 1)
+        self.assertIn("case_id", normalized["contract_errors"][0]["message"])
+
+    def test_boundary_scanner_uses_assertion_predicates_and_preserves_attribution(self) -> None:
+        report = "\n".join(
+            [
+                "The authors committed fraud and misconduct.",
+                "The authors fabricated data, results, and figures.",
+                "The authors falsified data, results, and figures.",
+                "The data were fabricated; the results are falsified; the figures have been fabricated.",
+                "The evidence confirms that the authors committed fraud.",
+                "The review establishes that the authors falsified results.",
+                "The investigation confirmed that the authors committed fraud.",
+                "The authors discussed fabricated figures.",
+                "The authors are responsible for the study.",
+                "The authors deny that they committed fraud.",
+                "It was alleged that the authors committed fraud.",
+                "According to the authors, the data were fabricated.",
+                "作者称数据被伪造。作者否认造假。\u636e\u62a5\u6570\u636e\u88ab\u7be1\u6539\u3002",
+                "The data were not fabricated.",
+            ]
+        )
+        self.write_fixture(report=report)
+
+        normalized = normalize_audit_output("dev_001", self.output_dir)
+        messages = [item["message"] for item in normalized["boundary_violations"]]
+
+        for included in (
+            "authors committed fraud",
+            "authors fabricated data",
+            "authors falsified data",
+            "data were fabricated",
+            "results are falsified",
+            "figures have been fabricated",
+            "evidence confirms",
+            "review establishes",
+            "investigation confirmed",
+        ):
+            self.assertTrue(any(included in message.lower() for message in messages), included)
+        for excluded in (
+            "authors discussed fabricated figures",
+            "authors are responsible",
+            "authors deny",
+            "it was alleged",
+            "according to the authors",
+            "作者称",
+            "作者否认",
+            "据报道",
+            "data were not fabricated",
+        ):
+            self.assertFalse(any(excluded in message.lower() for message in messages), excluded)
+
+    def test_huge_integer_confidence_isolated_from_valid_sibling(self) -> None:
+        self.write_fixture(
+            findings=[
+                {
+                    "finding_id": "HUGE-CONFIDENCE",
+                    "finding_type": "numeric consistency candidate",
+                    "location": "Table 1",
+                    "risk_level": "R1",
+                    "confidence": 10**308,
+                    "evidence_type": "candidate",
+                },
+                {
+                    "finding_id": "VALID-CONFIDENCE",
+                    "finding_type": "numeric consistency candidate",
+                    "location": "Table 2",
+                    "risk_level": "R1",
+                    "confidence": 0.5,
+                    "evidence_type": "candidate",
+                },
+            ]
+        )
+
+        normalized = normalize_audit_output("dev_001", self.output_dir)
+
+        self.assertEqual(
+            [item["source_finding_id"] for item in normalized["observations"]],
+            ["VALID-CONFIDENCE"],
+        )
+        self.assertTrue(any("findings[0]" in item["path"] for item in normalized["contract_errors"]))
+        self.assertTrue(any("findings[0]" in item["source"] for item in normalized["technical_failures"]))
+
+    def test_reported_failure_module_matching_uses_identifier_boundaries(self) -> None:
+        self.write_fixture(
+            coverage={
+                "detector_failures": [
+                    {"module": "image.patch", "failure_type": "timeout", "message": "timed out"},
+                    {"module": "image.local_patch", "failure_type": "timeout", "message": "timed out"},
+                    {"module": "image.local_patch_v2", "failure_type": "timeout", "message": "timed out"},
+                    {"module": "local_patch", "failure_type": "timeout", "message": "timed out"},
+                ]
+            },
+            report="image.local_patch detector timed out; local_patch detector timed out.",
+        )
+
+        normalized = normalize_audit_output("dev_001", self.output_dir)
+
+        self.assertEqual(
+            {item["module"] for item in normalized["reported_technical_failures"]},
+            {"image.local_patch", "local_patch"},
+        )
+
     def test_coverage_and_pipeline_failure_shapes_are_observed_not_reported(self) -> None:
         self.write_fixture(
             coverage={
