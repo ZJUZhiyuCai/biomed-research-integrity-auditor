@@ -4,7 +4,9 @@ import copy
 import json
 import os
 import re
+import sys
 import tempfile
+import time
 import unittest
 from decimal import Decimal
 from pathlib import Path
@@ -24,6 +26,8 @@ from benchmarks.bria_bench.registry import (
     resolve_inside,
     verify_frozen_case,
 )
+import benchmarks.bria_bench.runtime as runtime_module
+from benchmarks.bria_bench.runtime import RuntimeResult, run_monitored, write_json_atomic
 
 
 SCHEMA_NAMES = (
@@ -1396,6 +1400,187 @@ class BriaBenchRegistryTests(unittest.TestCase):
         with self.assertRaisesRegex(RegistryError, "context_case.*package") as caught:
             verify_frozen_case(self.root, case)
         self.assertIsNotNone(caught.exception.__cause__)
+
+
+class BriaBenchRuntimeTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.root = Path(tempfile.mkdtemp(prefix="bria-runtime-"))
+        self.addCleanup(lambda: __import__("shutil").rmtree(self.root, ignore_errors=True))
+
+    @staticmethod
+    def python_command(source: str) -> list[str]:
+        return [sys.executable, "-c", source]
+
+    def run_python(
+        self,
+        source: str,
+        *,
+        timeout_seconds: float = 5.0,
+        tail_bytes: int = 4096,
+        poll_interval_seconds: float = 0.01,
+    ) -> RuntimeResult:
+        return run_monitored(
+            self.python_command(source),
+            self.root,
+            timeout_seconds,
+            tail_bytes=tail_bytes,
+            poll_interval_seconds=poll_interval_seconds,
+        )
+
+    def test_success_captures_bounded_stdout_and_stderr_tails(self) -> None:
+        result = self.run_python(
+            "import os; os.write(1, b'out-' + b'A' * 200); os.write(2, b'err-' + b'B' * 200)",
+            tail_bytes=17,
+        )
+
+        self.assertEqual(result.status, "success")
+        self.assertEqual(result.returncode, 0)
+        self.assertFalse(result.timed_out)
+        self.assertEqual(result.stdout_tail, "A" * 17)
+        self.assertEqual(result.stderr_tail, "B" * 17)
+        self.assertGreater(result.elapsed_seconds, 0.0)
+        self.assertGreaterEqual(result.cpu_seconds, 0.0)
+        self.assertGreaterEqual(result.peak_rss_bytes, 0)
+        self.assertEqual(result.to_dict()["status"], "success")
+
+    def test_nonzero_exit_is_process_error(self) -> None:
+        result = self.run_python("import sys; sys.stderr.write('failed'); sys.exit(7)")
+
+        self.assertEqual(result.status, "process_error")
+        self.assertEqual(result.returncode, 7)
+        self.assertIn("failed", result.stderr_tail)
+        self.assertFalse(result.timed_out)
+
+    def test_spawn_os_error_is_returned_as_process_error_data(self) -> None:
+        with patch.object(runtime_module.subprocess, "Popen", side_effect=OSError("spawn failed")):
+            result = run_monitored(["does-not-matter"], self.root, 1.0)
+
+        self.assertEqual(result.status, "process_error")
+        self.assertIsNone(result.returncode)
+        self.assertIn("spawn failed", result.stderr_tail)
+        self.assertFalse(result.timed_out)
+
+    def test_huge_output_does_not_deadlock_and_tails_remain_bounded(self) -> None:
+        source = (
+            "import os\n"
+            "for _ in range(64):\n"
+            "    os.write(1, b'o' * 65536)\n"
+            "    os.write(2, b'e' * 65536)\n"
+        )
+        result = self.run_python(source, timeout_seconds=8.0, tail_bytes=128)
+
+        self.assertEqual(result.status, "success")
+        self.assertLessEqual(len(result.stdout_tail.encode()), 128)
+        self.assertLessEqual(len(result.stderr_tail.encode()), 128)
+        self.assertEqual(result.stdout_tail, "o" * 128)
+        self.assertEqual(result.stderr_tail, "e" * 128)
+
+    @unittest.skipUnless(os.name == "posix", "process identity tests require POSIX")
+    def test_child_rss_contributes_to_peak(self) -> None:
+        child_code = (
+            "buf = bytearray(48 * 1024 * 1024); "
+            "buf[::4096] = b\"x\" * (48 * 1024); time.sleep(0.8)"
+        )
+        source = (
+            "import subprocess, sys, time\n"
+            f"child = subprocess.Popen([sys.executable, '-c', {child_code!r}])\n"
+            "child.wait()\n"
+        )
+        result = self.run_python(source, timeout_seconds=5.0)
+
+        self.assertEqual(result.status, "success")
+        self.assertGreater(result.peak_rss_bytes, 24 * 1024 * 1024)
+
+    @unittest.skipUnless(os.name == "posix", "process identity tests require POSIX")
+    def test_child_cpu_contributes(self) -> None:
+        child_code = (
+            "import time; end = time.monotonic() + 0.7; x = 0\n"
+            "while time.monotonic() < end: x += 1"
+        )
+        source = (
+            "import subprocess, sys\n"
+            f"child = subprocess.Popen([sys.executable, '-c', {child_code!r}])\n"
+            "child.wait()\n"
+        )
+        result = self.run_python(source, timeout_seconds=5.0)
+
+        self.assertEqual(result.status, "success")
+        self.assertGreater(result.cpu_seconds, 0.15)
+
+    @unittest.skipUnless(os.name == "posix", "signal tests require POSIX")
+    def test_timeout_kills_term_ignoring_descendant(self) -> None:
+        child_code = (
+            "import os, signal, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+            "print('child|' + str(os.getpid()) + '|' + "
+            "str(__import__('psutil').Process().create_time()), flush=True); time.sleep(30)"
+        )
+        source = (
+            "import os, signal, subprocess, sys, time\n"
+            f"child = subprocess.Popen([sys.executable, '-c', {child_code!r}])\n"
+            "print('parent|' + str(child.pid) + '|' + str(__import__('psutil').Process(child.pid).create_time()), flush=True)\n"
+            "def on_term(signum, frame): child.wait()\n"
+            "signal.signal(signal.SIGTERM, on_term)\n"
+            "while True: time.sleep(1)\n"
+        )
+        result = self.run_python(source, timeout_seconds=0.2, tail_bytes=512)
+
+        self.assertEqual(result.status, "timeout")
+        self.assertTrue(result.timed_out)
+        identity_lines = [line for line in result.stdout_tail.splitlines() if line.startswith("child|")]
+        self.assertTrue(identity_lines)
+        _, pid_text, create_time_text = identity_lines[0].split("|", 2)
+        pid = int(pid_text)
+        create_time = float(create_time_text)
+
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline:
+            try:
+                process = runtime_module.psutil.Process(pid)
+                same_identity = process.create_time() == create_time
+                if not same_identity or not process.is_running():
+                    break
+            except runtime_module.psutil.NoSuchProcess:
+                break
+            time.sleep(0.02)
+        else:
+            self.fail("term-ignoring descendant still exists with the recorded identity")
+
+    def test_invalid_configuration_raises_value_error(self) -> None:
+        with self.assertRaises(ValueError):
+            run_monitored([], self.root, 1.0)
+        with self.assertRaises(ValueError):
+            run_monitored(["true"], self.root, 0.0)
+        with self.assertRaises(ValueError):
+            run_monitored(["true"], self.root, float("nan"))
+        with self.assertRaises(ValueError):
+            run_monitored(["true"], self.root, 1.0, tail_bytes=0)
+        with self.assertRaises(ValueError):
+            run_monitored(["true"], self.root / "missing", 1.0)
+        invalid_cwd = self.root / "file"
+        invalid_cwd.write_text("not a directory", encoding="utf-8")
+        with self.assertRaises(ValueError):
+            run_monitored(["true"], invalid_cwd, 1.0)
+
+    def test_write_json_atomic_preserves_previous_file_on_serialization_error(self) -> None:
+        output = self.root / "result.json"
+        output.write_text('{"old": true}\n', encoding="utf-8")
+
+        with self.assertRaises(TypeError):
+            write_json_atomic(output, {"bad": object()})
+
+        self.assertEqual(output.read_text(encoding="utf-8"), '{"old": true}\n')
+        self.assertEqual(list(self.root.glob(".result.json.*.tmp")), [])
+
+    def test_write_json_atomic_preserves_previous_file_on_replace_error(self) -> None:
+        output = self.root / "result.json"
+        output.write_text('{"old": true}\n', encoding="utf-8")
+
+        with patch.object(runtime_module.os, "replace", side_effect=OSError("replace failed")):
+            with self.assertRaises(OSError):
+                write_json_atomic(output, {"new": True})
+
+        self.assertEqual(output.read_text(encoding="utf-8"), '{"old": true}\n')
+        self.assertEqual(list(self.root.glob(".result.json.*.tmp")), [])
 
 
 if __name__ == "__main__":
