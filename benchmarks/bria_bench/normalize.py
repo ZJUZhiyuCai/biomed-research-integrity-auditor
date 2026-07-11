@@ -581,17 +581,35 @@ def _report_clauses(report: str) -> list[str]:
     return clauses
 
 
+_FAILURE_NEGATIVE_POLARITY = (
+    re.compile(r"\b(?:did|does|do|will|would)\s+not\s+fail(?:ed|ure)?\b", re.I),
+    re.compile(r"\bno\s+(?:timeout|failure|error|unavailability)\s+(?:occurred|was|is|present)\b", re.I),
+    re.compile(r"\bwithout\s+(?:a\s+)?(?:timeout|failure|error|unavailability)\b", re.I),
+    re.compile(r"\b(?:completed|finished|succeeded|passed)\s+(?:successfully|without)\b", re.I),
+    re.compile(r"\bsuccessfully\s+(?:completed|finished|ran)\b", re.I),
+    re.compile(
+        r"\b(?:timeout|failure|error)\s+(?:did\s+not\s+occur|was\s+not\s+(?:observed|detected|present)|not\s+(?:observed|detected|present))\b",
+        re.I,
+    ),
+)
+_FAILURE_AFFIRMATIVE_SEMANTICS = re.compile(
+    r"\b(?:failed(?:\s+to)?|failure|error|timeout|timed\s+out|unavailable|"
+    r"did\s+not\s+complete|could\s+not\s+complete|encountered\s+(?:an\s+)?error)\b",
+    re.I,
+)
+
+
 def _failure_semantics_match(record: dict[str, Any], clause: str) -> bool:
     lowered = clause.lower()
+    if any(pattern.search(lowered) for pattern in _FAILURE_NEGATIVE_POLARITY):
+        return False
     failure_type = str(record.get("failure_type", "failure")).lower().replace("_", " ").replace("-", " ")
-    if failure_type in {"failure", "workstream failed", "malformed artifact", "missing artifact"} or "gap" in failure_type:
-        return bool(re.search(r"\b(?:fail(?:ed|ure)?|error|timeout|timed out|unavailable|missing|malformed)\b", lowered))
     if failure_type in lowered:
         return True
-    tokens = [token for token in failure_type.split() if token not in {"execution", "producer", "detector"}]
-    if "failure" in tokens or "failed" in tokens:
-        return bool(re.search(r"\b(?:fail(?:ed|ure)?|error|timeout|timed out)\b", lowered))
-    return any(token in lowered for token in tokens if len(token) > 2)
+    normalized_type = failure_type.replace(" ", "_")
+    if normalized_type in clause.lower():
+        return True
+    return bool(_FAILURE_AFFIRMATIVE_SEMANTICS.search(lowered))
 
 
 def _report_discloses_failure(record: dict[str, Any], report: str) -> bool:

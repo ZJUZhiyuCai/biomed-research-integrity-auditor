@@ -2298,6 +2298,35 @@ class BriaBenchNormalizationTests(unittest.TestCase):
         self.assertNotIn("image.local_patch", reported_modules)
         self.assertIn("report.assembler", reported_modules)
 
+    def test_failure_disclosure_uses_clause_polarity_for_generic_semantics(self) -> None:
+        positive_reports = (
+            "The image.local_patch detector failed to run.",
+            "The image.local_patch detector timed out.",
+            "The image.local_patch detector encountered an error.",
+        )
+        negative_reports = (
+            "The image.local_patch detector completed without timeout or failure.",
+            "The image.local_patch detector did not fail.",
+            "No timeout occurred in image.local_patch.",
+            "The image.local_patch detector completed successfully.",
+        )
+        for report in positive_reports:
+            with self.subTest(report=report):
+                self.write_fixture(
+                    coverage={"detector_failures": [{"module": "image.local_patch", "failure_type": "timeout"}]},
+                    report=report,
+                )
+                normalized = normalize_audit_output("dev_001", self.output_dir)
+                self.assertEqual(len(normalized["reported_technical_failures"]), 1)
+        for report in negative_reports:
+            with self.subTest(report=report):
+                self.write_fixture(
+                    coverage={"detector_failures": [{"module": "image.local_patch", "failure_type": "timeout"}]},
+                    report=report,
+                )
+                normalized = normalize_audit_output("dev_001", self.output_dir)
+                self.assertEqual(normalized["reported_technical_failures"], [])
+
     def test_coverage_and_pipeline_failure_shapes_are_observed_not_reported(self) -> None:
         self.write_fixture(
             coverage={
