@@ -160,10 +160,12 @@ _BOUNDARY_TERM_PATTERNS = (
         "fraud",
         re.compile(
             r"\b(?:authors?|researchers?|research\s+team|study\s+group|investigators?)\b"
-            r"\s+(?:committed|commit|proven|established|confirmed)\s+(?:research\s+)?fraud\b"
+            r"\s+(?:(?:committed|commit)\s+|(?:have|has)\s+committed\s+|(?:were|was)\s+found\s+to\s+have\s+committed\s+)"
+            r"(?:research\s+)?fraud\b"
             r"|\b(?:authors?|researchers?)\b\s+(?:are|were)\s+guilty\s+of\s+(?:research\s+)?fraud\b"
             r"|\b(?:evidence|review|investigation)\b\s+(?:confirms?|establishes?|proves?)\s+that\s+"
-            r"(?:the\s+)?(?:authors?|researchers?)\s+(?:committed|commit)\s+(?:research\s+)?fraud\b",
+            r"(?:the\s+)?(?:authors?|researchers?)\s+(?:(?:committed|commit)|(?:have|has)\s+committed|(?:were|was)\s+found\s+to\s+have\s+committed)\s+"
+            r"(?:research\s+)?fraud\b",
             re.IGNORECASE,
         ),
     ),
@@ -171,10 +173,14 @@ _BOUNDARY_TERM_PATTERNS = (
         "misconduct",
         re.compile(
             r"\b(?:authors?|researchers?|research\s+team|study\s+group|investigators?)\b"
-            r"\s+(?:committed|commit|proven|established|confirmed)\s+(?:research\s+)?misconduct\b"
+            r"\s+(?:(?:committed|commit)\s+|(?:have|has)\s+committed\s+|(?:were|was)\s+found\s+to\s+have\s+committed\s+)"
+            r"(?:research\s+)?misconduct\b"
             r"|\b(?:authors?|researchers?)\b\s+(?:are|were)\s+guilty\s+of\s+(?:research\s+)?misconduct\b"
+            r"|\b(?:authors?|researchers?|research\s+team|study\s+group|investigators?)\b\s+"
+            r"engaged\s+in\s+(?:research\s+)?misconduct\b"
             r"|\b(?:evidence|review|investigation)\b\s+(?:confirms?|establishes?|proves?)\s+that\s+"
-            r"(?:the\s+)?(?:authors?|researchers?)\s+(?:committed|commit)\s+(?:research\s+)?misconduct\b",
+            r"(?:the\s+)?(?:authors?|researchers?)\s+(?:(?:committed|commit)|(?:have|has)\s+committed|(?:were|was)\s+found\s+to\s+have\s+committed)\s+"
+            r"(?:research\s+)?misconduct\b",
             re.IGNORECASE,
         ),
     ),
@@ -183,11 +189,11 @@ _BOUNDARY_TERM_PATTERNS = (
         re.compile(
             r"\b(?:authors?|researchers?|research\s+team|study\s+group|investigators?)\b\s+"
             r"(?:fabricated)\s+(?:the\s+)?(?:data|results?|figures?)\b"
-            r"|\b(?:data|results?|figures?)\b\s+(?:were|are|have\s+been)\s+fabricated\b"
+            r"|\b(?:data|results?|figures?)\b\s+(?:were|are|have\s+been|has\s+been|had\s+been)\s+fabricated\b"
             r"|\b(?:evidence|review|investigation)\b\s+(?:confirms?|establishes?|proves?)\s+that\s+"
-            r"(?:the\s+)?(?:authors?|researchers?)\s+fabricated\s+(?:the\s+)?(?:data|results?|figures?)\b"
+            r"(?:the\s+)?(?:authors?|researchers?)\s+(?:fabricated|have\s+fabricated|were\s+found\s+to\s+have\s+fabricated)\s+(?:the\s+)?(?:data|results?|figures?)\b"
             r"|\b(?:evidence|review|investigation)\b\s+(?:confirms?|establishes?|proves?)\s+that\s+"
-            r"(?:the\s+)?(?:data|results?|figures?)\s+(?:were|are|have\s+been)\s+fabricated\b",
+            r"(?:the\s+)?(?:data|results?|figures?)\s+(?:were|are|have\s+been|has\s+been|had\s+been)\s+fabricated\b",
             re.IGNORECASE,
         ),
     ),
@@ -196,11 +202,11 @@ _BOUNDARY_TERM_PATTERNS = (
         re.compile(
             r"\b(?:authors?|researchers?|research\s+team|study\s+group|investigators?)\b\s+"
             r"(?:falsified)\s+(?:the\s+)?(?:data|results?|figures?)\b"
-            r"|\b(?:data|results?|figures?)\b\s+(?:were|are|have\s+been)\s+falsified\b"
+            r"|\b(?:data|results?|figures?)\b\s+(?:were|are|have\s+been|has\s+been|had\s+been)\s+falsified\b"
             r"|\b(?:evidence|review|investigation)\b\s+(?:confirms?|establishes?|proves?)\s+that\s+"
-            r"(?:the\s+)?(?:authors?|researchers?)\s+falsified\s+(?:the\s+)?(?:data|results?|figures?)\b"
+            r"(?:the\s+)?(?:authors?|researchers?)\s+(?:falsified|have\s+falsified|were\s+found\s+to\s+have\s+falsified)\s+(?:the\s+)?(?:data|results?|figures?)\b"
             r"|\b(?:evidence|review|investigation)\b\s+(?:confirms?|establishes?|proves?)\s+that\s+"
-            r"(?:the\s+)?(?:data|results?|figures?)\s+(?:were|are|have\s+been)\s+falsified\b",
+            r"(?:the\s+)?(?:data|results?|figures?)\s+(?:were|are|have\s+been|has\s+been|had\s+been)\s+falsified\b",
             re.IGNORECASE,
         ),
     ),
@@ -229,7 +235,7 @@ _BOUNDARY_TERM_PATTERNS = (
         "integrity conclusion",
         re.compile(r"\bmanuscript\b.{0,30}\b(?:is|status|conclusion|result)\b.{0,20}\b(?:pass(?:ed)?|fail(?:ed)?|clean|certified)\b", re.IGNORECASE),
     ),
-    ("author misconduct", re.compile(r"(?:作者|研究团队|研究人员|课题组)(?:涉嫌|存在|实施|进行了)?(?:学术不端|造假|伪造|篡改|欺诈)")),
+    ("author misconduct", re.compile(r"(?:作者|研究团队|研究人员|课题组)(?:涉嫌|存在|实施|进行了|被证实)?(?:学术不端|造假|伪造|篡改|欺诈)")),
     ("research misconduct", re.compile(r"(?:存在|属于|构成)(?:严重)?学术不端")),
     ("data falsification", re.compile(r"数据(?:被)?(?:造假|伪造|篡改)")),
 )
@@ -252,7 +258,7 @@ _BOUNDARY_NEGATIONS = (
     re.compile(r"\b(?:authors?|researchers?|research\s+team|study\s+group)\b\s+(?:deny|denies|denied|report|reported|state|stated|claim|claimed|allege|alleged)\s+(?:that\s+)?[^.!?\n;]{0,140}\b(?:fraud|misconduct|fabricat(?:ed|ion)|falsif(?:ied|ication))\b", re.I),
     re.compile(r"\bit\s+was\s+(?:alleged|reported)\s+that\b[^.!?\n;]{0,140}\b(?:fraud|misconduct|fabricat(?:ed|ion)|falsif(?:ied|ication))\b", re.I),
     re.compile(r"\baccording\s+to\b[^.!?\n;]{0,140}\b(?:fraud|misconduct|fabricat(?:ed|ion)|falsif(?:ied|ication))\b", re.I),
-    re.compile(r"\b(?:data|results?|figures?)\b\s+(?:were|are|have\s+been)\s+not\s+(?:fabricated|falsified)\b", re.I),
+    re.compile(r"\b(?:data|results?|figures?)\b\s+(?:were|are|have\s+been|has\s+been|had\s+been)\s+not\s+(?:fabricated|falsified)\b", re.I),
     re.compile(r"\b(?:integrity\s+)?certificate\s+(?:generation|creation|execution|verification)\s+(?:failed|error|crashed)\b", re.I),
     re.compile(r"\bintegrity(?:\s+audit)?\s+(?:check|audit)?\s+fail(?:ed)?\s+to\s+(?:run|execute|start|complete)\b", re.I),
     re.compile(r"\bintegrity(?:\s+audit)?\s+(?:check|audit)?\s+fail(?:ed)?\s+(?:because|due|from)\b", re.I),
@@ -266,6 +272,7 @@ _BOUNDARY_NEGATIONS = (
     re.compile(r"(?:未|不曾|没有).{0,8}(?:认定|判定|证明).{0,8}(?:学术不端|欺诈|造假)", re.I),
     re.compile(r"(?:不|未)存在学术不端", re.I),
     re.compile(r"(?:研究团队|研究人员|课题组|作者)(?:没有|未|不曾|并非).{0,8}(?:造假|伪造|篡改|学术不端)", re.I),
+    re.compile(r"(?:研究团队|研究人员|课题组|作者)(?:没有|未|不曾)被证实(?:造假|伪造|篡改|存在学术不端)", re.I),
     re.compile(r"(?:据报道|据称|作者称|作者否认).{0,40}(?:造假|伪造|篡改|学术不端)", re.I),
 )
 

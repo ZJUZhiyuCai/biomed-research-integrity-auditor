@@ -2595,6 +2595,52 @@ class BriaBenchNormalizationTests(unittest.TestCase):
         ):
             self.assertFalse(any(excluded in message.lower() for message in messages), excluded)
 
+    def test_boundary_scanner_covers_common_verdict_assertion_variants(self) -> None:
+        report = "\n".join(
+            [
+                "The authors have committed fraud.",
+                "The authors have committed misconduct.",
+                "The authors were found to have committed fraud.",
+                "The authors were found to have committed misconduct.",
+                "The authors engaged in research misconduct.",
+                "The data has been fabricated.",
+                "The data had been falsified.",
+                "The data have been fabricated.",
+                "作者被证实造假。研究人员被证实伪造数据。研究团队被证实篡改数据。作者存在学术不端。",
+                "The authors were alleged to have committed fraud.",
+                "The authors were not found to have committed misconduct.",
+                "The data has not been fabricated.",
+                "作者未被证实造假。",
+            ]
+        )
+        self.write_fixture(report=report)
+
+        normalized = normalize_audit_output("dev_001", self.output_dir)
+        messages = [item["message"] for item in normalized["boundary_violations"]]
+
+        for included in (
+            "authors have committed fraud",
+            "authors have committed misconduct",
+            "authors were found to have committed fraud",
+            "authors were found to have committed misconduct",
+            "authors engaged in research misconduct",
+            "data has been fabricated",
+            "data had been falsified",
+            "data have been fabricated",
+            "作者被证实造假",
+            "研究人员被证实伪造数据",
+            "研究团队被证实篡改数据",
+            "作者存在学术不端",
+        ):
+            self.assertTrue(any(included in message.lower() for message in messages), included)
+        for excluded in (
+            "authors were alleged to have committed",
+            "authors were not found to have committed",
+            "data has not been fabricated",
+            "作者未被证实造假",
+        ):
+            self.assertFalse(any(excluded in message.lower() for message in messages), excluded)
+
     def test_huge_integer_confidence_isolated_from_valid_sibling(self) -> None:
         self.write_fixture(
             findings=[
