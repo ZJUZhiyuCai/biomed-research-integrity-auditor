@@ -128,12 +128,30 @@ class DevelopmentCaseError(ValueError):
 
 
 @dataclass(slots=True)
+class _PendingReplace:
+    leg: str
+    source: Path
+    target: Path
+    before: tuple[bool, bool, bool]
+    after: tuple[bool, bool, bool]
+
+
+@dataclass(slots=True)
 class _PublishState:
+    staged: Path
     destination: Path
     backup: Path
     prior_existed: bool
     backup_moved: bool = False
     staged_published: bool = False
+    published_removed: bool = False
+    backup_restored: bool = False
+    pending: _PendingReplace | None = None
+    ambiguous: bool = False
+
+
+class _TransitionStateError(RuntimeError):
+    """Raised when a journaled filesystem transition cannot be proven."""
 
 
 def _observation(
@@ -612,6 +630,159 @@ def _remove_path(path: Path) -> None:
         path.unlink()
 
 
+_BACKUP_MOVE = "destination_to_backup"
+_STAGED_PUBLISH = "staged_to_destination"
+_BACKUP_RESTORE = "backup_to_destination"
+
+
+def _path_exists(path: Path) -> bool:
+    try:
+        path.lstat()
+    except FileNotFoundError:
+        return False
+    return True
+
+
+def _presence(state: _PublishState) -> tuple[bool, bool, bool]:
+    return (
+        _path_exists(state.staged),
+        _path_exists(state.destination),
+        _path_exists(state.backup),
+    )
+
+
+def _reconcile_pending(state: _PublishState) -> bool | None:
+    pending = state.pending
+    if pending is None:
+        return None
+    try:
+        actual = _presence(state)
+    except BaseException:  # noqa: BLE001 - uncertainty must retain recovery data.
+        state.ambiguous = True
+        return None
+    if actual == pending.after:
+        if pending.leg == _BACKUP_MOVE:
+            state.backup_moved = True
+        elif pending.leg == _STAGED_PUBLISH:
+            state.staged_published = True
+        elif pending.leg == _BACKUP_RESTORE:
+            state.backup_restored = True
+        else:  # pragma: no cover - journal legs are internal constants.
+            state.ambiguous = True
+            return None
+        state.pending = None
+        return True
+    if actual == pending.before:
+        state.pending = None
+        return False
+    state.ambiguous = True
+    return None
+
+
+def _journaled_replace(
+    state: _PublishState,
+    *,
+    leg: str,
+    source: Path,
+    target: Path,
+    before: tuple[bool, bool, bool],
+    after: tuple[bool, bool, bool],
+) -> None:
+    try:
+        actual_before = _presence(state)
+    except BaseException:  # noqa: BLE001 - uncertainty must retain recovery data.
+        state.ambiguous = True
+        raise
+    if actual_before != before:
+        state.ambiguous = True
+        raise _TransitionStateError(f"unexpected state before {leg}")
+
+    pending = _PendingReplace(leg, source, target, before, after)
+    state.pending = pending
+    try:
+        os.replace(pending.source, pending.target)
+    except BaseException:  # noqa: BLE001 - reconcile even process-level interrupts.
+        _reconcile_pending(state)
+        raise
+    if _reconcile_pending(state) is not True:
+        raise _TransitionStateError(f"could not prove completion of {leg}")
+
+
+def _matches_presence(
+    state: _PublishState,
+    expected: tuple[bool, bool, bool],
+) -> bool:
+    try:
+        return _presence(state) == expected
+    except BaseException:  # noqa: BLE001 - uncertainty must retain recovery data.
+        state.ambiguous = True
+        return False
+
+
+def _is_fully_published(state: _PublishState) -> bool:
+    if state.ambiguous or state.pending is not None:
+        return False
+    if (
+        not state.staged_published
+        or state.published_removed
+        or state.backup_restored
+        or state.backup_moved != state.prior_existed
+    ):
+        return False
+    return _matches_presence(state, (False, True, state.prior_existed))
+
+
+def _is_fully_rolled_back(state: _PublishState) -> bool:
+    if state.ambiguous or state.pending is not None:
+        return False
+    if state.staged_published != state.published_removed:
+        return False
+    if state.backup_moved != state.backup_restored:
+        return False
+    if not state.prior_existed and state.backup_moved:
+        return False
+    if state.prior_existed and state.staged_published and not state.backup_moved:
+        return False
+    expected = (not state.staged_published, state.prior_existed, False)
+    return _matches_presence(state, expected)
+
+
+def _rollback_state(state: _PublishState) -> bool:
+    if state.pending is not None:
+        _reconcile_pending(state)
+    if state.ambiguous:
+        return False
+
+    if state.staged_published and not state.published_removed:
+        try:
+            _remove_path(state.destination)
+        except BaseException:  # noqa: BLE001 - inspect whether removal completed.
+            pass
+        try:
+            destination_exists = _path_exists(state.destination)
+        except BaseException:  # noqa: BLE001 - uncertainty retains recovery data.
+            state.ambiguous = True
+            return False
+        if destination_exists:
+            return False
+        state.published_removed = True
+
+    if state.backup_moved and not state.backup_restored:
+        staged_exists = not state.staged_published
+        try:
+            _journaled_replace(
+                state,
+                leg=_BACKUP_RESTORE,
+                source=state.backup,
+                target=state.destination,
+                before=(staged_exists, False, True),
+                after=(staged_exists, True, False),
+            )
+        except BaseException:  # noqa: BLE001 - reconciliation decides recoverability.
+            pass
+    return _is_fully_rolled_back(state)
+
+
 def _publish_targets(
     targets: list[tuple[Path, Path, Path]],
     *,
@@ -633,32 +804,50 @@ def _publish_targets(
     records: list[_PublishState] = []
     try:
         for staged, destination, backup in targets:
-            state = _PublishState(destination, backup, destination.exists())
+            state = _PublishState(
+                staged=staged,
+                destination=destination,
+                backup=backup,
+                prior_existed=destination.exists(),
+            )
             records.append(state)
             if state.prior_existed:
                 backup.parent.mkdir(parents=True, exist_ok=True)
-                os.replace(destination, backup)
-                state.backup_moved = True
-            os.replace(staged, destination)
-            state.staged_published = True
+                _journaled_replace(
+                    state,
+                    leg=_BACKUP_MOVE,
+                    source=destination,
+                    target=backup,
+                    before=(True, True, False),
+                    after=(True, False, True),
+                )
+            _journaled_replace(
+                state,
+                leg=_STAGED_PUBLISH,
+                source=staged,
+                target=destination,
+                before=(True, False, state.prior_existed),
+                after=(False, True, state.prior_existed),
+            )
+        publish_states = [_is_fully_published(state) for state in records]
+        if not all(publish_states):
+            for state, published in zip(records, publish_states):
+                if not published:
+                    state.ambiguous = True
+            raise _TransitionStateError("could not prove complete publication")
     except BaseException as publication_error:
-        rollback_errors: list[BaseException] = []
         for state in reversed(records):
-            try:
-                if state.staged_published:
-                    _remove_path(state.destination)
-                if state.backup_moved:
-                    os.replace(state.backup, state.destination)
-            except BaseException as rollback_error:  # noqa: BLE001
-                rollback_errors.append(rollback_error)
-        if rollback_errors:
-            recovery_names = ", ".join(sorted({root.name for root in recovery_roots}))
-            raise DevelopmentCaseError(
-                "development case publication failed and rollback was incomplete; "
-                f"retain recovery directories: {recovery_names}",
-                cleanup_staging=False,
-            ) from publication_error
-        raise
+            _rollback_state(state)
+        rollback_states = [_is_fully_rolled_back(state) for state in records]
+        if all(rollback_states):
+            raise
+        recovery_names = ", ".join(sorted({root.name for root in recovery_roots}))
+        raise DevelopmentCaseError(
+            "development case publication failed and filesystem reconciliation "
+            "was ambiguous or rollback was incomplete; "
+            f"retain recovery directories: {recovery_names}",
+            cleanup_staging=False,
+        ) from publication_error
 
 
 def _stage_root(parent: Path) -> Path:

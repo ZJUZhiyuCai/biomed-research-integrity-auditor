@@ -1110,6 +1110,31 @@ class ContractPipelineTests(unittest.TestCase):
                 fallback,
             )
 
+    def test_intake_error_location_falls_back_on_symlink_loop_runtime_error(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "package"
+            package.mkdir()
+            loop = package / "loop"
+            try:
+                loop.symlink_to("loop")
+            except (NotImplementedError, OSError) as exc:
+                self.skipTest(f"symlink creation unavailable: {exc}")
+
+            with mock.patch(
+                "scripts.pipeline.detectors.Path.resolve",
+                side_effect=RuntimeError("symlink loop"),
+            ):
+                self.assertEqual(
+                    intake_error_location(
+                        package,
+                        "image_metadata.json",
+                        {"path": "loop/panel.png"},
+                    ),
+                    "image_metadata.json",
+                )
+
     def test_pipeline_reports_image_metadata_intake_coverage(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             package = Path(tmp) / "pkg"

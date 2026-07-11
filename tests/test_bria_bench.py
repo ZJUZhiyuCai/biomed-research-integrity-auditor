@@ -1643,6 +1643,134 @@ class BriaBenchDevelopmentCaseTests(unittest.TestCase):
             self.assertEqual(self.tree_snapshot(root), before)
             self.assert_no_dev_transaction_residue(root)
 
+    def test_post_syscall_interrupt_on_backup_or_publish_restores_old_bytes(
+        self,
+    ) -> None:
+        for interrupted_leg in ("backup", "publish"):
+            with (
+                self.subTest(interrupted_leg=interrupted_leg),
+                tempfile.TemporaryDirectory() as temporary,
+            ):
+                root = Path(temporary)
+                packages = root / "cases" / "dev"
+                annotations = root / "annotations" / "dev"
+                generate_dev_cases(packages, annotations_root=annotations)
+                first_case = self.CASE_IDS[0]
+                (packages / first_case / "PACKAGE_NOTE.txt").write_bytes(
+                    b"prior package bytes\n"
+                )
+                (annotations / f"{first_case}.json").write_bytes(
+                    b'{"prior_annotation":true}\n'
+                )
+                (root / "benchmark_manifest.source.json").write_bytes(
+                    b"prior source manifest\n"
+                )
+                (root / "benchmark_manifest.json").write_bytes(
+                    b"prior frozen manifest\n"
+                )
+                before = self.tree_snapshot(root)
+                first_destination = (packages / first_case).resolve()
+                original_replace = dev_cases_module.os.replace
+                interrupt_count = 0
+
+                def interrupt_after_replace(source: Path, destination: Path) -> None:
+                    nonlocal interrupt_count
+                    source_path = Path(source)
+                    destination_path = Path(destination)
+                    is_backup_move = (
+                        source_path.resolve() == first_destination
+                        and "backup" in destination_path.parts
+                    )
+                    is_staged_publish = (
+                        "payload" in source_path.parts
+                        and source_path.name == first_case
+                        and destination_path.resolve() == first_destination
+                    )
+                    should_interrupt = (
+                        interrupted_leg == "backup" and is_backup_move
+                    ) or (interrupted_leg == "publish" and is_staged_publish)
+                    if should_interrupt and interrupt_count == 0:
+                        original_replace(source_path, destination_path)
+                        interrupt_count += 1
+                        raise KeyboardInterrupt
+                    original_replace(source_path, destination_path)
+
+                with patch.object(
+                    dev_cases_module.os,
+                    "replace",
+                    side_effect=interrupt_after_replace,
+                ):
+                    with self.assertRaises(KeyboardInterrupt):
+                        generate_dev_cases(packages, annotations_root=annotations)
+
+                self.assertEqual(interrupt_count, 1)
+                self.assertEqual(self.tree_snapshot(root), before)
+                self.assert_no_dev_transaction_residue(root)
+
+    def test_post_syscall_interrupt_on_restore_is_reconciled_as_rollback(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            packages = root / "cases" / "dev"
+            annotations = root / "annotations" / "dev"
+            generate_dev_cases(packages, annotations_root=annotations)
+            first_case = self.CASE_IDS[0]
+            (packages / first_case / "PACKAGE_NOTE.txt").write_bytes(
+                b"prior package bytes\n"
+            )
+            (annotations / f"{first_case}.json").write_bytes(
+                b'{"prior_annotation":true}\n'
+            )
+            (root / "benchmark_manifest.source.json").write_bytes(
+                b"prior source manifest\n"
+            )
+            (root / "benchmark_manifest.json").write_bytes(b"prior frozen manifest\n")
+            before = self.tree_snapshot(root)
+            first_destination = (packages / first_case).resolve()
+            original_replace = dev_cases_module.os.replace
+            publication_failures = 0
+            restore_interrupts = 0
+
+            def fail_publish_and_interrupt_restore(
+                source: Path, destination: Path
+            ) -> None:
+                nonlocal publication_failures, restore_interrupts
+                source_path = Path(source)
+                destination_path = Path(destination)
+                is_first_publish = (
+                    "payload" in source_path.parts
+                    and source_path.name == first_case
+                    and destination_path.resolve() == first_destination
+                )
+                is_first_restore = (
+                    "backup" in source_path.parts
+                    and source_path.name == first_case
+                    and destination_path.resolve() == first_destination
+                )
+                if is_first_publish and publication_failures == 0:
+                    publication_failures += 1
+                    raise OSError("injected publication failure")
+                if is_first_restore and restore_interrupts == 0:
+                    original_replace(source_path, destination_path)
+                    restore_interrupts += 1
+                    raise KeyboardInterrupt
+                original_replace(source_path, destination_path)
+
+            with patch.object(
+                dev_cases_module.os,
+                "replace",
+                side_effect=fail_publish_and_interrupt_restore,
+            ):
+                with self.assertRaises(DevelopmentCaseError) as captured:
+                    generate_dev_cases(packages, annotations_root=annotations)
+
+            self.assertEqual(publication_failures, 1)
+            self.assertEqual(restore_interrupts, 1)
+            self.assertNotIn("recovery", str(captured.exception))
+            self.assertEqual(self.tree_snapshot(root), before)
+            self.assert_no_dev_transaction_residue(root)
+
     def test_restore_failure_retains_recoverable_prior_data_and_staging(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

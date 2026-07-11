@@ -199,7 +199,7 @@ def intake_error_location(package: Path, artifact_name: str, error: Any) -> str:
         if relative == Path("."):
             return artifact_name
         return relative.as_posix()
-    except (OSError, ValueError):
+    except (OSError, RuntimeError, ValueError):
         return artifact_name
 
 
