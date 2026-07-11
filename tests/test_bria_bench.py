@@ -6,6 +6,7 @@ import os
 import random
 import re
 import signal
+import subprocess
 import sys
 import tempfile
 import time
@@ -4585,9 +4586,317 @@ class BriaBenchCliTests(unittest.TestCase):
             self.manifest, self.runs, adapter_name="fake", adapters={"fake": self.adapter}
         )
 
-        self.assertEqual(summary["cases"][0]["cache_status"], "invalidated")
+        self.assertEqual(summary["cases"][0]["cache_status"], "reused")
         repaired = json.loads(current.read_text(encoding="utf-8"))
         self.assertEqual(len(repaired["normalized_observation"]["observations"]), 1)
+
+    def make_two_case_manifest(self) -> None:
+        source = json.loads(self.source.read_text(encoding="utf-8"))
+        second_package = self.root / "package_002"
+        second_package.mkdir()
+        (second_package / "input.txt").write_text("second\n", encoding="utf-8")
+        second_annotation = minimal_annotation()
+        second_annotation["case_id"] = "case_002"
+        (self.root / "annotation_002.json").write_text(json.dumps(second_annotation), encoding="utf-8")
+        second = copy.deepcopy(source["cases"][0])
+        second.update(
+            {
+                "case_id": "case_002",
+                "package_path": "package_002",
+                "annotation_path": "annotation_002.json",
+            }
+        )
+        source["cases"].append(second)
+        self.source.write_text(json.dumps(source), encoding="utf-8")
+        freeze_manifest(self.source, self.manifest, "2026-07-11T00:00:00Z")
+
+    def test_case_symlink_is_formal_failure_and_later_case_continues(self) -> None:
+        self.make_two_case_manifest()
+        outside = self.root / "outside"
+        outside.mkdir()
+        (self.runs / "cases").mkdir(parents=True)
+        (self.runs / "cases/case_001").symlink_to(outside, target_is_directory=True)
+
+        summary = run_benchmark(
+            self.manifest, self.runs, adapter_name="fake", adapters={"fake": self.adapter}
+        )
+
+        self.assertEqual([item["status"] for item in summary["cases"]], ["environment_failure", "success"])
+        self.assertEqual(list(outside.iterdir()), [])
+        self.assertTrue((self.runs / "run_summary.json").is_file())
+        failed = json.loads((self.runs / summary["cases"][0]["run_result"]).read_text())
+        validate_contract("run_result.schema.json", failed)
+
+    def test_cache_hit_current_publication_failure_continues_and_writes_summary(self) -> None:
+        self.make_two_case_manifest()
+        run_benchmark(self.manifest, self.runs, adapter_name="fake", adapters={"fake": self.adapter})
+        original_write = cli_module._write_json_atomic
+
+        def fail_first_current(path: Path, payload: object) -> None:
+            if path == (self.runs / "cases/case_001/run_result.json").resolve():
+                raise OSError("cache-hit current publication failed")
+            original_write(path, payload)
+
+        with patch.object(cli_module, "_write_json_atomic", side_effect=fail_first_current):
+            summary = run_benchmark(
+                self.manifest, self.runs, adapter_name="fake", adapters={"fake": self.adapter}
+            )
+
+        self.assertEqual([item["status"] for item in summary["cases"]], ["environment_failure", "success"])
+        self.assertTrue((self.runs / "run_summary.json").is_file())
+        failed = json.loads((self.runs / summary["cases"][0]["run_result"]).read_text())
+        validate_contract("run_result.schema.json", failed)
+
+    def test_staging_symlink_is_rejected_before_normalization(self) -> None:
+        outside = self.root / "outside-summary.json"
+        outside.write_text(json.dumps({"case_id": "case_001", "findings": []}), encoding="utf-8")
+        producer = self.root / "symlink-producer.py"
+        producer.write_text(
+            "import pathlib, sys\n"
+            "out=pathlib.Path(sys.argv[1]); out.mkdir(parents=True, exist_ok=True)\n"
+            "(out/'AUDIT_JSON_SUMMARY.json').symlink_to(sys.argv[2])\n",
+            encoding="utf-8",
+        )
+        adapter = CommandAdapter(
+            "symlink", "1", (sys.executable, str(producer), "{output}", str(outside))
+        )
+
+        summary = run_benchmark(
+            self.manifest, self.runs, adapter_name="symlink", adapters={"symlink": adapter}
+        )
+
+        self.assertEqual(summary["cases"][0]["status"], "invalid_output")
+        result = json.loads((self.runs / summary["cases"][0]["run_result"]).read_text())
+        self.assertEqual(result["normalized_observation"]["observations"], [])
+        self.assertNotIn(str(outside), json.dumps(result))
+
+    def test_producer_artifact_tamper_is_quarantined_and_not_reused(self) -> None:
+        first = run_benchmark(
+            self.manifest, self.runs, adapter_name="fake", adapters={"fake": self.adapter}
+        )
+        result_path = self.runs / first["cases"][0]["run_result"]
+        result = json.loads(result_path.read_text())
+        audit = self.runs / result["output_paths"]["audit_summary"]
+        audit.write_text(audit.read_text(encoding="utf-8") + " \n", encoding="utf-8")
+
+        second = run_benchmark(
+            self.manifest, self.runs, adapter_name="fake", adapters={"fake": self.adapter}
+        )
+
+        self.assertEqual(second["cases"][0]["cache_status"], "invalidated")
+        histories = list((result_path.parent.parent).glob(f".quarantine-{result['cache_key']}-*"))
+        self.assertEqual(len(histories), 1)
+        repaired = json.loads((self.runs / second["cases"][0]["run_result"]).read_text())
+        self.assertEqual(len(repaired["normalized_observation"]["observations"]), 1)
+
+    def test_latest_failed_attempt_is_authoritative_for_evaluation(self) -> None:
+        run_benchmark(self.manifest, self.runs, adapter_name="fake", adapters={"fake": self.adapter})
+        current = self.runs / "cases/case_001/run_result.json"
+        prior = current.read_bytes()
+        failing = CommandAdapter("fake", "1", (sys.executable, "-c", "import sys; sys.exit(7)"))
+
+        summary = run_benchmark(
+            self.manifest, self.runs, adapter_name="fake", adapters={"fake": failing}
+        )
+        metrics = evaluate_benchmark(
+            self.manifest,
+            self.runs,
+            self.root / "latest-failed.json",
+            adapters={"fake": failing},
+        )
+
+        self.assertEqual(summary["cases"][0]["status"], "process_error")
+        self.assertEqual(current.read_bytes(), prior)
+        self.assertEqual(metrics["reliability"]["run_completion_rate"]["value"], 0)
+        self.assertEqual(metrics["detection"]["expected_finding_recall"]["value"], 0)
+
+    def test_publication_failure_is_evaluable_without_producer_artifacts(self) -> None:
+        with patch.object(cli_module, "_publish_attempt", side_effect=OSError("injected")):
+            summary = run_benchmark(
+                self.manifest, self.runs, adapter_name="fake", adapters={"fake": self.adapter}
+            )
+        metrics = evaluate_benchmark(
+            self.manifest,
+            self.runs,
+            self.root / "publication-failed.json",
+            adapters={"fake": self.adapter},
+        )
+        self.assertEqual(summary["cases"][0]["status"], "environment_failure")
+        self.assertEqual(metrics["reliability"]["run_completion_rate"]["value"], 0)
+
+    def test_preflight_environment_failure_is_evaluable_with_explicit_fallback_hashes(self) -> None:
+        with patch.object(cli_module, "_cache_material", side_effect=CliError("broken environment metadata")):
+            summary = run_benchmark(
+                self.manifest, self.runs, adapter_name="fake", adapters={"fake": self.adapter}
+            )
+        metrics = evaluate_benchmark(
+            self.manifest,
+            self.runs,
+            self.root / "preflight-failed.json",
+            adapters={"fake": self.adapter},
+        )
+        self.assertEqual(summary["cases"][0]["status"], "environment_failure")
+        self.assertEqual(metrics["reliability"]["run_completion_rate"]["value"], 0)
+
+    def test_runtime_failure_precedes_malformed_output(self) -> None:
+        for name, code, timeout, expected in (
+            ("process", "import pathlib,sys; pathlib.Path(sys.argv[1]).joinpath('AUDIT_JSON_SUMMARY.json').write_text('{bad'); sys.exit(9)", 2, "process_error"),
+            ("timeout", "import pathlib,sys,time; pathlib.Path(sys.argv[1]).joinpath('AUDIT_JSON_SUMMARY.json').write_text('{bad'); time.sleep(2)", 0.05, "timeout"),
+        ):
+            with self.subTest(name=name):
+                runs = self.root / f"{name}-runs"
+                adapter = CommandAdapter(name, "1", (sys.executable, "-c", code, "{output}"))
+                summary = run_benchmark(
+                    self.manifest,
+                    runs,
+                    adapter_name=name,
+                    adapters={name: adapter},
+                    timeout_seconds=timeout,
+                )
+                self.assertEqual(summary["cases"][0]["status"], expected)
+
+    def test_normalization_exception_is_formal_evaluable_and_runtime_still_precedes(self) -> None:
+        with patch(
+            "benchmarks.bria_bench.normalize.normalize_audit_output",
+            side_effect=RuntimeError("injected normalization failure"),
+        ):
+            normalized = run_benchmark(
+                self.manifest, self.runs, adapter_name="fake", adapters={"fake": self.adapter}
+            )
+        self.assertEqual(normalized["cases"][0]["status"], "normalization_error")
+        metrics = evaluate_benchmark(
+            self.manifest,
+            self.runs,
+            self.root / "normalization-failed.json",
+            adapters={"fake": self.adapter},
+        )
+        self.assertEqual(metrics["reliability"]["run_completion_rate"]["value"], 0)
+
+        process_runs = self.root / "process-normalization-runs"
+        process = CommandAdapter("process", "1", (sys.executable, "-c", "import sys; sys.exit(4)"))
+        with patch(
+            "benchmarks.bria_bench.normalize.normalize_audit_output",
+            side_effect=RuntimeError("injected normalization failure"),
+        ):
+            failed = run_benchmark(
+                self.manifest,
+                process_runs,
+                adapter_name="process",
+                adapters={"process": process},
+            )
+        self.assertEqual(failed["cases"][0]["status"], "process_error")
+
+    def test_full_fingerprint_covers_detector_calibrator_and_dependency_environment(self) -> None:
+        inputs = cli_module._runner_inputs(cli_module._full_adapter(), ())
+        relative = {str(path).replace("\\", "/") for path in inputs}
+        self.assertTrue(any("/detectors/" in path for path in relative))
+        self.assertTrue(any("/calibrators/" in path for path in relative))
+        baseline = cli_module._environment_payload()
+        with patch.object(cli_module.importlib.metadata, "version", return_value="changed"):
+            changed = cli_module._environment_payload()
+        self.assertNotEqual(baseline, changed)
+        for key in ("platform_system", "platform_machine", "numpy", "Pillow", "jsonschema", "psutil"):
+            self.assertIn(key, baseline)
+
+    def test_detector_calibrator_and_dependency_versions_invalidate_cache(self) -> None:
+        detector = self.root / "detector.py"
+        calibrator = self.root / "calibrator.py"
+        detector.write_text("DETECTOR = 1\n", encoding="utf-8")
+        calibrator.write_text("CALIBRATOR = 1\n", encoding="utf-8")
+
+        def inputs(adapter: object, command: object) -> list[Path]:
+            return [self.producer, detector, calibrator]
+
+        with patch.object(cli_module, "_runner_inputs", side_effect=inputs):
+            run_benchmark(self.manifest, self.runs, adapter_name="fake", adapters={"fake": self.adapter})
+            detector.write_text("DETECTOR = 2\n", encoding="utf-8")
+            changed_detector = run_benchmark(
+                self.manifest, self.runs, adapter_name="fake", adapters={"fake": self.adapter}
+            )
+            calibrator.write_text("CALIBRATOR = 2\n", encoding="utf-8")
+            changed_calibrator = run_benchmark(
+                self.manifest, self.runs, adapter_name="fake", adapters={"fake": self.adapter}
+            )
+        self.assertEqual(changed_detector["cases"][0]["cache_status"], "invalidated")
+        self.assertEqual(changed_calibrator["cases"][0]["cache_status"], "invalidated")
+
+        run_benchmark(self.manifest, self.runs, adapter_name="fake", adapters={"fake": self.adapter})
+        real_version = cli_module.importlib.metadata.version
+
+        def changed_version(name: str) -> str:
+            return "999-test" if name == "numpy" else real_version(name)
+
+        with patch.object(cli_module.importlib.metadata, "version", side_effect=changed_version):
+            changed_dependency = run_benchmark(
+                self.manifest, self.runs, adapter_name="fake", adapters={"fake": self.adapter}
+            )
+        self.assertEqual(changed_dependency["cases"][0]["cache_status"], "invalidated")
+
+    def test_missing_psutil_is_actionable_environment_failure(self) -> None:
+        with patch.object(
+            cli_module,
+            "_load_run_monitored",
+            side_effect=CliError("psutil is required; install .[benchmark]"),
+        ):
+            summary = run_benchmark(
+                self.manifest, self.runs, adapter_name="fake", adapters={"fake": self.adapter}
+            )
+        self.assertEqual(summary["cases"][0]["status"], "environment_failure")
+        result = json.loads((self.runs / summary["cases"][0]["run_result"]).read_text())
+        self.assertIn(".[benchmark]", result["failure"]["message"])
+
+    def test_isolated_wheel_supports_help_and_full_adapter_fingerprint(self) -> None:
+        wheel_dir = self.root / "wheel"
+        site_dir = self.root / "site"
+        wheel_dir.mkdir()
+        repository = Path(__file__).parents[1]
+        subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "pip",
+                "wheel",
+                "--no-build-isolation",
+                "--no-deps",
+                "--wheel-dir",
+                str(wheel_dir),
+                str(repository),
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        wheel = next(wheel_dir.glob("*.whl"))
+        subprocess.run(
+            [sys.executable, "-m", "pip", "install", "--no-deps", "--target", str(site_dir), str(wheel)],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        code = (
+            "import pathlib,sys; sys.path.insert(0, sys.argv[1]); "
+            "from benchmarks.bria_bench import cli; "
+            "a=cli._full_adapter(); "
+            "case={'case_id':'x','mode':'internal_presubmission','scan_profile':'quick'}; "
+            "cmd=a.build_command(package='pkg',case=case,output='out'); "
+            "assert pathlib.Path(cmd[1]).is_file(); "
+            "assert cli._hash_files(cli._runner_inputs(a,cmd)); "
+            "assert cli.main(['--help']) == 0"
+        )
+        completed = subprocess.run(
+            [sys.executable, "-I", "-c", code, str(site_dir)],
+            cwd=self.root,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+
+    def test_command_adapter_rejects_unmatched_braces_and_bad_identity(self) -> None:
+        for args in (("bad name", "1", ("x",)), ("ok", "bad version!", ("x",)), ("ok", "1", ("{output",))):
+            with self.subTest(args=args):
+                with self.assertRaises(ValueError):
+                    CommandAdapter(*args)
 
     def test_timeout_and_missing_output_are_formal_failed_results(self) -> None:
         timeout = CommandAdapter(
@@ -4633,7 +4942,7 @@ class BriaBenchCliTests(unittest.TestCase):
         before = current.read_bytes()
         self.producer.write_text(self.producer.read_text() + "# invalidate\n", encoding="utf-8")
 
-        with patch.object(cli_module, "_publish_directory", side_effect=OSError("injected")):
+        with patch.object(cli_module, "_publish_attempt", side_effect=OSError("injected")):
             summary = run_benchmark(
                 self.manifest, self.runs, adapter_name="fake", adapters={"fake": self.adapter}
             )
