@@ -1,1 +1,1 @@
-Controlled Figure 3 source data contain eight paired control and treatment values for numerical-consistency development checks.
+Controlled Figure 3 source data contain twelve paired control and treatment values for numerical-consistency development checks.

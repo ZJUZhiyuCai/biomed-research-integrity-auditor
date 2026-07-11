@@ -6,7 +6,7 @@
         "a documented normalization offset may explain the relationship",
         "an export transformation may have added a constant to one column"
       ],
-      "expected_fact": "eight paired rows with a constant +10 shift",
+      "expected_fact": "twelve paired rows with a constant +10 shift",
       "issue_family": "statistics_or_numeric",
       "location": {
         "file": "source_data/Figure_3_source.csv",

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import binascii
 import copy
 import csv
 import hashlib
@@ -11,10 +12,12 @@ import shutil
 import signal
 import stat
 import subprocess
+import struct
 import sys
 import tempfile
 import time
 import unittest
+import zlib
 from decimal import Decimal, localcontext
 from pathlib import Path
 from typing import Any, get_type_hints
@@ -1007,6 +1010,100 @@ class BriaBenchDevelopmentCaseTests(unittest.TestCase):
         ).encode("utf-8")
         return hashlib.sha256(serialized).hexdigest()
 
+    @staticmethod
+    def expected_counter_bytes(seed: int, length: int) -> bytes:
+        prefix = b"BRIA-Bench Task 10 RGB pixels v1\x00" + seed.to_bytes(
+            8, "big", signed=False
+        )
+        output = bytearray()
+        counter = 0
+        while len(output) < length:
+            output.extend(
+                hashlib.sha256(
+                    prefix + counter.to_bytes(8, "big", signed=False)
+                ).digest()
+            )
+            counter += 1
+        return bytes(output[:length])
+
+    def assert_canonical_png(
+        self,
+        path: Path,
+        *,
+        seed: int,
+        flipped: bool = False,
+    ) -> bytes:
+        encoded = path.read_bytes()
+        self.assertEqual(encoded[:8], b"\x89PNG\r\n\x1a\n")
+
+        chunks: list[tuple[bytes, bytes]] = []
+        cursor = 8
+        while cursor < len(encoded):
+            length = struct.unpack(">I", encoded[cursor : cursor + 4])[0]
+            chunk_type = encoded[cursor + 4 : cursor + 8]
+            data_start = cursor + 8
+            data_end = data_start + length
+            chunk_data = encoded[data_start:data_end]
+            checksum = struct.unpack(">I", encoded[data_end : data_end + 4])[0]
+            self.assertEqual(
+                checksum,
+                binascii.crc32(chunk_type + chunk_data) & 0xFFFFFFFF,
+            )
+            chunks.append((chunk_type, chunk_data))
+            cursor = data_end + 4
+        self.assertEqual(cursor, len(encoded))
+        self.assertEqual(
+            [chunk_type for chunk_type, _ in chunks], [b"IHDR", b"IDAT", b"IEND"]
+        )
+        self.assertEqual(
+            chunks[0][1],
+            struct.pack(">IIBBBBB", 256, 192, 8, 2, 0, 0, 0),
+        )
+        self.assertEqual(chunks[2][1], b"")
+
+        stream = chunks[1][1]
+        self.assertEqual(stream[:2], b"\x78\x01")
+        cursor = 2
+        scanlines = bytearray()
+        block_sizes: list[int] = []
+        while True:
+            header = stream[cursor]
+            cursor += 1
+            self.assertIn(header, (0, 1))
+            length, inverse_length = struct.unpack("<HH", stream[cursor : cursor + 4])
+            cursor += 4
+            self.assertEqual(inverse_length, length ^ 0xFFFF)
+            block_sizes.append(length)
+            scanlines.extend(stream[cursor : cursor + length])
+            cursor += length
+            if header == 1:
+                break
+        self.assertEqual(block_sizes, [65535, 65535, 16578])
+        expected_adler = struct.unpack(">I", stream[cursor : cursor + 4])[0]
+        self.assertEqual(expected_adler, zlib.adler32(scanlines) & 0xFFFFFFFF)
+        cursor += 4
+        self.assertEqual(cursor, len(stream))
+
+        pixels = self.expected_counter_bytes(seed, 256 * 192 * 3)
+        if flipped:
+            row_size = 256 * 3
+            flipped_pixels = bytearray()
+            for row_start in range(0, len(pixels), row_size):
+                row = pixels[row_start : row_start + row_size]
+                flipped_pixels.extend(
+                    b"".join(
+                        row[column : column + 3]
+                        for column in range(row_size - 3, -1, -3)
+                    )
+                )
+            pixels = bytes(flipped_pixels)
+        expected_scanlines = b"".join(
+            b"\x00" + pixels[row_start : row_start + 256 * 3]
+            for row_start in range(0, len(pixels), 256 * 3)
+        )
+        self.assertEqual(bytes(scanlines), expected_scanlines)
+        return pixels
+
     def test_generation_is_deterministic_first_party_and_layout_exact(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -1015,9 +1112,7 @@ class BriaBenchDevelopmentCaseTests(unittest.TestCase):
             right_packages = root / "right-packages"
             right_annotations = root / "right-annotations"
 
-            left = generate_dev_cases(
-                left_packages, annotations_root=left_annotations
-            )
+            left = generate_dev_cases(left_packages, annotations_root=left_annotations)
             right = generate_dev_cases(
                 right_packages, annotations_root=right_annotations
             )
@@ -1025,14 +1120,15 @@ class BriaBenchDevelopmentCaseTests(unittest.TestCase):
             self.assertEqual(tuple(DEV_CASE_IDS), self.CASE_IDS)
             self.assertEqual(left, right)
             self.assertEqual([case["case_id"] for case in left], list(self.CASE_IDS))
-            self.assertEqual(self.tree_files(left_packages), self.tree_files(right_packages))
+            self.assertEqual(
+                self.tree_files(left_packages), self.tree_files(right_packages)
+            )
             self.assertEqual(
                 self.tree_files(left_annotations), self.tree_files(right_annotations)
             )
             self.assertTrue(
                 all(
-                    case["redistributable"] is True
-                    and case["license"] == "CC0-1.0"
+                    case["redistributable"] is True and case["license"] == "CC0-1.0"
                     for case in left
                 )
             )
@@ -1107,16 +1203,21 @@ class BriaBenchDevelopmentCaseTests(unittest.TestCase):
                 payload = json.loads(annotation.read_text(encoding="utf-8"))
                 validate_contract("annotation.schema.json", payload)
 
-    def test_generated_images_and_tables_encode_exact_controlled_relations(self) -> None:
+    def test_generated_images_and_tables_encode_exact_controlled_relations(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             packages = Path(temporary) / "packages"
             generate_dev_cases(packages)
 
-            with Image.open(
-                packages / "dev_001_global_flip/figures/Figure_1A.png"
-            ) as image_a, Image.open(
-                packages / "dev_001_global_flip/figures/Figure_1B.png"
-            ) as image_b:
+            with (
+                Image.open(
+                    packages / "dev_001_global_flip/figures/Figure_1A.png"
+                ) as image_a,
+                Image.open(
+                    packages / "dev_001_global_flip/figures/Figure_1B.png"
+                ) as image_b,
+            ):
                 self.assertEqual(image_a.mode, "RGB")
                 self.assertEqual(image_a.size, (256, 192))
                 self.assertEqual(image_a.info, {})
@@ -1126,27 +1227,29 @@ class BriaBenchDevelopmentCaseTests(unittest.TestCase):
                     image_b.tobytes(),
                 )
 
-            with Image.open(
-                packages / "dev_002_independent_images/figures/Figure_2A.png"
-            ) as image_a, Image.open(
-                packages / "dev_002_independent_images/figures/Figure_2B.png"
-            ) as image_b:
+            with (
+                Image.open(
+                    packages / "dev_002_independent_images/figures/Figure_2A.png"
+                ) as image_a,
+                Image.open(
+                    packages / "dev_002_independent_images/figures/Figure_2B.png"
+                ) as image_b,
+            ):
                 differing = sum(
-                    left != right for left, right in zip(image_a.tobytes(), image_b.tobytes())
+                    left != right
+                    for left, right in zip(image_a.tobytes(), image_b.tobytes())
                 )
                 self.assertGreater(differing / len(image_a.tobytes()), 0.99)
 
             valid = packages / "dev_005_corrupt_image/figures/Figure_5A_valid.png"
             truncated = (
-                packages
-                / "dev_005_corrupt_image/figures/Figure_5B_truncated.png"
+                packages / "dev_005_corrupt_image/figures/Figure_5B_truncated.png"
             )
             self.assertGreater(valid.stat().st_size, 24)
             self.assertEqual(truncated.read_bytes(), valid.read_bytes()[:24])
 
             with (
-                packages
-                / "dev_003_stats_shift/source_data/Figure_3_source.csv"
+                packages / "dev_003_stats_shift/source_data/Figure_3_source.csv"
             ).open(newline="", encoding="utf-8") as handle:
                 shifted = list(csv.DictReader(handle))
             controls = [
@@ -1158,26 +1261,41 @@ class BriaBenchDevelopmentCaseTests(unittest.TestCase):
                 "8.34",
                 "9.78",
                 "11.05",
+                "12.63",
+                "14.27",
+                "15.84",
+                "17.39",
             ]
             self.assertEqual([row["control"] for row in shifted], controls)
-            self.assertEqual(len(shifted), 8)
+            self.assertEqual(len(shifted), 12)
             self.assertTrue(
                 all(
-                    Decimal(row["treatment"]) - Decimal(row["control"])
-                    == Decimal("10")
+                    Decimal(row["treatment"]) - Decimal(row["control"]) == Decimal("10")
                     for row in shifted
                 )
             )
 
             with (
-                packages
-                / "dev_004_stats_independent/source_data/Figure_4_source.csv"
+                packages / "dev_004_stats_independent/source_data/Figure_4_source.csv"
             ).open(newline="", encoding="utf-8") as handle:
                 independent = list(csv.DictReader(handle))
             self.assertEqual([row["control"] for row in independent], controls)
             self.assertEqual(
                 [row["treatment"] for row in independent],
-                ["7.62", "3.19", "10.44", "1.87", "8.53", "12.26", "4.71", "9.38"],
+                [
+                    "7.62",
+                    "3.19",
+                    "10.44",
+                    "1.87",
+                    "8.53",
+                    "12.26",
+                    "4.71",
+                    "9.38",
+                    "15.07",
+                    "0.64",
+                    "6.35",
+                    "13.81",
+                ],
             )
 
             with (
@@ -1192,6 +1310,63 @@ class BriaBenchDevelopmentCaseTests(unittest.TestCase):
             )
             self.assertEqual(len(rows), 1)
             self.assertEqual(rows[0]["relation_type"], "same_field_different_channel")
+
+    def test_png_bytes_follow_versioned_counter_and_canonical_encoding(self) -> None:
+        self.assertEqual(dev_cases_module.PIXEL_GENERATOR_VERSION, "sha256-counter-v1")
+        self.assertEqual(
+            dev_cases_module.PIXEL_GENERATOR_DOMAIN,
+            b"BRIA-Bench Task 10 RGB pixels v1\x00",
+        )
+        self.assertEqual(
+            dev_cases_module.PIXEL_GENERATOR_SPEC,
+            "SHA-256(domain || uint64be(seed) || uint64be(counter)); counter starts at 0",
+        )
+        self.assertEqual(
+            dev_cases_module.PNG_ENCODER_VERSION,
+            "png-rgb8-filter0-deflate-stored-v1",
+        )
+        self.assertEqual(
+            dev_cases_module.PNG_ENCODER_SPEC,
+            "PNG RGB8 256x192; filter 0; zlib 0x7801; DEFLATE stored blocks <=65535; Adler-32 and PNG CRC-32",
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            packages = Path(temporary) / "packages"
+            generate_dev_cases(packages)
+            expected = {
+                "dev_001_global_flip/figures/Figure_1A.png": (1001, False),
+                "dev_001_global_flip/figures/Figure_1B.png": (1001, True),
+                "dev_002_independent_images/figures/Figure_2A.png": (2001, False),
+                "dev_002_independent_images/figures/Figure_2B.png": (2002, False),
+                "dev_005_corrupt_image/figures/Figure_5A_valid.png": (5001, False),
+                "dev_006_manifest_laundering/figures/Figure_6A.png": (6001, False),
+                "dev_006_manifest_laundering/figures/Figure_6B.png": (6001, True),
+            }
+            for relative, (seed, flipped) in expected.items():
+                with self.subTest(relative=relative):
+                    self.assert_canonical_png(
+                        packages / relative,
+                        seed=seed,
+                        flipped=flipped,
+                    )
+
+    def test_generation_ignores_random_pillow_and_zlib_compression_apis(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            baseline = root / "baseline"
+            patched = root / "patched"
+            generate_dev_cases(baseline)
+
+            unavailable = AssertionError("non-canonical generation API used")
+            with (
+                patch.object(random, "Random", side_effect=unavailable),
+                patch.object(Image, "frombytes", side_effect=unavailable),
+                patch.object(Image.Image, "save", side_effect=unavailable),
+                patch.object(zlib, "compress", side_effect=unavailable),
+                patch.object(zlib, "compressobj", side_effect=unavailable),
+            ):
+                generate_dev_cases(patched)
+
+            self.assertEqual(self.tree_files(baseline), self.tree_files(patched))
 
     def test_committed_generation_matches_and_cleans_only_owned_paths(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -1209,10 +1384,7 @@ class BriaBenchDevelopmentCaseTests(unittest.TestCase):
                 self.assertEqual(
                     (annotations / f"{case_id}.json").read_bytes(),
                     (
-                        BRIA_BENCH_ROOT
-                        / "annotations"
-                        / "dev"
-                        / f"{case_id}.json"
+                        BRIA_BENCH_ROOT / "annotations" / "dev" / f"{case_id}.json"
                     ).read_bytes(),
                     case_id,
                 )
@@ -1221,7 +1393,7 @@ class BriaBenchDevelopmentCaseTests(unittest.TestCase):
             sibling.mkdir()
             (sibling / "keep.txt").write_bytes(b"future package\n")
             annotation_sibling = annotations / "future_case.json"
-            annotation_sibling.write_bytes(b"{\"future\": true}\n")
+            annotation_sibling.write_bytes(b'{"future": true}\n')
             stale = packages / self.CASE_IDS[0] / "stale-owned.bin"
             stale.write_bytes(b"remove me")
             (annotations / f"{self.CASE_IDS[0]}.json").write_bytes(b"stale annotation")
@@ -1230,9 +1402,7 @@ class BriaBenchDevelopmentCaseTests(unittest.TestCase):
 
             self.assertFalse(stale.exists())
             self.assertEqual((sibling / "keep.txt").read_bytes(), b"future package\n")
-            self.assertEqual(
-                annotation_sibling.read_bytes(), b"{\"future\": true}\n"
-            )
+            self.assertEqual(annotation_sibling.read_bytes(), b'{"future": true}\n')
             validate_contract(
                 "annotation.schema.json",
                 json.loads(
@@ -1242,7 +1412,9 @@ class BriaBenchDevelopmentCaseTests(unittest.TestCase):
                 ),
             )
 
-    def test_generation_failure_before_publish_leaves_public_data_unchanged(self) -> None:
+    def test_generation_failure_before_publish_leaves_public_data_unchanged(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             packages = root / "packages"
@@ -1263,7 +1435,73 @@ class BriaBenchDevelopmentCaseTests(unittest.TestCase):
                     generate_dev_cases(packages, annotations_root=annotations)
             self.assertEqual(self.tree_snapshot(root), before)
 
-    def test_first_existing_backup_rename_failure_preserves_all_public_bytes(self) -> None:
+    def test_overlapping_output_roots_are_rejected_before_any_mutation(self) -> None:
+        layouts = (
+            "equal",
+            "annotations-inside-packages",
+            "packages-inside-annotations",
+        )
+        for layout in layouts:
+            with (
+                self.subTest(layout=layout),
+                tempfile.TemporaryDirectory() as temporary,
+            ):
+                root = Path(temporary)
+                if layout == "equal":
+                    packages = root / "shared"
+                    annotations = packages
+                elif layout == "annotations-inside-packages":
+                    packages = root / "packages"
+                    annotations = (
+                        packages / "dev_001_global_flip" / "caller-owned-annotations"
+                    )
+                else:
+                    annotations = root / "annotations"
+                    packages = annotations / "caller-owned-packages"
+                packages.mkdir(parents=True, exist_ok=True)
+                annotations.mkdir(parents=True, exist_ok=True)
+                (packages / "caller-package.bin").write_bytes(b"package sentinel\n")
+                (annotations / "caller-annotation.bin").write_bytes(
+                    b"annotation sentinel\n"
+                )
+                before = self.tree_snapshot(root)
+
+                with self.assertRaisesRegex(DevelopmentCaseError, "overlap"):
+                    generate_dev_cases(packages, annotations_root=annotations)
+
+                self.assertEqual(self.tree_snapshot(root), before)
+                self.assert_no_dev_transaction_residue(root)
+
+    def test_generator_cli_reports_domain_errors_without_a_traceback(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            shared = Path(temporary) / "shared"
+            shared.mkdir()
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "benchmarks.bria_bench.generate_dev_cases",
+                    "--output",
+                    str(shared),
+                    "--annotations-output",
+                    str(shared),
+                ],
+                cwd=REPOSITORY_ROOT,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertEqual(result.returncode, 2)
+            self.assertEqual(result.stdout, "")
+            self.assertEqual(len(result.stderr.splitlines()), 1)
+            self.assertIn("error:", result.stderr)
+            self.assertIn("overlap", result.stderr)
+            self.assertNotIn("Traceback", result.stderr)
+
+    def test_first_existing_backup_rename_failure_preserves_all_public_bytes(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             packages = root / "cases" / "dev"
@@ -1284,10 +1522,13 @@ class BriaBenchDevelopmentCaseTests(unittest.TestCase):
                 nonlocal backup_attempts
                 source_path = Path(source).resolve()
                 destination_path = Path(destination)
-                is_staged_backup = any(
-                    part.startswith(".bria-dev-stage-")
-                    for part in destination_path.parts
-                ) and "backup" in destination_path.parts
+                is_staged_backup = (
+                    any(
+                        part.startswith(".bria-dev-stage-")
+                        for part in destination_path.parts
+                    )
+                    and "backup" in destination_path.parts
+                )
                 if source_path == first_destination and is_staged_backup:
                     backup_attempts += 1
                     raise OSError("injected first backup rename failure")
@@ -1303,7 +1544,9 @@ class BriaBenchDevelopmentCaseTests(unittest.TestCase):
             self.assertEqual(self.tree_snapshot(root), before)
             self.assert_no_dev_transaction_residue(root)
 
-    def test_staged_publish_failure_after_backup_restores_all_public_bytes(self) -> None:
+    def test_staged_publish_failure_after_backup_restores_all_public_bytes(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             packages = root / "cases" / "dev"
@@ -1331,7 +1574,11 @@ class BriaBenchDevelopmentCaseTests(unittest.TestCase):
                     part.startswith(".bria-dev-stage-")
                     for part in destination_path.parts
                 )
-                if staged_source and not staged_destination:
+                if (
+                    staged_source
+                    and "payload" in source_path.parts
+                    and not staged_destination
+                ):
                     publication_count += 1
                     if publication_count == 3:
                         raise OSError("injected publish failure")
@@ -1345,6 +1592,161 @@ class BriaBenchDevelopmentCaseTests(unittest.TestCase):
             self.assertGreaterEqual(publication_count, 3)
             self.assertEqual(self.tree_snapshot(root), before)
             self.assert_no_dev_transaction_residue(root)
+
+    def test_keyboard_interrupt_during_publication_rolls_back_and_cleans(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            packages = root / "cases" / "dev"
+            annotations = root / "annotations" / "dev"
+            generate_dev_cases(packages, annotations_root=annotations)
+            for index, case_id in enumerate(self.CASE_IDS, start=1):
+                (packages / case_id / "PACKAGE_NOTE.txt").write_bytes(
+                    f"prior package {index}\n".encode()
+                )
+                (annotations / f"{case_id}.json").write_bytes(
+                    f'{{"prior_annotation":{index}}}\n'.encode()
+                )
+            (root / "benchmark_manifest.source.json").write_bytes(b"prior source\n")
+            (root / "benchmark_manifest.json").write_bytes(b"prior frozen\n")
+            before = self.tree_snapshot(root)
+            original_replace = dev_cases_module.os.replace
+            publication_count = 0
+
+            def interrupt_publication(source: Path, destination: Path) -> None:
+                nonlocal publication_count
+                source_path = Path(source)
+                destination_path = Path(destination)
+                staged_source = any(
+                    part.startswith(".bria-dev-stage-") for part in source_path.parts
+                )
+                staged_destination = any(
+                    part.startswith(".bria-dev-stage-")
+                    for part in destination_path.parts
+                )
+                if (
+                    staged_source
+                    and "payload" in source_path.parts
+                    and not staged_destination
+                ):
+                    publication_count += 1
+                    if publication_count == 3:
+                        raise KeyboardInterrupt
+                original_replace(source_path, destination_path)
+
+            with patch.object(
+                dev_cases_module.os, "replace", side_effect=interrupt_publication
+            ):
+                with self.assertRaises(KeyboardInterrupt):
+                    generate_dev_cases(packages, annotations_root=annotations)
+
+            self.assertEqual(publication_count, 3)
+            self.assertEqual(self.tree_snapshot(root), before)
+            self.assert_no_dev_transaction_residue(root)
+
+    def test_restore_failure_retains_recoverable_prior_data_and_staging(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            packages = root / "cases" / "dev"
+            annotations = root / "annotations" / "dev"
+            generate_dev_cases(packages, annotations_root=annotations)
+            for index, case_id in enumerate(self.CASE_IDS, start=1):
+                (packages / case_id / "PACKAGE_NOTE.txt").write_bytes(
+                    f"prior package {index}\n".encode()
+                )
+                (annotations / f"{case_id}.json").write_bytes(
+                    f'{{"prior_annotation":{index}}}\n'.encode()
+                )
+            source_manifest = root / "benchmark_manifest.source.json"
+            frozen_manifest = root / "benchmark_manifest.json"
+            source_manifest.write_bytes(b"prior source manifest\n")
+            frozen_manifest.write_bytes(b"prior frozen manifest\n")
+            package_bytes = {
+                case_id: self.tree_files(packages / case_id)
+                for case_id in self.CASE_IDS
+            }
+            annotation_bytes = {
+                case_id: (annotations / f"{case_id}.json").read_bytes()
+                for case_id in self.CASE_IDS
+            }
+
+            failed_case = self.CASE_IDS[2]
+            failed_destination = (packages / failed_case).resolve()
+            original_replace = dev_cases_module.os.replace
+            publication_count = 0
+            restore_attempts = 0
+
+            def fail_publish_and_restore(source: Path, destination: Path) -> None:
+                nonlocal publication_count, restore_attempts
+                source_path = Path(source)
+                destination_path = Path(destination)
+                staged_source = any(
+                    part.startswith(".bria-dev-stage-") for part in source_path.parts
+                )
+                staged_destination = any(
+                    part.startswith(".bria-dev-stage-")
+                    for part in destination_path.parts
+                )
+                if (
+                    "backup" in source_path.parts
+                    and destination_path.resolve() == failed_destination
+                ):
+                    restore_attempts += 1
+                    raise OSError("injected restore failure")
+                if (
+                    staged_source
+                    and "payload" in source_path.parts
+                    and not staged_destination
+                ):
+                    publication_count += 1
+                    if publication_count == 3:
+                        raise OSError("injected publication failure")
+                original_replace(source_path, destination_path)
+
+            with patch.object(
+                dev_cases_module.os, "replace", side_effect=fail_publish_and_restore
+            ):
+                with self.assertRaises(DevelopmentCaseError) as captured:
+                    generate_dev_cases(packages, annotations_root=annotations)
+
+            self.assertEqual(publication_count, 3)
+            self.assertEqual(restore_attempts, 1)
+            recovery_roots = sorted(
+                path for path in root.rglob(".bria-dev-stage-*") if path.is_dir()
+            )
+            self.assertEqual(len(recovery_roots), 2)
+            message = str(captured.exception)
+            self.assertIn("recovery", message)
+            self.assertNotIn(str(root), message)
+            for recovery_root in recovery_roots:
+                self.assertIn(recovery_root.name, message)
+
+            for case_id in self.CASE_IDS:
+                candidates = [packages / case_id]
+                candidates.extend(
+                    recovery_root / "backup" / case_id
+                    for recovery_root in recovery_roots
+                )
+                recovered = [
+                    self.tree_files(candidate)
+                    for candidate in candidates
+                    if candidate.is_dir()
+                ]
+                self.assertIn(package_bytes[case_id], recovered, case_id)
+
+                annotation_candidates = [annotations / f"{case_id}.json"]
+                annotation_candidates.extend(
+                    recovery_root / "backup" / f"{case_id}.json"
+                    for recovery_root in recovery_roots
+                )
+                recovered_annotations = [
+                    candidate.read_bytes()
+                    for candidate in annotation_candidates
+                    if candidate.is_file()
+                ]
+                self.assertIn(annotation_bytes[case_id], recovered_annotations, case_id)
+
+            self.assertEqual(source_manifest.read_bytes(), b"prior source manifest\n")
+            self.assertEqual(frozen_manifest.read_bytes(), b"prior frozen manifest\n")
 
     def test_staged_publish_failure_without_prior_destination_leaves_no_residue(
         self,
@@ -1375,7 +1777,9 @@ class BriaBenchDevelopmentCaseTests(unittest.TestCase):
                 )
                 if is_staged_source and destination_path == first_destination:
                     publication_attempts += 1
-                    raise OSError("injected publication without prior destination failure")
+                    raise OSError(
+                        "injected publication without prior destination failure"
+                    )
                 original_replace(source, destination)
 
             with patch.object(
@@ -1416,7 +1820,12 @@ class BriaBenchDevelopmentCaseTests(unittest.TestCase):
                 ("recall_label", "image_global_similarity", ["R3", "R3"], "present")
             ],
             "dev_002_independent_images": [
-                ("negative_guardrail", "image_global_similarity", ["R2", "R4"], "absent")
+                (
+                    "negative_guardrail",
+                    "image_global_similarity",
+                    ["R2", "R4"],
+                    "absent",
+                )
             ],
             "dev_003_stats_shift": [
                 ("recall_label", "statistics_or_numeric", ["R1", "R2"], "present")
@@ -1445,7 +1854,9 @@ class BriaBenchDevelopmentCaseTests(unittest.TestCase):
         legacy_hashes = {case["expected_sha256"] for case in frozen["cases"][:30]}
         dev_hashes: set[str] = set()
         for case in frozen["cases"]:
-            self.assertEqual(verify_frozen_case(BRIA_BENCH_ROOT, case), case["expected_sha256"])
+            self.assertEqual(
+                verify_frozen_case(BRIA_BENCH_ROOT, case), case["expected_sha256"]
+            )
             if case["case_id"] not in self.CASE_IDS:
                 continue
             case_id = case["case_id"]
@@ -1488,14 +1899,13 @@ class BriaBenchDevelopmentCaseTests(unittest.TestCase):
         self.assertEqual(len(dev_hashes), 6)
         self.assertTrue(dev_hashes.isdisjoint(legacy_hashes))
         shift_annotation = json.loads(
-            (
-                BRIA_BENCH_ROOT
-                / "annotations/dev/dev_003_stats_shift.json"
-            ).read_text(encoding="utf-8")
+            (BRIA_BENCH_ROOT / "annotations/dev/dev_003_stats_shift.json").read_text(
+                encoding="utf-8"
+            )
         )
         self.assertEqual(
             shift_annotation["expected_observations"][0]["expected_fact"],
-            "eight paired rows with a constant +10 shift",
+            "twelve paired rows with a constant +10 shift",
         )
 
     def test_dev_package_mutation_invalidates_frozen_hash(self) -> None:
@@ -1556,7 +1966,9 @@ class BriaBenchDevelopmentCaseTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             output = Path(temporary)
 
-            def detector_payload(script: str, package: Path, name: str) -> dict[str, Any]:
+            def detector_payload(
+                script: str, package: Path, name: str
+            ) -> dict[str, Any]:
                 target = output / f"{name}.json"
                 subprocess.run(
                     [sys.executable, script, str(package), "--output", str(target)],
@@ -1604,7 +2016,7 @@ class BriaBenchDevelopmentCaseTests(unittest.TestCase):
                 if "additive/subtractive shift" in item["finding_type"]
             ]
             self.assertEqual(len(shift_candidates), 1)
-            self.assertEqual(shift_candidates[0]["evidence"]["paired_rows"], 8)
+            self.assertEqual(shift_candidates[0]["evidence"]["paired_rows"], 12)
             self.assertEqual(stats_negative["candidates"], [])
 
     def test_full_adapter_dev_split_smoke_and_metrics_truth(self) -> None:
@@ -1616,7 +2028,7 @@ class BriaBenchDevelopmentCaseTests(unittest.TestCase):
                 runs,
                 splits=["dev"],
                 adapter_name="full",
-                timeout_seconds=300,
+                timeout_seconds=60,
             )
             self.assertEqual(
                 [item["case_id"] for item in summary["cases"]], list(self.CASE_IDS)
@@ -1661,7 +2073,10 @@ class BriaBenchDevelopmentCaseTests(unittest.TestCase):
             ]
             self.assertTrue(corrupt_gaps)
             self.assertTrue(
-                any("Figure_5B_truncated.png" in json.dumps(item) for item in corrupt_gaps)
+                any(
+                    "Figure_5B_truncated.png" in json.dumps(item)
+                    for item in corrupt_gaps
+                )
             )
 
             laundering = observations["dev_006_manifest_laundering"]
@@ -1690,9 +2105,7 @@ class BriaBenchDevelopmentCaseTests(unittest.TestCase):
             self.assertEqual(laundering_summary["positive_provenance"], [])
             laundering_output = (
                 runs
-                / results["dev_006_manifest_laundering"]["output_paths"][
-                    "case_output"
-                ]
+                / results["dev_006_manifest_laundering"]["output_paths"]["case_output"]
             )
             contextual = json.loads(
                 (laundering_output / "contextual_image_candidates.json").read_text(

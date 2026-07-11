@@ -1087,6 +1087,12 @@ class ContractPipelineTests(unittest.TestCase):
                 {"path": "../outside.png"},
                 {"path": str(outside)},
                 {"path": ""},
+                {"path": "   "},
+                {"path": "."},
+                {"path": "\x00"},
+                {"path": None},
+                {"path": ["figures", "panel.png"]},
+                {"path": {"file": "figures/panel.png"}},
                 "malformed",
             ):
                 with self.subTest(error=error):

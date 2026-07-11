@@ -3,18 +3,19 @@
 from __future__ import annotations
 
 import argparse
+import binascii
 import csv
+import hashlib
 import json
 import os
-import random
 import shutil
 import stat
+import struct
+import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Sequence
-
-from PIL import Image
 
 from .contracts import validate_contract
 
@@ -29,7 +30,31 @@ DEV_CASE_IDS = (
 )
 
 _IMAGE_SIZE = (256, 192)
-_CONTROL_VALUES = ("1.13", "2.47", "3.82", "5.26", "6.91", "8.34", "9.78", "11.05")
+PIXEL_GENERATOR_VERSION = "sha256-counter-v1"
+PIXEL_GENERATOR_DOMAIN = b"BRIA-Bench Task 10 RGB pixels v1\x00"
+PIXEL_GENERATOR_SPEC = (
+    "SHA-256(domain || uint64be(seed) || uint64be(counter)); counter starts at 0"
+)
+PNG_ENCODER_VERSION = "png-rgb8-filter0-deflate-stored-v1"
+PNG_ENCODER_SPEC = (
+    "PNG RGB8 256x192; filter 0; zlib 0x7801; DEFLATE stored blocks <=65535; "
+    "Adler-32 and PNG CRC-32"
+)
+_PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+_CONTROL_VALUES = (
+    "1.13",
+    "2.47",
+    "3.82",
+    "5.26",
+    "6.91",
+    "8.34",
+    "9.78",
+    "11.05",
+    "12.63",
+    "14.27",
+    "15.84",
+    "17.39",
+)
 _SHIFTED_VALUES = (
     "1.113e+01",
     "1.247e+01",
@@ -39,8 +64,25 @@ _SHIFTED_VALUES = (
     "1.834e+01",
     "1.978e+01",
     "2.105e+01",
+    "2.263e+01",
+    "2.427e+01",
+    "2.584e+01",
+    "2.739e+01",
 )
-_INDEPENDENT_VALUES = ("7.62", "3.19", "10.44", "1.87", "8.53", "12.26", "4.71", "9.38")
+_INDEPENDENT_VALUES = (
+    "7.62",
+    "3.19",
+    "10.44",
+    "1.87",
+    "8.53",
+    "12.26",
+    "4.71",
+    "9.38",
+    "15.07",
+    "0.64",
+    "6.35",
+    "13.81",
+)
 _PACKAGE_NOTE = """BRIA-Bench controlled development fixture
 
 This package is a first-party procedural fixture created for deterministic software testing.
@@ -63,10 +105,10 @@ _MANUSCRIPTS = {
         "Controlled Figure 2 contains two independently generated panels supplied as an image-similarity negative control.\n"
     ),
     "dev_003_stats_shift": (
-        "Controlled Figure 3 source data contain eight paired control and treatment values for numerical-consistency development checks.\n"
+        "Controlled Figure 3 source data contain twelve paired control and treatment values for numerical-consistency development checks.\n"
     ),
     "dev_004_stats_independent": (
-        "Controlled Figure 4 source data contain eight independent control and treatment pairs as a numerical negative control.\n"
+        "Controlled Figure 4 source data contain twelve independent control and treatment pairs as a numerical negative control.\n"
     ),
     "dev_005_corrupt_image": (
         "Controlled Figure 5 includes one readable image and one deliberately incomplete image for material-intake coverage checks.\n"
@@ -79,6 +121,10 @@ _MANUSCRIPTS = {
 
 class DevelopmentCaseError(ValueError):
     """Raised when controlled development fixtures cannot be published safely."""
+
+    def __init__(self, message: str, *, cleanup_staging: bool = True) -> None:
+        super().__init__(message)
+        self.cleanup_staging = cleanup_staging
 
 
 @dataclass(slots=True)
@@ -207,7 +253,7 @@ def _annotations() -> dict[str, dict[str, Any]]:
                         "an export transformation may have added a constant to one column",
                     ],
                     numeric_materials,
-                    expected_fact="eight paired rows with a constant +10 shift",
+                    expected_fact="twelve paired rows with a constant +10 shift",
                 )
             ],
         },
@@ -368,16 +414,95 @@ def _write_text(path: Path, text: str) -> None:
     path.write_text(text, encoding="utf-8", newline="\n")
 
 
-def _noise_image(seed: int) -> Image.Image:
-    random_source = random.Random(seed)
-    byte_count = _IMAGE_SIZE[0] * _IMAGE_SIZE[1] * 3
-    pixels = bytes(random_source.randrange(256) for _ in range(byte_count))
-    return Image.frombytes("RGB", _IMAGE_SIZE, pixels)
+def _counter_mode_bytes(seed: int, length: int) -> bytes:
+    prefix = PIXEL_GENERATOR_DOMAIN + seed.to_bytes(8, "big", signed=False)
+    output = bytearray()
+    counter = 0
+    while len(output) < length:
+        output.extend(
+            hashlib.sha256(prefix + counter.to_bytes(8, "big", signed=False)).digest()
+        )
+        counter += 1
+    return bytes(output[:length])
 
 
-def _write_png(path: Path, image: Image.Image) -> None:
+def _noise_pixels(seed: int) -> bytes:
+    return _counter_mode_bytes(seed, _IMAGE_SIZE[0] * _IMAGE_SIZE[1] * 3)
+
+
+def _flip_horizontal(pixels: bytes) -> bytes:
+    row_size = _IMAGE_SIZE[0] * 3
+    if len(pixels) != row_size * _IMAGE_SIZE[1]:
+        raise DevelopmentCaseError("RGB pixel buffer has the wrong length")
+    flipped = bytearray()
+    for row_start in range(0, len(pixels), row_size):
+        row = pixels[row_start : row_start + row_size]
+        for column in range(row_size - 3, -1, -3):
+            flipped.extend(row[column : column + 3])
+    return bytes(flipped)
+
+
+def _adler32(data: bytes) -> int:
+    first = 1
+    second = 0
+    modulus = 65521
+    for offset in range(0, len(data), 5552):
+        for value in data[offset : offset + 5552]:
+            first = (first + value) % modulus
+            second = (second + first) % modulus
+    return (second << 16) | first
+
+
+def _stored_zlib_stream(data: bytes) -> bytes:
+    stream = bytearray(b"\x78\x01")
+    for offset in range(0, len(data), 65535):
+        block = data[offset : offset + 65535]
+        final = offset + len(block) == len(data)
+        stream.append(1 if final else 0)
+        stream.extend(struct.pack("<HH", len(block), len(block) ^ 0xFFFF))
+        stream.extend(block)
+    stream.extend(struct.pack(">I", _adler32(data)))
+    return bytes(stream)
+
+
+def _png_chunk(chunk_type: bytes, data: bytes) -> bytes:
+    checksum = binascii.crc32(chunk_type + data) & 0xFFFFFFFF
+    return (
+        struct.pack(">I", len(data)) + chunk_type + data + struct.pack(">I", checksum)
+    )
+
+
+def _encode_png(pixels: bytes) -> bytes:
+    row_size = _IMAGE_SIZE[0] * 3
+    if len(pixels) != row_size * _IMAGE_SIZE[1]:
+        raise DevelopmentCaseError("RGB pixel buffer has the wrong length")
+    scanlines = b"".join(
+        b"\x00" + pixels[row_start : row_start + row_size]
+        for row_start in range(0, len(pixels), row_size)
+    )
+    header = struct.pack(
+        ">IIBBBBB",
+        _IMAGE_SIZE[0],
+        _IMAGE_SIZE[1],
+        8,
+        2,
+        0,
+        0,
+        0,
+    )
+    return b"".join(
+        (
+            _PNG_SIGNATURE,
+            _png_chunk(b"IHDR", header),
+            _png_chunk(b"IDAT", _stored_zlib_stream(scanlines)),
+            _png_chunk(b"IEND", b""),
+        )
+    )
+
+
+def _write_png(path: Path, pixels: bytes) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    image.save(path, format="PNG", optimize=False, compress_level=9)
+    path.write_bytes(_encode_png(pixels))
 
 
 def _write_pairs(path: Path, treatments: Sequence[str]) -> None:
@@ -395,15 +520,15 @@ def _write_package(case_id: str, destination: Path) -> None:
     _write_text(destination / "manuscript" / "manuscript.txt", _MANUSCRIPTS[case_id])
 
     if case_id == "dev_001_global_flip":
-        image = _noise_image(1001)
-        _write_png(destination / "figures" / "Figure_1A.png", image)
+        pixels = _noise_pixels(1001)
+        _write_png(destination / "figures" / "Figure_1A.png", pixels)
         _write_png(
             destination / "figures" / "Figure_1B.png",
-            image.transpose(Image.Transpose.FLIP_LEFT_RIGHT),
+            _flip_horizontal(pixels),
         )
     elif case_id == "dev_002_independent_images":
-        _write_png(destination / "figures" / "Figure_2A.png", _noise_image(2001))
-        _write_png(destination / "figures" / "Figure_2B.png", _noise_image(2002))
+        _write_png(destination / "figures" / "Figure_2A.png", _noise_pixels(2001))
+        _write_png(destination / "figures" / "Figure_2B.png", _noise_pixels(2002))
     elif case_id == "dev_003_stats_shift":
         _write_pairs(
             destination / "source_data" / "Figure_3_source.csv", _SHIFTED_VALUES
@@ -414,15 +539,15 @@ def _write_package(case_id: str, destination: Path) -> None:
         )
     elif case_id == "dev_005_corrupt_image":
         valid = destination / "figures" / "Figure_5A_valid.png"
-        _write_png(valid, _noise_image(5001))
+        _write_png(valid, _noise_pixels(5001))
         truncated = destination / "figures" / "Figure_5B_truncated.png"
         truncated.write_bytes(valid.read_bytes()[:24])
     elif case_id == "dev_006_manifest_laundering":
-        image = _noise_image(6001)
-        _write_png(destination / "figures" / "Figure_6A.png", image)
+        pixels = _noise_pixels(6001)
+        _write_png(destination / "figures" / "Figure_6A.png", pixels)
         _write_png(
             destination / "figures" / "Figure_6B.png",
-            image.transpose(Image.Transpose.FLIP_LEFT_RIGHT),
+            _flip_horizontal(pixels),
         )
         assembly = destination / "figure_assembly" / "assembly_manifest.csv"
         assembly.parent.mkdir(parents=True)
@@ -489,6 +614,8 @@ def _remove_path(path: Path) -> None:
 
 def _publish_targets(
     targets: list[tuple[Path, Path, Path]],
+    *,
+    recovery_roots: Sequence[Path],
 ) -> None:
     for _, destination, _ in targets:
         if destination.exists() or destination.is_symlink():
@@ -514,21 +641,23 @@ def _publish_targets(
                 state.backup_moved = True
             os.replace(staged, destination)
             state.staged_published = True
-    except Exception:
-        rollback_errors: list[str] = []
+    except BaseException as publication_error:
+        rollback_errors: list[BaseException] = []
         for state in reversed(records):
             try:
                 if state.staged_published:
                     _remove_path(state.destination)
                 if state.backup_moved:
                     os.replace(state.backup, state.destination)
-            except Exception as rollback_error:  # noqa: BLE001 - retain every rollback attempt.
-                rollback_errors.append(f"{state.destination}: {rollback_error}")
+            except BaseException as rollback_error:  # noqa: BLE001
+                rollback_errors.append(rollback_error)
         if rollback_errors:
+            recovery_names = ", ".join(sorted({root.name for root in recovery_roots}))
             raise DevelopmentCaseError(
-                "development case publication failed and rollback was incomplete: "
-                + "; ".join(rollback_errors)
-            )
+                "development case publication failed and rollback was incomplete; "
+                f"retain recovery directories: {recovery_names}",
+                cleanup_staging=False,
+            ) from publication_error
         raise
 
 
@@ -555,15 +684,20 @@ def generate_dev_cases(
         if annotations_root is not None
         else None
     )
+    if annotation_output is not None and (
+        output == annotation_output
+        or output.is_relative_to(annotation_output)
+        or annotation_output.is_relative_to(output)
+    ):
+        raise DevelopmentCaseError("package and annotation roots overlap")
     _validate_root(output, label="development package root")
     if annotation_output is not None:
         _validate_root(annotation_output, label="development annotation root")
-        if annotation_output == output:
-            raise DevelopmentCaseError("package and annotation roots must be different")
 
     package_stage: Path | None = None
     annotation_stage: Path | None = None
     created_roots: list[Path] = []
+    cleanup_staging = True
     try:
         if not output.exists():
             output.mkdir(parents=True)
@@ -599,23 +733,28 @@ def generate_dev_cases(
                     )
                 )
 
-        _publish_targets(targets)
+        recovery_roots = [package_stage]
+        if annotation_stage is not None:
+            recovery_roots.append(annotation_stage)
+        _publish_targets(targets, recovery_roots=recovery_roots)
         return _manifest_cases()
-    except DevelopmentCaseError:
+    except DevelopmentCaseError as exc:
+        cleanup_staging = exc.cleanup_staging
         raise
     except Exception as exc:
         raise DevelopmentCaseError(
             f"could not generate development cases: {exc}"
         ) from exc
     finally:
-        for staging in (annotation_stage, package_stage):
-            if staging is not None and staging.exists():
-                shutil.rmtree(staging)
-        for root in reversed(created_roots):
-            try:
-                root.rmdir()
-            except OSError:
-                pass
+        if cleanup_staging:
+            for staging in (annotation_stage, package_stage):
+                if staging is not None and staging.exists():
+                    shutil.rmtree(staging)
+            for root in reversed(created_roots):
+                try:
+                    root.rmdir()
+                except OSError:
+                    pass
 
 
 def _default_annotations_root(output: Path) -> Path | None:
@@ -638,7 +777,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     annotations = args.annotations_output
     if annotations is None:
         annotations = _default_annotations_root(args.output)
-    cases = generate_dev_cases(args.output, annotations_root=annotations)
+    try:
+        cases = generate_dev_cases(args.output, annotations_root=annotations)
+    except DevelopmentCaseError as exc:
+        message = " ".join(str(exc).splitlines()).strip()
+        print(f"bria-dev-cases: error: {message}", file=sys.stderr)
+        return 2
     print(json.dumps({"case_ids": [case["case_id"] for case in cases]}, sort_keys=True))
     return 0
 
