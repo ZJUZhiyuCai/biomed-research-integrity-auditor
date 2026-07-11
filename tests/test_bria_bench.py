@@ -33,6 +33,7 @@ from benchmarks.bria_bench.matching import (
 )
 from benchmarks.bria_bench.metrics import aggregate_metrics, select_evaluation_labels
 from benchmarks.bria_bench.normalize import normalize_audit_output
+from benchmarks.bria_bench.report import render_metrics_report
 from benchmarks.bria_bench.registry import (
     RegistryError,
     freeze_manifest,
@@ -4575,6 +4576,398 @@ class BriaBenchMetricAggregationTests(unittest.TestCase):
             self.aggregate([unknown_fact])
 
 
+class BriaBenchReportTests(unittest.TestCase):
+    SECTION_HEADINGS = [
+        "## Scope and benchmark version",
+        "## Detection and localization",
+        "## Reliability and safety",
+        "## Performance and cost",
+        "## Track boundaries",
+        "## Case-level appendix",
+        "## Reproduction command and hashes",
+    ]
+
+    def metrics_fixture(self) -> dict[str, object]:
+        regression = metric_bundle(
+            "case_a", matched=True, track="regression", profile="standard"
+        )
+        regression["regression_assertions"] = [True, False, True]
+        positive = metric_bundle("case_b", matched=True, profile="quick")
+        failed = metric_bundle(
+            "case_c",
+            status="process_error",
+            review_status="independent_pending",
+            profile="deep",
+        )
+        failed["run_result"]["failure"]["module"] = "image_detector"
+        failed["run_result"]["normalized_observation"]["boundary_violations"] = [
+            "A neutral-language boundary was crossed."
+        ]
+
+        telemetry = (
+            (
+                regression,
+                2.0,
+                1.0,
+                2048,
+                1024,
+                {"zeta": 0.75, "alpha": 0.25},
+                False,
+            ),
+            (positive, 1.0, 0.5, 1024, 512, {"zeta": 0.5}, False),
+            (failed, 3.0, 1.5, 1048576, 2048, {"alpha": 1.5}, True),
+        )
+        for index, (
+            bundle,
+            elapsed,
+            cpu,
+            peak_rss,
+            output_size,
+            module_seconds,
+            over_budget,
+        ) in enumerate(telemetry, 1):
+            bundle["run_result"]["telemetry"].update(
+                {
+                    "elapsed_seconds": elapsed,
+                    "cpu_seconds": cpu,
+                    "peak_rss_bytes": peak_rss,
+                    "output_size_bytes": output_size,
+                    "module_seconds": module_seconds,
+                    "llm": {
+                        "provider": "fixture",
+                        "model": "model",
+                        "input_tokens": index * 10,
+                        "output_tokens": index * 2,
+                        "latency_seconds": index / 10,
+                        "estimated_cost_cny": index / 100,
+                    },
+                }
+            )
+            bundle["over_budget"] = over_budget
+        positive["run_result"]["adapter"] = "full|*safe*"
+
+        metrics = aggregate_metrics(
+            cases=[failed, positive, regression],
+            benchmark_id="bria-bench-dev",
+            benchmark_version="0.1.0",
+            manifest_sha256="a" * 64,
+            generated_at="2026-07-11T00:00:00Z",
+        )
+        metrics["performance"]["over_budget_rate"]["value"] = 0.3333333334
+        return metrics
+
+    def assert_appears_in_order(self, text: str, values: list[str]) -> None:
+        positions = [text.index(value) for value in values]
+        self.assertEqual(positions, sorted(positions))
+
+    def test_full_golden_structure_and_fixed_ordering(self) -> None:
+        report = render_metrics_report(self.metrics_fixture())
+
+        self.assertEqual(
+            [line for line in report.splitlines() if line.startswith("## ")],
+            self.SECTION_HEADINGS,
+        )
+        self.assert_appears_in_order(
+            report,
+            [
+                "| Expected finding recall |",
+                "| Negative package false alert rate |",
+                "| Location match rate |",
+                "| Risk band agreement |",
+                "| Coverage gap recall |",
+                "| Public concern location coverage |",
+                "| Regression assertions met |",
+                "## Reliability and safety",
+                "| Silent failure rate |",
+                "| Boundary violation rate |",
+                "| Manifest attack resistance |",
+                "| Report contract validity |",
+                "| Technical failure disclosure rate |",
+                "| Run completion rate |",
+                "| Atomic output preservation |",
+                "| Previous result preservation |",
+                "## Performance and cost",
+                "### Overall distributions",
+                "| Wall time |",
+                "| CPU time |",
+                "| Peak RSS |",
+                "| Output size |",
+                "### Budget observations",
+                "### Profile distributions",
+                "#### quick",
+                "#### standard",
+                "#### deep",
+                "### Module timings",
+                "| alpha |",
+                "| zeta |",
+                "### LLM distributions",
+                "| LLM input tokens |",
+                "| LLM output tokens |",
+                "| LLM latency |",
+                "| LLM estimated cost |",
+                "## Track boundaries",
+                "| Regression |",
+                "| Blinded challenge |",
+                "| Public realism |",
+                "| Public concern |",
+                "| Robustness and scale |",
+                "## Case-level appendix",
+                r"| case\_a |",
+                r"| case\_b |",
+                r"| case\_c |",
+                "## Reproduction command and hashes",
+            ],
+        )
+        self.assertIn("| Wall time | 3 | 2 | 3 | seconds |", report)
+        self.assertIn("| Peak RSS | 3 | 2 KiB | 1 MiB | bytes (IEC) |", report)
+        self.assertIn("| Output size | 3 | 1 KiB | 2 KiB | bytes (IEC) |", report)
+        self.assertIn("| LLM input tokens | 3 | 20 | 30 | tokens |", report)
+        self.assertIn("| LLM estimated cost | 3 | 0.02 | 0.03 | CNY |", report)
+        self.assertIn("| Blinded challenge | 2 | at least one case eligible |", report)
+        self.assertTrue(report.endswith("\n"))
+        self.assertFalse(report.endswith("\n\n"))
+
+    def test_exact_denominators_and_percentages_are_derived_from_counts(self) -> None:
+        report = render_metrics_report(self.metrics_fixture())
+
+        self.assertIn("1 / 3 (33.33%)", report)
+        self.assertIn(
+            "| Regression assertions met | 2 / 3 (66.67%); not met: 1 |",
+            report,
+        )
+        self.assertIn("0 / 0 (not measured)", report)
+        self.assertNotIn("0 / 0 (0%)", report)
+        self.assertNotIn("33.33333334%", report)
+
+    def test_sparse_schema_valid_metrics_render_unavailable_values(self) -> None:
+        sparse = {
+            "schema_version": "1.0.0",
+            "benchmark_id": "bria-bench-sparse",
+            "benchmark_version": "0.1.0",
+            "run_count": 2,
+            "detection": {},
+            "reliability": {
+                "silent_failure_rate": {
+                    "numerator": 0,
+                    "denominator": 0,
+                    "value": None,
+                }
+            },
+            "performance": {
+                "wall_time_seconds": {
+                    "count": 0,
+                    "p50": None,
+                    "p95": None,
+                    "values": [],
+                }
+            },
+        }
+
+        report = render_metrics_report(sparse)
+
+        self.assertIn("| Expected finding recall | 0 / 0 (not measured) |", report)
+        self.assertIn(
+            "| Previous result preservation | 0 / 0 (not measured) |", report
+        )
+        self.assertIn(
+            "| Wall time | 0 | not measured | not measured | seconds |", report
+        )
+        self.assertIn(
+            "| CPU time | 0 | not measured | not measured | seconds |", report
+        )
+        self.assertIn("| Regression | unavailable | unavailable |", report)
+        self.assertIn(
+            "Case-level results are unavailable in this metrics artifact.", report
+        )
+        self.assertIn("| Manifest SHA-256 | unavailable |", report)
+
+    def test_reordered_input_is_deterministic_pure_and_not_mutated(self) -> None:
+        metrics = self.metrics_fixture()
+        before = copy.deepcopy(metrics)
+        expected = render_metrics_report(metrics)
+
+        def reordered(value: object) -> object:
+            if isinstance(value, dict):
+                return {
+                    key: reordered(value[key])
+                    for key in reversed(list(value.keys()))
+                }
+            if isinstance(value, list):
+                items = [reordered(item) for item in value]
+                if items and all(
+                    isinstance(item, dict) and "case_id" in item for item in items
+                ):
+                    items.reverse()
+                return items
+            return value
+
+        shuffled = reordered(metrics)
+        shuffled_before = copy.deepcopy(shuffled)
+        with (
+            patch("builtins.open", side_effect=AssertionError("filesystem read")),
+            patch.object(
+                Path, "read_text", side_effect=AssertionError("filesystem read")
+            ),
+            patch.object(Path, "home", side_effect=AssertionError("environment read")),
+            patch("os.getenv", side_effect=AssertionError("environment read")),
+            patch("time.time", side_effect=AssertionError("clock read")),
+        ):
+            actual = render_metrics_report(shuffled)
+
+        self.assertEqual(actual, expected)
+        self.assertEqual(metrics, before)
+        self.assertEqual(shuffled, shuffled_before)
+
+    def test_invalid_schema_and_cross_field_contradictions_fail_closed(self) -> None:
+        invalid_schema = self.metrics_fixture()
+        del invalid_schema["reliability"]
+
+        bad_fraction = self.metrics_fixture()
+        bad_fraction["performance"]["over_budget_rate"]["value"] = 0.5
+
+        run_rows = self.metrics_fixture()
+        run_rows["run_count"] = 4
+
+        track_rows = self.metrics_fixture()
+        track_rows["tracks"]["blinded_challenge"]["case_count"] = 1
+
+        track_total = self.metrics_fixture()
+        del track_total["case_results"]
+        track_total["run_count"] = 4
+
+        eligibility = self.metrics_fixture()
+        eligibility["tracks"]["blinded_challenge"][
+            "headline_detection_eligible"
+        ] = False
+
+        distribution = self.metrics_fixture()
+        distribution["performance"]["wall_time_seconds"]["case_values"][0][
+            "value"
+        ] = 99
+
+        for name, payload in (
+            ("schema", invalid_schema),
+            ("fraction", bad_fraction),
+            ("run rows", run_rows),
+            ("track rows", track_rows),
+            ("track total", track_total),
+            ("eligibility", eligibility),
+            ("distribution", distribution),
+        ):
+            with self.subTest(name=name), self.assertRaises(ContractError):
+                render_metrics_report(payload)
+
+    def test_markdown_is_escaped_and_free_form_notes_are_never_rendered(self) -> None:
+        metrics = self.metrics_fixture()
+        metrics["benchmark_id"] = "bria_[bench]*"
+        metrics["case_results"][0]["notes"] = (
+            "## injected\n/Users/alice/private\nfile:///tmp/private\n"
+            "alice@example.org\napi_key=do-not-render"
+        )
+        metrics["tracks"]["regression"]["notes"] = "[unsafe](file:///tmp/private)"
+        alpha = metrics["performance"]["module_seconds"].pop("alpha")
+        metrics["performance"]["module_seconds"]["alpha_*scan*"] = alpha
+
+        report = render_metrics_report(metrics)
+
+        self.assertIn(r"bria\_\[bench\]\*", report)
+        self.assertIn(r"full&#124;\*safe\*", report)
+        self.assertIn(r"alpha\_\*scan\*", report)
+        for leaked in (
+            "## injected",
+            "/Users/alice/private",
+            "file:///tmp/private",
+            "alice@example.org",
+            "do-not-render",
+            "[unsafe]",
+        ):
+            self.assertNotIn(leaked, report)
+
+    def test_unsafe_identifiers_and_adapters_are_rejected_without_leaking(self) -> None:
+        def one_case() -> dict[str, object]:
+            metrics = minimal_metrics()
+            metrics["run_count"] = 1
+            metrics["case_results"] = [
+                {
+                    "case_id": "case_safe",
+                    "track": "blinded_challenge",
+                    "split": "dev",
+                    "status": "success",
+                    "adapter": "full",
+                }
+            ]
+            return metrics
+
+        attacks = (
+            ("benchmark", "/Users/alice/metrics", "benchmark_id"),
+            ("case control", "case\nunsafe", "case_id"),
+            ("adapter path", "../private/result", "adapter"),
+            ("file URI", "file:///tmp/result", "adapter"),
+            ("email", "alice@example.org", "adapter"),
+            ("secret", "api_key=do-not-leak", "adapter"),
+            ("token", "sk-proj-1234567890abcdef", "adapter"),
+            ("windows path", r"C:\\Users\\alice\\result", "adapter"),
+        )
+        for name, value, field in attacks:
+            with self.subTest(name=name):
+                metrics = one_case()
+                if field == "benchmark_id":
+                    metrics[field] = value
+                else:
+                    metrics["case_results"][0][field] = value
+                with self.assertRaisesRegex(ContractError, "unsafe") as raised:
+                    render_metrics_report(metrics)
+                self.assertNotIn(value, str(raised.exception))
+
+        module_metrics = one_case()
+        module_metrics["performance"]["module_seconds"] = {
+            "secret=do-not-leak": {
+                "count": 0,
+                "p50": None,
+                "p95": None,
+                "values": [],
+            }
+        }
+        with self.assertRaisesRegex(ContractError, "unsafe") as raised:
+            render_metrics_report(module_metrics)
+        self.assertNotIn("do-not-leak", str(raised.exception))
+
+    def test_boundary_language_and_prohibited_report_language(self) -> None:
+        report = render_metrics_report(self.metrics_fixture())
+
+        self.assertEqual(
+            report.count("Regression cases are excluded from headline accuracy"), 1
+        )
+        self.assertEqual(
+            report.count(
+                "Public concern labels are localization references, not misconduct truth"
+            ),
+            1,
+        )
+        self.assertIn(
+            "A negative control without an alert is not proof that a package is scientifically correct.",
+            report,
+        )
+        self.assertIn("Status is technical execution status.", report)
+        lowered = report.lower()
+        for phrase in ("overall score", "composite score", "weighted ranking", "verdict"):
+            self.assertNotIn(phrase, lowered)
+        self.assertNotRegex(report, re.compile(r"\b(?:PASS|FAIL)\b", re.I))
+
+    def test_reproduction_uses_only_recorded_manifest_provenance(self) -> None:
+        report = render_metrics_report(self.metrics_fixture())
+
+        self.assertIn(f"| Manifest SHA-256 | {'a' * 64} |", report)
+        self.assertIn(
+            "bria-bench report --metrics <metrics.json> --output <REPORT.md>", report
+        )
+        self.assertIn(
+            "The benchmark run command and per-run hashes are not recorded in this metrics artifact.",
+            report,
+        )
+        self.assertNotIn(str(Path.home()), report)
+
+
 class BriaBenchCliTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
@@ -4627,6 +5020,29 @@ class BriaBenchCliTests(unittest.TestCase):
         self.assertEqual(
             project["project"]["scripts"]["bria-bench"],
             "benchmarks.bria_bench.cli:main",
+        )
+
+    def test_report_command_renders_metrics(self) -> None:
+        metrics_path = self.root / "metrics.json"
+        output_path = self.root / "REPORT.md"
+        metrics = minimal_metrics()
+        metrics_path.write_text(json.dumps(metrics), encoding="utf-8")
+
+        self.assertEqual(
+            bria_bench_main(
+                [
+                    "report",
+                    "--metrics",
+                    str(metrics_path),
+                    "--output",
+                    str(output_path),
+                ]
+            ),
+            0,
+        )
+        self.assertEqual(
+            output_path.read_text(encoding="utf-8"),
+            render_metrics_report(metrics),
         )
 
     def test_run_is_fresh_then_reused_and_evaluates(self) -> None:
