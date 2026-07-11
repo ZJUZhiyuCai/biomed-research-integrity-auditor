@@ -3055,6 +3055,52 @@ class BriaBenchMatchingTests(unittest.TestCase):
             ).compatible
         )
 
+    def test_structured_terms_do_not_create_redundant_literal_requirements(self) -> None:
+        self.assertTrue(
+            label_observation_compatible(
+                self.label("L1", {"terms": ["Figure 1A"]}),
+                self.observation("O1", "Fig. 1A"),
+            ).compatible
+        )
+        self.assertTrue(
+            label_observation_compatible(
+                self.label("L2", {"terms": ["Day 7"]}),
+                self.observation("O2", "D7"),
+            ).compatible
+        )
+        self.assertFalse(
+            label_observation_compatible(
+                self.label("L3", {"terms": ["Day 7"]}),
+                self.observation("O3", "CD4"),
+            ).compatible
+        )
+        self.assertTrue(
+            label_observation_compatible(
+                self.label("L4", {"terms": ["Table 2"]}),
+                self.observation("O4", "Table 2"),
+            ).compatible
+        )
+        self.assertTrue(
+            label_observation_compatible(
+                self.label("L5", {"terms": ["left hippocampus"]}),
+                self.observation("O5", "LEFT HIPPOCAMPUS"),
+            ).compatible
+        )
+        self.assertTrue(
+            label_observation_compatible(
+                self.label("L6", "source_data"),
+                self.observation("O6", "SOURCE_DATA"),
+            ).compatible
+        )
+        for generic in ("Figure", "Panel", "Table", "Sheet"):
+            with self.subTest(generic=generic):
+                self.assertFalse(
+                    label_observation_compatible(
+                        self.label("LG", {"terms": [generic]}),
+                        self.observation("OG", generic),
+                    ).compatible
+                )
+
     def test_regions_require_same_space_and_thresholded_overlap(self) -> None:
         base = {"figure": "2", "region": {"x": 0.0, "y": 0.0, "width": 0.5, "height": 0.5, "coordinate_space": "normalized_0_1"}}
         overlap = {"figure": "2", "region": {"x": 0.25, "y": 0.25, "width": 0.5, "height": 0.5, "coordinate_space": "normalized_0_1"}}
@@ -3077,6 +3123,21 @@ class BriaBenchMatchingTests(unittest.TestCase):
         self.assertFalse(failing.compatible)
         self.assertLess(failing.components["region_iou"], 0.10)
         self.assertLess(failing.components["region_intersection_over_smaller"], 0.50)
+
+    def test_region_pair_uses_greatest_semantic_overlap(self) -> None:
+        expected = {"regions": [
+            {"x": 0, "y": 0, "width": 10, "height": 10, "coordinate_space": "pixels"},
+            {"x": 100, "y": 0, "width": 10, "height": 10, "coordinate_space": "pixels"},
+        ]}
+        observed = {"regions": [
+            {"x": 2, "y": 0, "width": 24.6666667, "height": 10, "coordinate_space": "pixels"},
+            {"x": 104, "y": 0, "width": 11, "height": 10, "coordinate_space": "pixels"},
+        ]}
+        result = label_observation_compatible(self.label("L1", expected), self.observation("O1", observed))
+        self.assertTrue(result.compatible)
+        self.assertAlmostEqual(result.components["region_overlap"], 0.8, places=3)
+        self.assertAlmostEqual(result.components["region_iou"], 0.3, places=3)
+        self.assertAlmostEqual(result.components["region_intersection_over_smaller"], 0.8, places=3)
 
     def test_mixed_region_spaces_keep_a_valid_same_space_pair(self) -> None:
         expected = {"regions": [

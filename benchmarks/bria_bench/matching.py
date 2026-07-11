@@ -283,8 +283,67 @@ def _add_structured_figure(location: _Location, value: object) -> None:
             location.panels.add(match.group(2).upper())
 
 
+def _structured_snapshot(location: _Location) -> tuple[Any, ...]:
+    return (
+        frozenset(location.files),
+        frozenset(location.pages),
+        frozenset(location.figures),
+        frozenset(location.panels),
+        frozenset(location.tables),
+        frozenset(location.sheets),
+        frozenset(location.columns),
+        frozenset(location.rows),
+        frozenset(location.sections),
+        frozenset(location.paragraphs),
+        frozenset(location.timepoints),
+        frozenset(location.cell_ranges),
+        tuple(location.regions),
+    )
+
+
+def _has_structured_location(location: _Location) -> bool:
+    return any(
+        (
+            location.files,
+            location.pages,
+            location.figures,
+            location.panels,
+            location.tables,
+            location.sheets,
+            location.columns,
+            location.rows,
+            location.sections,
+            location.paragraphs,
+            location.timepoints,
+            location.cell_ranges,
+            location.regions,
+        )
+    )
+
+
+def _fully_structured_term(text: str) -> bool:
+    patterns = (
+        _FIGURE_RE,
+        _SHORT_SUPP_FIGURE_RE,
+        _PANEL_RE,
+        _PAGE_RE,
+        _TABLE_RE,
+        _SHEET_RE,
+        _NAMED_SHEET_RE,
+        _COLUMN_RE,
+        _ROW_RE,
+        _PARAGRAPH_RE,
+        _CELL_TEXT_RE,
+        _FILE_RE,
+        _SECTION_RE,
+        _TIME_DAY_RE,
+    )
+    return text in {"abstract", "introduction", "background", "methods", "materials", "results", "discussion", "conclusion", "supplement", "supplementary"} or any(pattern.fullmatch(text) for pattern in patterns)
+
+
 def _add_text(location: _Location, value: object, *, terms: bool = False) -> None:
     text = _norm(value)
+    before = _structured_snapshot(location)
     _add_figures(location, text)
     for match in _PAGE_RE.finditer(text):
         if int(match.group(1)) < 1:
@@ -324,9 +383,11 @@ def _add_text(location: _Location, value: object, *, terms: bool = False) -> Non
     for match in _FILE_RE.finditer(text):
         location.files.add(_norm(match.group(0)))
     if terms:
-        normalized = text
-        if normalized not in _GENERIC_WORDS and normalized:
-            location.terms.add(normalized)
+        if not _fully_structured_term(text) and text not in _GENERIC_WORDS and text:
+            location.terms.add(text)
+    elif before == _structured_snapshot(location) and not _has_structured_location(location):
+        if text not in _GENERIC_WORDS and text:
+            location.terms.add(text)
 
 
 def _add_region(location: _Location, value: object) -> None:
@@ -519,8 +580,8 @@ def _region_relation(expected: _Location, observed: _Location, reasons: list[str
     if not observed.regions:
         reasons.append("observation lacks the expected region")
         return False
-    best_any: tuple[float, float] | None = None
-    best: tuple[float, float] | None = None
+    best_any: tuple[Any, ...] | None = None
+    best: tuple[Any, ...] | None = None
     for left in expected.regions:
         for right in observed.regions:
             if left[4] != right[4]:
@@ -533,24 +594,25 @@ def _region_relation(expected: _Location, observed: _Location, reasons: list[str
             left_area, right_area = left[2] * left[3], right[2] * right[3]
             iou = intersection / (left_area + right_area - intersection)
             smaller = intersection / min(left_area, right_area)
-            if best_any is None or (iou, smaller) > best_any:
-                best_any = (iou, smaller)
+            candidate = (max(iou, smaller), iou, smaller, left[:4], right[:4])
+            if best_any is None or candidate > best_any:
+                best_any = candidate
             if iou >= 0.10 or smaller >= 0.50:
-                if best is None or (iou, smaller) > best:
-                    best = (iou, smaller)
+                if best is None or candidate > best:
+                    best = candidate
     if best is None:
         if best_any is not None:
-            components["region_iou"] = round(best_any[0], 6)
-            components["region_intersection_over_smaller"] = round(best_any[1], 6)
+            components["region_iou"] = round(best_any[1], 6)
+            components["region_intersection_over_smaller"] = round(best_any[2], 6)
         if any(left[4] == right[4] for left in expected.regions for right in observed.regions):
             reasons.append("same-space regions are disjoint or have insufficient overlap")
         else:
             reasons.append("regions have no comparable same-space pair")
         return False
-    components["region_iou"] = round(best[0], 6)
-    components["region_intersection_over_smaller"] = round(best[1], 6)
-    components["region_overlap"] = round(max(best), 6)
-    reasons.append(f"same-space regions overlap (IoU={best[0]:.3f}, smaller={best[1]:.3f})")
+    components["region_iou"] = round(best[1], 6)
+    components["region_intersection_over_smaller"] = round(best[2], 6)
+    components["region_overlap"] = round(best[0], 6)
+    reasons.append(f"same-space regions overlap (IoU={best[1]:.3f}, smaller={best[2]:.3f})")
     return True
 
 
