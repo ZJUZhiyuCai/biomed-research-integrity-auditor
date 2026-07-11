@@ -6,10 +6,12 @@ import copy
 import hashlib
 import json
 import math
+import os
 import re
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote, urlparse
 
 from .contracts import validate_contract
 
@@ -105,14 +107,92 @@ _TECHNICAL_WORDS = re.compile(
     re.IGNORECASE,
 )
 _ABSOLUTE_STAGING = re.compile(
-    r"/(?:[^/\s\"'<>]+/)*\.audit\.staging-[^/\s\"'<>]+"
+    r"/(?:[^/\s\"'<>?&#]+/)*\.audit\.staging-[^/\s\"'<>?&#]+"
 )
+
+
+class _ProducerArtifactError(ValueError):
+    """Raised when a producer artifact is not strict, bounded JSON."""
+
+
+def _strict_object_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise _ProducerArtifactError(f"duplicate object key: {key}")
+        result[key] = value
+    return result
+
+
+def _strict_parse_constant(value: str) -> Any:
+    raise _ProducerArtifactError(f"non-finite JSON constant: {value}")
+
+
+def _strict_parse_float(value: str) -> float:
+    parsed = float(value)
+    if not math.isfinite(parsed):
+        raise _ProducerArtifactError("non-finite JSON number")
+    return parsed
+
+
+def _strict_json_loads(text: str) -> Any:
+    return json.loads(
+        text,
+        object_pairs_hook=_strict_object_pairs,
+        parse_constant=_strict_parse_constant,
+        parse_float=_strict_parse_float,
+    )
+
+
+def _exceeds_json_depth(value: Any, maximum: int = 512) -> bool:
+    pending: list[tuple[Any, int]] = [(value, 0)]
+    while pending:
+        current, depth = pending.pop()
+        if depth > maximum:
+            return True
+        if isinstance(current, dict):
+            pending.extend((child, depth + 1) for child in current.values())
+        elif isinstance(current, list):
+            pending.extend((child, depth + 1) for child in current)
+    return False
 _BOUNDARY_TERM_PATTERNS = (
-    ("fraud", re.compile(r"\bfraud(?:ulent)?\b", re.IGNORECASE)),
-    ("misconduct", re.compile(r"\bmisconduct\b", re.IGNORECASE)),
-    ("fabrication", re.compile(r"\bfabricat(?:ion|ed|ing)\b", re.IGNORECASE)),
-    ("falsification", re.compile(r"\bfalsif(?:ication|ied|ying)\b", re.IGNORECASE)),
-    ("author guilt", re.compile(r"\bauthor(?:s)?\s+(?:guilt|guilty)\b", re.IGNORECASE)),
+    (
+        "fraud",
+        re.compile(
+            r"\b(?:authors?|researchers?|research\s+team|study\s+group|investigators?)\b"
+            r".{0,40}\b(?:committed|proven|established|confirmed|guilty\s+of)\s+fraud\b"
+            r"|\b(?:paper|manuscript)\b.{0,20}\b(?:is|was|proven|confirmed)\s+fraudulent\b"
+            r"|^\s*fraud\s*[:!-]\s*(?:confirmed|proven|established)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "misconduct",
+        re.compile(
+            r"\b(?:authors?|researchers?|research\s+team|study\s+group|investigators?)\b"
+            r".{0,40}\b(?:committed|proven|established|confirmed|guilty\s+of)\s+(?:research\s+)?misconduct\b"
+            r"|\b(?:paper|manuscript)\b.{0,20}\b(?:contains|shows|demonstrates)\s+misconduct\b"
+            r"|\b(?:this|the\s+report|the\s+evidence|the\s+conduct)\b.{0,20}\b(?:constitutes|proves|establishes)\s+(?:research\s+)?misconduct\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "fabrication",
+        re.compile(
+            r"\b(?:data|results?|figures?|authors?|researchers?|research\s+team|study\s+group)\b"
+            r".{0,35}\b(?:fabricated|fabrication|were\s+fabricated|was\s+fabricated)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "falsification",
+        re.compile(
+            r"\b(?:data|results?|figures?|authors?|researchers?|research\s+team|study\s+group)\b"
+            r".{0,35}\b(?:falsified|falsification|were\s+falsified|was\s+falsified)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    ("author guilt", re.compile(r"\bauthor(?:s)?\s+(?:are|were|is|was)\s+(?:guilty|responsible)\b", re.IGNORECASE)),
     (
         "integrity conclusion",
         re.compile(
@@ -138,9 +218,9 @@ _BOUNDARY_TERM_PATTERNS = (
         "integrity conclusion",
         re.compile(r"\bmanuscript\b.{0,30}\b(?:is|status|conclusion|result)\b.{0,20}\b(?:pass(?:ed)?|fail(?:ed)?|clean|certified)\b", re.IGNORECASE),
     ),
-    ("author misconduct", re.compile(r"作者(?:涉嫌|存在|实施|进行了)?(?:学术不端|造假|伪造|篡改|欺诈)")),
-    ("research misconduct", re.compile(r"存在学术不端")),
-    ("data falsification", re.compile(r"数据(?:造假|伪造|篡改)")),
+    ("author misconduct", re.compile(r"(?:作者|研究团队|研究人员|课题组)(?:涉嫌|存在|实施|进行了)?(?:学术不端|造假|伪造|篡改|欺诈)")),
+    ("research misconduct", re.compile(r"(?:存在|属于|构成)(?:严重)?学术不端")),
+    ("data falsification", re.compile(r"数据(?:被)?(?:造假|伪造|篡改)")),
 )
 _BOUNDARY_NEGATIONS = (
     re.compile(r"\bnot\s+(?:a\s+)?misconduct(?:\s+or\s+[a-z-]+)?\s+(?:verdict|finding|conclusion)\b", re.I),
@@ -157,6 +237,10 @@ _BOUNDARY_NEGATIONS = (
     re.compile(r"\bnot\s+(?:a\s+)?(?:clean|certified)\s+(?:manuscript|integrity|result|conclusion)\b", re.I),
     re.compile(r"\bnot\s+certified\s+clean\b", re.I),
     re.compile(r"\bnot\s+certified[- ]clean\b", re.I),
+    re.compile(r"\b(?:no\s+evidence\s+of|do(?:es)?\s+not\s+allege|did\s+not\s+allege)\s+(?:fraud|misconduct|fabrication|falsification)\b", re.I),
+    re.compile(r"\b(?:investigation|investigating|allegation|alleged|alleges|claim|claims)\b.{0,45}\b(?:fraud|misconduct|fabrication|falsification)\b", re.I),
+    re.compile(r"\b(?:fraud|misconduct|fabrication|falsification)\b.{0,45}\b(?:investigation|allegation|alleged|claim)\b", re.I),
+    re.compile(r"\b(?:integrity\s+)?certificate\s+(?:generation|creation|execution|verification)\s+(?:failed|error|crashed)\b", re.I),
     re.compile(r"\bintegrity(?:\s+audit)?\s+(?:check|audit)?\s+fail(?:ed)?\s+to\s+(?:run|execute|start|complete)\b", re.I),
     re.compile(r"\bintegrity(?:\s+audit)?\s+(?:check|audit)?\s+fail(?:ed)?\s+(?:because|due|from)\b", re.I),
     re.compile(r"\b(?:do|does|did|should)\s+not\s+say\s+(?:fraud|fraudulent|misconduct)\b", re.I),
@@ -168,6 +252,7 @@ _BOUNDARY_NEGATIONS = (
     re.compile(r"(?:不代表|不证明|不能证明).{0,12}(?:学术不端|欺诈|造假)", re.I),
     re.compile(r"(?:未|不曾|没有).{0,8}(?:认定|判定|证明).{0,8}(?:学术不端|欺诈|造假)", re.I),
     re.compile(r"(?:不|未)存在学术不端", re.I),
+    re.compile(r"(?:研究团队|研究人员|课题组|作者)(?:没有|未|不曾|并非).{0,8}(?:造假|伪造|篡改|学术不端)", re.I),
 )
 
 
@@ -206,14 +291,16 @@ def _load_json_artifact(
         failures.append((_failure_record("producer", "missing_artifact", message, name), False))
         return None
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        value = _strict_json_loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError, ValueError, OverflowError, RecursionError) as exc:
         message = f"Malformed producer artifact {name}: {type(exc).__name__}."
         _add_contract_error(contract_errors, message, name)
         failures.append((_failure_record("producer", "malformed_artifact", message, name), False))
         return None
-    if not isinstance(value, dict):
+    if not isinstance(value, dict) or _exceeds_json_depth(value):
         message = f"Malformed producer artifact {name}: top-level JSON value must be an object."
+        if isinstance(value, dict):
+            message = f"Malformed producer artifact {name}: JSON nesting exceeds the supported depth."
         _add_contract_error(contract_errors, message, name)
         failures.append((_failure_record("producer", "malformed_artifact", message, name), False))
         return None
@@ -268,6 +355,25 @@ def _failure_from_value(
         return _failure_record(default_module, default_type, text, source), disclosed
     if not isinstance(value, dict):
         return None
+    if not value or not any(
+        key in value
+        for key in (
+            "module",
+            "detector",
+            "name",
+            "failure_type",
+            "failure",
+            "error_type",
+            "message",
+            "detail",
+            "error",
+            "category",
+            "status",
+            "returncode",
+            "timed_out",
+        )
+    ):
+        return None
     module_value = value.get("module", value.get("detector", value.get("name", default_module)))
     module = str(module_value).strip() if module_value is not None else default_module
     type_value = value.get("failure_type", value.get("failure", value.get("error_type", "")))
@@ -296,8 +402,24 @@ def _failure_from_value(
 
 
 def _failure_identity(record: dict[str, Any]) -> tuple[Any, ...]:
+    message = re.sub(r"\s+", " ", str(record.get("message", "")).strip().lower())
+    semantic = message
+    if re.search(r"\b(?:timed?\s*out|timeout)\b", message):
+        detail = re.sub(r"\b(?:timed?\s*out|timeout)\b", "", message)
+        detail = re.sub(r"\b(?:failure|error|detector|occurred|was|is)\b", "", detail)
+        detail = re.sub(r"\b[a-z0-9_.-]+\s*:\s*", "", detail)
+        detail = re.sub(r"\s+", " ", detail).strip(" .,:;-")
+        semantic = "timeout" + (f":{detail}" if detail else "")
+    elif re.search(r"\b(?:permission|access)\b.{0,24}\b(?:denied|error|failure)\b", message):
+        detail = re.sub(r"\b(?:permission|access|denied|error|failure)\b", "", message)
+        detail = re.sub(r"\b[a-z0-9_.-]+\s*:\s*", "", detail)
+        detail = re.sub(r"\s+", " ", detail).strip(" .,:;-")
+        semantic = "permission_access" + (f":{detail}" if detail else "")
+    elif re.search(r"\b(?:failed?\s+to\s+(?:run|execute|start)|execution\s+failure)\b", message):
+        semantic = "execution_failure"
     identity = tuple(record.get(key) for key in ("module", "failure_type", "category", "status", "returncode", "timed_out"))
-    if record.get("module") == "producer" and record.get("failure_type") in {"missing_artifact", "malformed_artifact"}:
+    identity += (semantic,)
+    if record.get("failure_type") in {"missing_artifact", "malformed_artifact", "malformed_failure_entry"}:
         return identity + (record.get("source"),)
     return identity
 
@@ -436,10 +558,22 @@ def _location(value: Any) -> dict[str, Any] | str | None:
     return copy.deepcopy(value)
 
 
+def _record_malformed_finding(
+    index: int,
+    message: str,
+    contract_errors: list[dict[str, str]],
+    technical_entries: list[tuple[dict[str, Any], bool]],
+) -> None:
+    path = f"AUDIT_JSON_SUMMARY.json.findings[{index}]"
+    _add_contract_error(contract_errors, message, path)
+    technical_entries.append((_failure_record("producer", "malformed_finding", message, path), False))
+
+
 def _normalize_finding(
     finding: dict[str, Any],
     contract_errors: list[dict[str, str]],
     technical_entries: list[tuple[dict[str, Any], bool]],
+    index: int,
 ) -> dict[str, Any] | None:
     if any(
         str(finding.get(key, "")).strip().lower() == "expected_traceability"
@@ -465,12 +599,12 @@ def _normalize_finding(
         result["finding_type"] = finding_type
     location = _location(finding.get("location", finding.get("locations")))
     if location is None:
-        _add_contract_error(contract_errors, "Finding has a missing or unsupported location.", "findings")
+        _record_malformed_finding(index, "Finding has a missing or unsupported location.", contract_errors, technical_entries)
         return None
     result["location"] = location
     risk_level = finding.get("risk_level", finding.get("calibrated_risk_level"))
     if not isinstance(risk_level, str) or risk_level not in _RISK_LEVELS:
-        _add_contract_error(contract_errors, "Finding has a missing or invalid risk_level.", "findings")
+        _record_malformed_finding(index, "Finding has a missing or invalid risk_level.", contract_errors, technical_entries)
         return None
     result["risk_level"] = risk_level
     evidence_type = finding.get("evidence_type")
@@ -502,10 +636,30 @@ def _normalize_finding(
     if isinstance(source_artifact, str) and source_artifact.strip():
         result["source_artifact"] = source_artifact
     confidence = finding.get("confidence")
+    if "confidence" in finding and (
+        not isinstance(confidence, (int, float))
+        or isinstance(confidence, bool)
+        or not math.isfinite(confidence)
+        or not 0 <= confidence <= 1
+    ):
+        _record_malformed_finding(index, "Finding has an invalid confidence.", contract_errors, technical_entries)
+        return None
     if isinstance(confidence, (int, float)) and not isinstance(confidence, bool) and math.isfinite(confidence) and 0 <= confidence <= 1:
         result["confidence"] = confidence
     result["issue_family"] = _issue_family(finding)
     return result
+
+
+def _validate_candidate_observation(case_id: str, observation: dict[str, Any]) -> None:
+    candidate = {
+        "case_id": case_id,
+        "observations": [dict(observation, observation_id="candidate")],
+        "technical_failures": [],
+        "reported_technical_failures": [],
+        "boundary_violations": [],
+        "contract_errors": [],
+    }
+    validate_contract("observation.schema.json", candidate)
 
 
 def _walk_strings(value: Any, path: str = "") -> Iterable[tuple[str, str]]:
@@ -584,6 +738,8 @@ def _report_clauses(report: str) -> list[str]:
 _FAILURE_NEGATIVE_POLARITY = (
     re.compile(r"\b(?:did|does|do|will|would)\s+not\s+fail(?:ed|ure)?\b", re.I),
     re.compile(r"\bno\s+(?:timeout|failure|error|unavailability)\s+(?:occurred|was|is|present)\b", re.I),
+    re.compile(r"\b(?:did|does|do)\s+not\s+report\s+(?:a\s+)?(?:timeout|failure|error)\b", re.I),
+    re.compile(r"\bno\s+evidence\s+of\s+(?:a\s+)?(?:timeout|failure|error)\b", re.I),
     re.compile(r"\bwithout\s+(?:a\s+)?(?:timeout|failure|error|unavailability)\b", re.I),
     re.compile(r"\b(?:completed|finished|succeeded|passed)\s+(?:successfully|without)\b", re.I),
     re.compile(r"\bsuccessfully\s+(?:completed|finished|ran)\b", re.I),
@@ -604,12 +760,27 @@ def _failure_semantics_match(record: dict[str, Any], clause: str) -> bool:
     if any(pattern.search(lowered) for pattern in _FAILURE_NEGATIVE_POLARITY):
         return False
     failure_type = str(record.get("failure_type", "failure")).lower().replace("_", " ").replace("-", " ")
+    is_timeout = "timeout" in failure_type or "timed out" in failure_type
+    is_permission = "permission" in failure_type or "access" in failure_type
     if failure_type in lowered:
         return True
     normalized_type = failure_type.replace(" ", "_")
     if normalized_type in clause.lower():
         return True
-    return bool(_FAILURE_AFFIRMATIVE_SEMANTICS.search(lowered))
+    if is_permission:
+        return bool(re.search(r"\b(?:permission|access)\b.{0,24}\b(?:denied|error|failure|unavailable)\b", lowered))
+    if is_timeout:
+        return bool(
+            re.search(
+                r"\b(?:timed?\s*out|timeout|failed?\s+to\s+(?:run|execute|start|complete)|did\s+not\s+complete|encountered\s+(?:an\s+)?error)\b",
+                lowered,
+            )
+        )
+    is_generic = any(
+        term in failure_type
+        for term in ("failure", "error", "execution", "failed", "unavailable", "malformed", "missing", "coverage gap")
+    )
+    return is_generic and bool(_FAILURE_AFFIRMATIVE_SEMANTICS.search(lowered))
 
 
 def _report_discloses_failure(record: dict[str, Any], report: str) -> bool:
@@ -632,11 +803,21 @@ def _discover_staging_roots(value: Any) -> list[Path]:
     return roots
 
 
+def _file_uri_path(value: str) -> Path | None:
+    parsed = urlparse(value)
+    if parsed.scheme.lower() != "file" or parsed.netloc not in ("", "localhost"):
+        return None
+    try:
+        return Path(unquote(parsed.path)).absolute()
+    except (OSError, RuntimeError, TypeError, ValueError):
+        return None
+
+
 def _redact_text(text: str, roots: list[tuple[str, str]]) -> str:
     result = text
     for root, placeholder in sorted(roots, key=lambda item: (-len(item[0]), item[0], item[1])):
         pattern = re.compile(
-            rf"(?<![A-Za-z0-9._-]){re.escape(root)}(?=$|[/\\\s\"'<>:;,.\)\]])"
+            rf"(?<![A-Za-z0-9._-]){re.escape(root)}(?=$|[/\\\s\"'<>:;,.()\[\]?&#])"
         )
         result = pattern.sub(placeholder, result)
     return result
@@ -662,8 +843,23 @@ def _redaction_roots(
     roots: dict[str, str] = {}
 
     def add_root(path: Path, placeholder: str) -> None:
-        roots[str(path)] = placeholder
-        roots[str(path.absolute())] = placeholder
+        candidates = {path, path.absolute()}
+        lexical = path
+        for _ in range(8):
+            if not lexical.is_symlink():
+                break
+            try:
+                target = Path(os.readlink(lexical))
+            except (OSError, RuntimeError, ValueError):
+                break
+            lexical = target if target.is_absolute() else lexical.parent / target
+            candidates.add(lexical.absolute())
+        try:
+            candidates.add(path.resolve())
+        except (OSError, RuntimeError, ValueError):
+            pass
+        for candidate in candidates:
+            roots[str(candidate)] = placeholder
 
     add_root(output_dir, "<OUTPUT_ROOT>")
     add_root(Path.home().resolve(), "<HOME>")
@@ -678,6 +874,16 @@ def _redaction_roots(
         for root in _discover_staging_roots(report):
             add_root(root, "<STAGING_ROOT>")
     return list(roots.items())
+
+
+def _record_malformed_failure_entry(
+    message: str,
+    path: str,
+    contract_errors: list[dict[str, str]],
+    technical_entries: list[tuple[dict[str, Any], bool]],
+) -> None:
+    _add_contract_error(contract_errors, message, path)
+    technical_entries.append((_failure_record("producer", "malformed_failure_entry", message, path), False))
 
 
 def normalize_audit_output(
@@ -725,12 +931,14 @@ def normalize_audit_output(
             technical_entries.append((_failure_record("report", "malformed_artifact", message, "audit-report.md"), False))
 
     summary = artifacts.get("AUDIT_JSON_SUMMARY.json")
-    if summary is not None and summary.get("case_id") not in (None, "", case_id):
+    case_mismatch = summary is not None and summary.get("case_id") not in (None, "", case_id)
+    if case_mismatch:
         message = (
             "Producer case_id does not match requested case_id: "
             f"{summary.get('case_id')!r} != {case_id!r}."
         )
         _add_contract_error(contract_errors, message, "AUDIT_JSON_SUMMARY.json.case_id")
+        technical_entries.append((_failure_record("producer", "case_id_mismatch", message, "AUDIT_JSON_SUMMARY.json"), False))
     if summary is not None and "findings" not in summary:
         message = "Malformed producer artifact AUDIT_JSON_SUMMARY.json: findings is required."
         _add_contract_error(contract_errors, message, "AUDIT_JSON_SUMMARY.json.findings")
@@ -738,17 +946,27 @@ def normalize_audit_output(
     coverage = artifacts.get("coverage.json")
     pipeline = artifacts.get("pipeline_summary.json")
     if summary is not None and not isinstance(summary.get("findings", []), list):
-        _add_contract_error(contract_errors, "AUDIT_JSON_SUMMARY.json findings must be an array.", "AUDIT_JSON_SUMMARY.json.findings")
+        message = "AUDIT_JSON_SUMMARY.json findings must be an array."
+        _record_malformed_failure_entry(message, "AUDIT_JSON_SUMMARY.json.findings", contract_errors, technical_entries)
     findings_value = summary.get("findings", []) if summary is not None else []
     normalized_observations: list[dict[str, Any]] = []
-    if isinstance(findings_value, list):
+    if isinstance(findings_value, list) and not case_mismatch:
         for index, finding in enumerate(findings_value):
             if not isinstance(finding, dict):
-                _add_contract_error(contract_errors, "Finding must be an object.", f"AUDIT_JSON_SUMMARY.json.findings[{index}]")
+                _record_malformed_finding(index, "Finding must be an object.", contract_errors, technical_entries)
                 continue
-            normalized = _normalize_finding(finding, contract_errors, technical_entries)
-            if normalized is not None:
-                normalized_observations.append(normalized)
+            try:
+                normalized = _normalize_finding(finding, contract_errors, technical_entries, index)
+                if normalized is not None:
+                    _validate_candidate_observation(case_id, normalized)
+                    normalized_observations.append(normalized)
+            except (RecursionError, TypeError, ValueError) as exc:
+                _record_malformed_finding(
+                    index,
+                    f"Finding is malformed and was dropped: {type(exc).__name__}.",
+                    contract_errors,
+                    technical_entries,
+                )
 
     failure_artifacts: list[tuple[str, dict[str, Any] | None, bool]] = [
         ("AUDIT_JSON_SUMMARY.json", summary, True),
@@ -757,30 +975,65 @@ def normalize_audit_output(
     ]
     if summary is not None and isinstance(summary.get("audit_coverage"), dict):
         failure_artifacts.append(("AUDIT_JSON_SUMMARY.json", summary["audit_coverage"], True))
+
+    def collect_failure_values(
+        artifact_name: str,
+        artifact: dict[str, Any],
+        key: str,
+        disclosed: bool,
+        *,
+        default_module: str = "producer",
+        default_type: str = "failure",
+    ) -> None:
+        values = artifact.get(key, [])
+        if values in (None, "", False):
+            return
+        base_path = f"{artifact_name}.{key}"
+        if not isinstance(values, list):
+            _record_malformed_failure_entry(
+                f"{base_path} must be an array.", base_path, contract_errors, technical_entries
+            )
+            return
+        for index, value in enumerate(values):
+            entry_path = f"{base_path}[{index}]"
+            try:
+                parsed = _failure_from_value(
+                    value,
+                    artifact_name,
+                    default_module=default_module,
+                    default_type=default_type,
+                    disclosed=disclosed,
+                )
+            except (RecursionError, TypeError, ValueError) as exc:
+                parsed = None
+                _record_malformed_failure_entry(
+                    f"Malformed failure entry: {type(exc).__name__}.", entry_path, contract_errors, technical_entries
+                )
+            if parsed is not None:
+                technical_entries.append(parsed)
+            elif parsed is None and not any(
+                entry.get("source") == entry_path for entry, _ in technical_entries
+            ):
+                _record_malformed_failure_entry(
+                    "Failure entry must be a non-empty string or recognized object.",
+                    entry_path,
+                    contract_errors,
+                    technical_entries,
+                )
+
     for artifact_name, artifact, artifact_disclosed in failure_artifacts:
         if artifact is None:
             continue
         for key in _FAILURE_KEYS:
-            values = artifact.get(key, [])
-            if isinstance(values, list):
-                for value in values:
-                    parsed = _failure_from_value(value, artifact_name, disclosed=artifact_disclosed)
-                    if parsed is not None:
-                        technical_entries.append(parsed)
-            elif values not in (None, "", False):
-                _add_contract_error(contract_errors, f"{artifact_name} {key} must be an array.", f"{artifact_name}.{key}")
+            collect_failure_values(artifact_name, artifact, key, artifact_disclosed)
         for key in ("detector_failures", "audit_coverage_gaps", "coverage_failures"):
-            values = artifact.get(key, [])
-            if isinstance(values, list):
-                for value in values:
-                    parsed = _failure_from_value(
-                        value,
-                        artifact_name,
-                        default_type="audit_coverage_gap",
-                        disclosed=artifact_disclosed,
-                    )
-                    if parsed is not None:
-                        technical_entries.append(parsed)
+            collect_failure_values(
+                artifact_name,
+                artifact,
+                key,
+                artifact_disclosed,
+                default_type="audit_coverage_gap",
+            )
         if artifact.get("audit_coverage_gap"):
             message = str(artifact.get("audit_coverage_gap_message", "Audit coverage gap disclosed by producer."))
             technical_entries.append(
@@ -788,8 +1041,14 @@ def normalize_audit_output(
             )
         workstreams = artifact.get("workstreams", [])
         if isinstance(workstreams, list):
-            for workstream in workstreams:
+            for workstream_index, workstream in enumerate(workstreams):
                 if not isinstance(workstream, dict):
+                    _record_malformed_failure_entry(
+                        "Workstream entry must be an object.",
+                        f"{artifact_name}.workstreams[{workstream_index}]",
+                        contract_errors,
+                        technical_entries,
+                    )
                     continue
                 status = str(workstream.get("status", "")).lower()
                 if status not in {"failed", "error", "timeout", "timed_out"}:
@@ -797,23 +1056,53 @@ def normalize_audit_output(
                 name = str(workstream.get("name", workstream.get("module", "workstream")))
                 errors = workstream.get("errors", [])
                 if isinstance(errors, list) and errors:
-                    for error in errors:
-                        parsed = _failure_from_value(
-                            error,
-                            artifact_name,
-                            default_module=name,
-                            default_type="workstream_failed",
-                            disclosed=artifact_disclosed,
-                        )
+                    for error_index, error in enumerate(errors):
+                        try:
+                            parsed = _failure_from_value(
+                                error,
+                                artifact_name,
+                                default_module=name,
+                                default_type="workstream_failed",
+                                disclosed=artifact_disclosed,
+                            )
+                        except (RecursionError, TypeError, ValueError) as exc:
+                            parsed = None
+                            _record_malformed_failure_entry(
+                                f"Malformed failure entry: {type(exc).__name__}.",
+                                f"{artifact_name}.workstreams[{workstream_index}].errors[{error_index}]",
+                                contract_errors,
+                                technical_entries,
+                            )
                         if parsed is not None:
                             technical_entries.append(parsed)
-                else:
+                        elif parsed is None:
+                            _record_malformed_failure_entry(
+                                "Failure entry must be a non-empty string or recognized object.",
+                                f"{artifact_name}.workstreams[{workstream_index}].errors[{error_index}]",
+                                contract_errors,
+                                technical_entries,
+                            )
+                elif errors in (None, "", False, []):
                     technical_entries.append(
                         (
                             _failure_record(name, "workstream_failed", f"Workstream status: {status}.", artifact_name, status=status),
                             artifact_disclosed,
                         )
                     )
+                else:
+                    _record_malformed_failure_entry(
+                        "Workstream errors must be an array.",
+                        f"{artifact_name}.workstreams[{workstream_index}].errors",
+                        contract_errors,
+                        technical_entries,
+                    )
+        elif workstreams not in (None, "", False, []):
+            _record_malformed_failure_entry(
+                f"{artifact_name}.workstreams must be an array.",
+                f"{artifact_name}.workstreams",
+                contract_errors,
+                technical_entries,
+            )
 
     observed_failures, disclosed_ids = _dedupe_failures(technical_entries)
     report_disclosed: set[tuple[Any, ...]] = set()
@@ -831,18 +1120,28 @@ def normalize_audit_output(
     package_discovered = package_path
     if package_discovered is None and pipeline is not None:
         candidate = pipeline.get("package", pipeline.get("package_root"))
-        if isinstance(candidate, str) and candidate.startswith("/"):
-            try:
-                package_discovered = Path(candidate).absolute()
-            except (OSError, RuntimeError, ValueError):
-                package_discovered = None
+        if isinstance(candidate, str):
+            package_discovered = _file_uri_path(candidate)
+            if package_discovered is None and candidate.startswith("/"):
+                try:
+                    package_discovered = Path(candidate.split("?", 1)[0].split("#", 1)[0]).absolute()
+                except (OSError, RuntimeError, ValueError):
+                    package_discovered = None
     roots = _redaction_roots(output_path, package_discovered, staging_paths, artifacts, report)
+    try:
+        boundary_violations = _boundary_violations(report, artifacts)
+    except (RecursionError, TypeError, ValueError) as exc:
+        message = f"Boundary scan failed: {type(exc).__name__}."
+        _add_contract_error(contract_errors, message, "boundary_scanner")
+        technical_entries.append((_failure_record("boundary_scanner", "execution_failure", message, "boundary_scanner"), False))
+        observed_failures, disclosed_ids = _dedupe_failures(technical_entries)
+        boundary_violations = []
     payload: dict[str, Any] = {
         "case_id": case_id,
         "observations": sorted(normalized_observations, key=_canonical),
         "technical_failures": observed_failures,
         "reported_technical_failures": sorted(reported_failures, key=_canonical),
-        "boundary_violations": _boundary_violations(report, artifacts),
+        "boundary_violations": boundary_violations,
         "contract_errors": sorted(contract_errors, key=_canonical),
     }
     payload = _redact(payload, roots)

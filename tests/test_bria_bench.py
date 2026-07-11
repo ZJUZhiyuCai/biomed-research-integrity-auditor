@@ -2327,6 +2327,180 @@ class BriaBenchNormalizationTests(unittest.TestCase):
                 normalized = normalize_audit_output("dev_001", self.output_dir)
                 self.assertEqual(normalized["reported_technical_failures"], [])
 
+    def test_case_id_mismatch_quarantines_all_summary_findings(self) -> None:
+        finding = {
+            "finding_id": "FOREIGN-1",
+            "finding_type": "numeric consistency candidate",
+            "location": "Table 1",
+            "risk_level": "R1",
+            "evidence_type": "candidate",
+        }
+        self.write_fixture(findings=[finding])
+        summary_path = self.output_dir / "AUDIT_JSON_SUMMARY.json"
+        summary = json.loads(summary_path.read_text(encoding="utf-8"))
+        summary["case_id"] = "other_case"
+        summary_path.write_text(json.dumps(summary), encoding="utf-8")
+
+        normalized = normalize_audit_output("dev_001", self.output_dir)
+
+        self.assertEqual(normalized["observations"], [])
+        self.assertTrue(any("case_id" in item["message"] for item in normalized["contract_errors"]))
+        self.assertTrue(any(item["module"] == "producer" for item in normalized["technical_failures"]))
+
+    def test_strict_json_duplicate_nonfinite_and_depth_bombs_are_visible(self) -> None:
+        self.write_fixture()
+        summary_path = self.output_dir / "AUDIT_JSON_SUMMARY.json"
+        summary_path.write_text('{"findings": [], "findings": []}', encoding="utf-8")
+        duplicate = normalize_audit_output("dev_001", self.output_dir)
+        self.assertTrue(duplicate["contract_errors"])
+        self.assertTrue(duplicate["technical_failures"])
+
+        self.write_fixture()
+        summary = json.loads(summary_path.read_text(encoding="utf-8"))
+        summary["findings"] = [
+            {
+                "finding_id": "NONFINITE",
+                "finding_type": "numeric consistency candidate",
+                "location": "Table 1",
+                "risk_level": "R1",
+                "confidence": float("nan"),
+                "evidence_type": "candidate",
+            }
+        ]
+        summary_path.write_text(json.dumps(summary), encoding="utf-8")
+        nonfinite = normalize_audit_output("dev_001", self.output_dir)
+        self.assertEqual(nonfinite["observations"], [])
+        self.assertTrue(nonfinite["contract_errors"])
+        self.assertTrue(nonfinite["technical_failures"])
+
+        self.write_fixture()
+        deep_json = '{"findings": [], "deep": ' + ("{" * 1200) + "null" + ("}" * 1200) + "}"
+        summary_path.write_text(deep_json, encoding="utf-8")
+        deep = normalize_audit_output("dev_001", self.output_dir)
+        self.assertTrue(deep["contract_errors"])
+        self.assertTrue(deep["technical_failures"])
+
+    def test_invalid_finding_isolated_from_valid_sibling(self) -> None:
+        self.write_fixture(
+            findings=[
+                {
+                    "finding_id": "BAD",
+                    "finding_type": "numeric consistency candidate",
+                    "location": {"page": 0},
+                    "risk_level": "R1",
+                    "confidence": 2.0,
+                    "evidence_type": "candidate",
+                },
+                {
+                    "finding_id": "GOOD",
+                    "finding_type": "numeric consistency candidate",
+                    "location": "Table 2",
+                    "risk_level": "R1",
+                    "evidence_type": "candidate",
+                },
+            ]
+        )
+
+        normalized = normalize_audit_output("dev_001", self.output_dir)
+
+        self.assertEqual([item["source_finding_id"] for item in normalized["observations"]], ["GOOD"])
+        self.assertTrue(any("findings[0]" in item.get("path", "") for item in normalized["contract_errors"]))
+        self.assertTrue(any("findings[0]" in item.get("source", "") for item in normalized["technical_failures"]))
+
+    def test_failure_event_identity_and_specific_report_semantics(self) -> None:
+        self.write_fixture(
+            coverage={
+                "detector_failures": [
+                    {"module": "image.local_patch", "failure_type": "timeout", "message": "timed out"},
+                    {"module": "image.local_patch", "failure_type": "permission_error", "message": "permission denied"},
+                ]
+            },
+            pipeline={
+                "package": str(self.package_dir),
+                "producer_failures": [
+                    {"module": "image.local_patch", "failure_type": "timeout", "message": "timed out"}
+                ],
+            },
+            report="The image.local_patch detector timed out.",
+        )
+
+        normalized = normalize_audit_output("dev_001", self.output_dir)
+
+        self.assertEqual(len(normalized["technical_failures"]), 2)
+        self.assertEqual(
+            [item["failure_type"] for item in normalized["reported_technical_failures"]],
+            ["timeout"],
+        )
+
+    def test_malformed_failure_entries_are_indexed_and_disclosed(self) -> None:
+        self.write_fixture(
+            coverage={
+                "detector_failures": [None, [], 7, {"unexpected": "shape"}],
+                "errors": {"not": "a list"},
+            }
+        )
+
+        normalized = normalize_audit_output("dev_001", self.output_dir)
+
+        error_paths = {item.get("path", "") for item in normalized["contract_errors"]}
+        self.assertTrue(any("detector_failures[0]" in path for path in error_paths))
+        self.assertTrue(any("detector_failures[1]" in path for path in error_paths))
+        self.assertTrue(any("detector_failures[2]" in path for path in error_paths))
+        self.assertTrue(any("errors" in path for path in error_paths))
+        self.assertTrue(any(item["failure_type"] == "malformed_failure_entry" for item in normalized["technical_failures"]))
+
+    def test_boundary_scanner_requires_assertion_shapes_and_handles_chinese_team_claims(self) -> None:
+        self.write_fixture(
+            report="\n".join(
+                [
+                    "Research team fabricated the data.",
+                    "The researchers falsified data.",
+                    "The study group committed fraud.",
+                    "Data were fabricated and data were falsified.",
+                    "No evidence of fraud.",
+                    "We do not allege fraud.",
+                    "An investigation into fraud is ongoing; this is an allegation only.",
+                    "Integrity certificate generation failed because report assembler crashed.",
+                    "研究团队造假。研究人员造假。课题组造假。数据被伪造，数据被篡改。",
+                ]
+            )
+        )
+
+        normalized = normalize_audit_output("dev_001", self.output_dir)
+        messages = [item["message"] for item in normalized["boundary_violations"]]
+
+        for included in ("Research team fabricated", "researchers falsified", "study group committed", "研究团队造假", "数据被伪造"):
+            self.assertTrue(any(included in message for message in messages))
+        for excluded in ("No evidence of fraud", "do not allege fraud", "investigation into fraud", "certificate generation failed"):
+            self.assertFalse(any(excluded in message for message in messages))
+
+    def test_redaction_covers_uri_delimiters_symlink_aliases_and_file_uri_package(self) -> None:
+        output_alias = Path(self.temp_dir.name) / "output-alias"
+        output_alias.symlink_to(self.output_dir, target_is_directory=True)
+        package_alias = Path(self.temp_dir.name) / "package-alias"
+        package_alias.symlink_to(self.package_dir, target_is_directory=True)
+        package_uri = self.package_dir.as_uri()
+        self.write_fixture(
+            findings=[
+                {
+                    "finding_id": "PATHS",
+                    "finding_type": "numeric consistency candidate",
+                    "location": f"file://{self.package_dir}/source.csv?case=1#panel&x=2",
+                    "risk_level": "R1",
+                    "evidence_type": "candidate",
+                    "summary": f"See {self.output_dir}/result.json?case=1#fragment&x=2.",
+                }
+            ],
+            pipeline={"package": f"{package_uri}?case=1#fragment", "output_dir": str(self.output_dir)},
+        )
+
+        normalized = normalize_audit_output("dev_001", output_alias)
+
+        payload_text = json.dumps(normalized, ensure_ascii=False)
+        for raw_root in (str(self.output_dir), str(output_alias), str(self.package_dir), str(package_alias)):
+            self.assertNotIn(raw_root, payload_text)
+        self.assertIn("?case=1#panel&x=2", payload_text)
+
     def test_coverage_and_pipeline_failure_shapes_are_observed_not_reported(self) -> None:
         self.write_fixture(
             coverage={
