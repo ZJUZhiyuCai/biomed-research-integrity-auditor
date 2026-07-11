@@ -1072,12 +1072,7 @@ def normalize_audit_output(
                 (_failure_record("audit.coverage", "audit_coverage_gap", message, artifact_name), artifact_disclosed)
             )
         workstreams = artifact.get("workstreams", [])
-        if (
-            artifact_name == "pipeline_summary.json"
-            and isinstance(workstreams, str)
-            and workstreams.replace("\\", "/").rsplit("/", 1)[-1]
-            == "workstreams.json"
-        ):
+        if artifact_name == "pipeline_summary.json" and isinstance(workstreams, str):
             workstreams = []
         if isinstance(workstreams, list):
             for workstream_index, workstream in enumerate(workstreams):

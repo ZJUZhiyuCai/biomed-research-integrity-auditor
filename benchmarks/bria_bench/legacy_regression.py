@@ -10,12 +10,18 @@ import shutil
 import stat
 import tempfile
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from .contracts import ContractError, validate_contract
 from .hashing import HashingError, hash_tree
-from .registry import RegistryError, freeze_manifest
+from .registry import (
+    RegistryError,
+    freeze_manifest,
+    load_manifest,
+    verify_frozen_case,
+)
 
 
 FROZEN_AT = "2026-07-11T00:00:00Z"
@@ -141,10 +147,27 @@ These repository-authored procedural synthetic fixtures preserve the legacy eval
 Some files named `.pdf` are ASCII procedural fixtures rather than real PDF documents. These
 cases test regression behavior, not real-PDF/manuscript accuracy.
 """
+_OWNED_PUBLISH_PATHS = (
+    Path("cases/regression"),
+    Path("annotations/regression"),
+    Path("annotations/dev/.gitkeep"),
+    Path("results/.gitkeep"),
+    Path("benchmark_manifest.source.json"),
+    Path("benchmark_manifest.json"),
+)
 
 
 class LegacyRegressionError(ValueError):
     """Raised when legacy source data or deterministic materialization is invalid."""
+
+
+@dataclass
+class _PublicationRecord:
+    staged: Path
+    target: Path
+    backup: Path
+    backed_up: bool = False
+    published: bool = False
 
 
 def _strict_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -614,7 +637,9 @@ def _preflight_output(destination: Path, source: Path) -> None:
     _inspect_replaced_tree(destination / "annotations" / "regression")
 
 
-def _ensure_output_directory(destination: Path, relative: Path) -> Path:
+def _ensure_publish_directory(
+    destination: Path, relative: Path, created: list[Path]
+) -> Path:
     current = destination
     for component in relative.parts:
         current /= component
@@ -624,69 +649,96 @@ def _ensure_output_directory(destination: Path, relative: Path) -> Path:
             try:
                 current.mkdir()
                 metadata = current.lstat()
+                created.append(current)
             except OSError as exc:
                 raise LegacyRegressionError(
-                    f"could not create generated output directory: {current}"
+                    f"could not create publication directory: {current}"
                 ) from exc
         except OSError as exc:
             raise LegacyRegressionError(
-                f"could not inspect generated output directory: {current}"
+                f"could not inspect publication directory: {current}"
             ) from exc
         if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
             raise LegacyRegressionError(
-                f"generated output directory must be an actual directory: {current}"
+                f"publication directory must be an actual directory: {current}"
             )
     return current
 
 
-def _owned_output_file(destination: Path, relative: Path) -> Path:
-    parent = _ensure_output_directory(destination, relative.parent)
-    path = parent / relative.name
+def _publish_owned_path(record: _PublicationRecord) -> None:
     try:
-        metadata = path.lstat()
-    except FileNotFoundError:
-        return path
-    except OSError as exc:
-        raise LegacyRegressionError(
-            f"could not inspect generated output file: {path}"
-        ) from exc
-    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
-        raise LegacyRegressionError(
-            f"generated output file must be an actual regular file: {path}"
-        )
-    return path
-
-
-def _replace_generated_directory(destination: Path, relative: Path) -> Path:
-    parent = _ensure_output_directory(destination, relative.parent)
-    path = parent / relative.name
-    try:
-        metadata = path.lstat()
+        metadata = record.target.lstat()
     except FileNotFoundError:
         metadata = None
-    except OSError as exc:
-        raise LegacyRegressionError(
-            f"could not inspect generated directory: {path}"
-        ) from exc
     if metadata is not None:
-        if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
+        if stat.S_ISLNK(metadata.st_mode):
             raise LegacyRegressionError(
-                f"generated path must be an actual directory: {path}"
+                f"owned publication target must not be a symlink: {record.target}"
             )
-        _inspect_replaced_tree(path)
-        shutil.rmtree(path)
+        os.replace(record.target, record.backup)
+        record.backed_up = True
+    os.replace(record.staged, record.target)
+    record.published = True
+
+
+def _rollback_publication(
+    records: Sequence[_PublicationRecord], created: Sequence[Path]
+) -> None:
+    first_error: Exception | None = None
+    for record in reversed(records):
+        try:
+            if record.published:
+                os.replace(record.target, record.staged)
+                record.published = False
+            if record.backed_up:
+                os.replace(record.backup, record.target)
+                record.backed_up = False
+        except Exception as exc:
+            if first_error is None:
+                first_error = exc
+    for directory in reversed(created):
+        try:
+            directory.rmdir()
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            if first_error is None:
+                first_error = exc
+    if first_error is not None:
+        raise LegacyRegressionError(
+            "could not roll back legacy regression publication"
+        ) from first_error
+
+
+def _publish_staged_payload(staging: Path, destination: Path) -> None:
+    backup_root = staging / ".rollback"
+    backup_root.mkdir()
+    created: list[Path] = []
+    records: list[_PublicationRecord] = []
     try:
-        path.mkdir()
-        metadata = path.lstat()
-    except OSError as exc:
-        raise LegacyRegressionError(
-            f"could not create generated directory: {path}"
-        ) from exc
-    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
-        raise LegacyRegressionError(
-            f"generated path must be an actual directory: {path}"
-        )
-    return path
+        for index, relative in enumerate(_OWNED_PUBLISH_PATHS, start=1):
+            parent = _ensure_publish_directory(destination, relative.parent, created)
+            record = _PublicationRecord(
+                staged=staging / relative,
+                target=parent / relative.name,
+                backup=backup_root / f"{index:02d}",
+            )
+            records.append(record)
+            _publish_owned_path(record)
+    except BaseException as exc:
+        try:
+            _rollback_publication(records, created)
+        except LegacyRegressionError as rollback_exc:
+            raise LegacyRegressionError(
+                "legacy regression publication failed and rollback was incomplete"
+            ) from rollback_exc
+        if isinstance(exc, LegacyRegressionError):
+            raise
+        if isinstance(exc, OSError):
+            raise LegacyRegressionError(
+                "could not publish staged legacy regression payload"
+            ) from exc
+        raise
 
 
 def _copy_package(source: Path, destination: Path, *, expected_sha256: str) -> None:
@@ -716,6 +768,138 @@ def _copy_package(source: Path, destination: Path, *, expected_sha256: str) -> N
         ) from exc
     if actual != expected_sha256:
         raise LegacyRegressionError(f"copied package hash mismatch: {destination.name}")
+
+
+def _validate_staged_payload(staging: Path, source: Path) -> None:
+    _preflight_output(staging, source)
+    expected_inventories = {
+        staging: {
+            "annotations",
+            "benchmark_manifest.json",
+            "benchmark_manifest.source.json",
+            "cases",
+            "results",
+        },
+        staging / "cases": {"regression"},
+        staging / "cases" / "regression": {*CASE_IDS, "README.md"},
+        staging / "annotations": {"dev", "regression"},
+        staging / "annotations" / "regression": {
+            f"{case_id}.json" for case_id in CASE_IDS
+        },
+        staging / "annotations" / "dev": {".gitkeep"},
+        staging / "results": {".gitkeep"},
+    }
+    for path, expected in expected_inventories.items():
+        actual = _actual_child_names(path, kind="staged legacy regression payload")
+        if actual != expected:
+            raise LegacyRegressionError(
+                f"staged payload inventory mismatch at {path.relative_to(staging)}"
+            )
+    if (staging / "cases" / "regression" / "README.md").read_bytes() != (
+        _FIXTURE_README.encode("utf-8")
+    ):
+        raise LegacyRegressionError("staged regression fixture README is invalid")
+    for relative in (Path("annotations/dev/.gitkeep"), Path("results/.gitkeep")):
+        if (staging / relative).read_bytes() != b"":
+            raise LegacyRegressionError(f"staged owned marker is invalid: {relative}")
+
+    try:
+        frozen = load_manifest(
+            staging / "benchmark_manifest.json", require_frozen=True
+        )
+        if [case["case_id"] for case in frozen["cases"]] != list(CASE_IDS):
+            raise LegacyRegressionError("staged frozen manifest case inventory is invalid")
+        for case in frozen["cases"]:
+            verify_frozen_case(staging, case)
+    except RegistryError as exc:
+        raise LegacyRegressionError(
+            f"staged legacy regression payload is invalid: {exc}"
+        ) from exc
+
+
+def _build_staged_payload(
+    source: Path,
+    staging: Path,
+    loaded: Mapping[str, tuple[dict[str, Any], str]],
+) -> list[dict[str, Any]]:
+    cases_root = staging / "cases" / "regression"
+    annotations_root = staging / "annotations" / "regression"
+    cases_root.mkdir(parents=True)
+    annotations_root.mkdir(parents=True)
+
+    manifest_cases = []
+    for case_id in CASE_IDS:
+        _copy_package(
+            source / "cases" / case_id,
+            cases_root / case_id,
+            expected_sha256=_EXPECTED_PACKAGE_HASHES[case_id],
+        )
+        label, source_sha256 = loaded[case_id]
+        annotation = _annotation(label, case_id=case_id, source_sha256=source_sha256)
+        try:
+            validate_contract("annotation.schema.json", annotation)
+        except ContractError as exc:
+            raise LegacyRegressionError(
+                f"converted annotation is invalid: {case_id}: {exc}"
+            ) from exc
+        _write_canonical_json(annotations_root / f"{case_id}.json", annotation)
+        manifest_cases.append(_manifest_case(case_id))
+
+    _write_bytes_atomic(
+        cases_root / "README.md", _FIXTURE_README.encode("utf-8")
+    )
+    dev_annotations = staging / "annotations" / "dev"
+    dev_annotations.mkdir()
+    results = staging / "results"
+    results.mkdir()
+    _write_bytes_atomic(dev_annotations / ".gitkeep", b"")
+    _write_bytes_atomic(results / ".gitkeep", b"")
+
+    source_manifest = {
+        "schema_version": "1.0.0",
+        "benchmark_id": "bria-bench",
+        "benchmark_version": "0.1.0",
+        "cases": manifest_cases,
+    }
+    source_path = staging / "benchmark_manifest.source.json"
+    frozen_path = staging / "benchmark_manifest.json"
+    _write_canonical_json(source_path, source_manifest)
+    try:
+        freeze_manifest(source_path, frozen_path, FROZEN_AT)
+    except RegistryError as exc:
+        raise LegacyRegressionError(
+            f"could not freeze staged legacy manifest: {exc}"
+        ) from exc
+    _validate_staged_payload(staging, source)
+    return manifest_cases
+
+
+def _missing_root_directories(path: Path) -> list[Path]:
+    missing: list[Path] = []
+    current = path
+    while True:
+        try:
+            current.lstat()
+            return missing
+        except FileNotFoundError:
+            missing.append(current)
+            current = current.parent
+        except OSError as exc:
+            raise LegacyRegressionError(
+                f"could not inspect benchmark output root: {current}"
+            ) from exc
+
+
+def _remove_missing_root_directories(paths: Sequence[Path]) -> None:
+    for path in paths:
+        try:
+            path.rmdir()
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            raise LegacyRegressionError(
+                f"could not remove partial benchmark output directory: {path}"
+            ) from exc
 
 
 def _validated_root(value: Path | str, *, label: str, create: bool = False) -> Path:
@@ -751,12 +935,20 @@ def _prospective_output_root(value: Path | str) -> Path:
                 missing_components.append(current.name)
                 current = current.parent
                 continue
-            if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
+            if not (stat.S_ISDIR(metadata.st_mode) or stat.S_ISLNK(metadata.st_mode)):
                 raise LegacyRegressionError(
                     "benchmark output root components must be actual directories: "
                     f"{current}"
                 )
             resolved = current.resolve(strict=True)
+            resolved_metadata = resolved.lstat()
+            if stat.S_ISLNK(resolved_metadata.st_mode) or not stat.S_ISDIR(
+                resolved_metadata.st_mode
+            ):
+                raise LegacyRegressionError(
+                    "benchmark output root ancestor must resolve to an actual directory: "
+                    f"{current}"
+                )
             return resolved.joinpath(*reversed(missing_components))
     except LegacyRegressionError:
         raise
@@ -764,6 +956,18 @@ def _prospective_output_root(value: Path | str) -> Path:
         raise LegacyRegressionError(
             f"invalid benchmark output root: {value!r}"
         ) from exc
+
+
+def _remove_staging_root(staging: Path) -> None:
+    try:
+        metadata = staging.lstat()
+    except FileNotFoundError:
+        return
+    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
+        raise LegacyRegressionError(
+            f"legacy regression staging root became unsafe: {staging}"
+        )
+    shutil.rmtree(staging)
 
 
 def expand_legacy_regression(
@@ -784,62 +988,57 @@ def expand_legacy_regression(
         raise LegacyRegressionError(
             "benchmark output root and legacy eval root must not overlap"
         )
-    destination = _validated_root(
-        destination_candidate,
-        label="benchmark output root",
-        create=True,
-    )
     _validate_source_inventory(source)
-
     loaded = {case_id: _load_label(source, case_id) for case_id in CASE_IDS}
-    _preflight_output(destination, source)
-    cases_root = _replace_generated_directory(destination, Path("cases/regression"))
-    annotations_root = _replace_generated_directory(
-        destination, Path("annotations/regression")
-    )
-
-    manifest_cases = []
-    for case_id in CASE_IDS:
-        _copy_package(
-            source / "cases" / case_id,
-            cases_root / case_id,
-            expected_sha256=_EXPECTED_PACKAGE_HASHES[case_id],
-        )
-        label, source_sha256 = loaded[case_id]
-        annotation = _annotation(label, case_id=case_id, source_sha256=source_sha256)
-        try:
-            validate_contract("annotation.schema.json", annotation)
-        except ContractError as exc:
-            raise LegacyRegressionError(
-                f"converted annotation is invalid: {case_id}: {exc}"
-            ) from exc
-        _write_canonical_json(annotations_root / f"{case_id}.json", annotation)
-        manifest_cases.append(_manifest_case(case_id))
-
-    _write_bytes_atomic(
-        _owned_output_file(destination, Path("cases/regression/README.md")),
-        _FIXTURE_README.encode("utf-8"),
-    )
-    _write_bytes_atomic(
-        _owned_output_file(destination, Path("annotations/dev/.gitkeep")), b""
-    )
-    _write_bytes_atomic(_owned_output_file(destination, Path("results/.gitkeep")), b"")
-
-    source_manifest = {
-        "schema_version": "1.0.0",
-        "benchmark_id": "bria-bench",
-        "benchmark_version": "0.1.0",
-        "cases": manifest_cases,
-    }
-    source_path = _owned_output_file(
-        destination, Path("benchmark_manifest.source.json")
-    )
-    frozen_path = _owned_output_file(destination, Path("benchmark_manifest.json"))
-    _write_canonical_json(source_path, source_manifest)
+    missing_roots = _missing_root_directories(destination_candidate)
+    staging: Path | None = None
+    manifest_cases: list[dict[str, Any]] | None = None
+    failure: BaseException | None = None
+    cleanup_failure: BaseException | None = None
     try:
-        freeze_manifest(source_path, frozen_path, FROZEN_AT)
-    except RegistryError as exc:
-        raise LegacyRegressionError(f"could not freeze legacy manifest: {exc}") from exc
+        destination = _validated_root(
+            destination_candidate,
+            label="benchmark output root",
+            create=True,
+        )
+        _preflight_output(destination, source)
+        staging = Path(
+            tempfile.mkdtemp(prefix=".legacy-regression-stage-", dir=destination)
+        )
+        manifest_cases = _build_staged_payload(source, staging, loaded)
+        _publish_staged_payload(staging, destination)
+    except BaseException as exc:
+        failure = exc
+
+    if staging is not None:
+        try:
+            _remove_staging_root(staging)
+        except BaseException as exc:
+            cleanup_failure = exc
+    if failure is not None:
+        try:
+            _remove_missing_root_directories(missing_roots)
+        except BaseException as exc:
+            if cleanup_failure is None:
+                cleanup_failure = exc
+
+    if cleanup_failure is not None:
+        if isinstance(cleanup_failure, LegacyRegressionError):
+            raise cleanup_failure
+        if isinstance(cleanup_failure, OSError):
+            raise LegacyRegressionError(
+                "could not remove legacy regression transaction artifacts"
+            ) from cleanup_failure
+        raise cleanup_failure
+    if failure is not None:
+        if isinstance(failure, LegacyRegressionError):
+            raise failure
+        if isinstance(failure, OSError):
+            raise LegacyRegressionError(
+                "could not generate legacy regression payload"
+            ) from failure
+        raise failure
+    assert manifest_cases is not None
     return copy.deepcopy(manifest_cases)
 
 

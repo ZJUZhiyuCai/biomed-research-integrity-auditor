@@ -1399,10 +1399,10 @@ def evaluate_benchmark(
             roles=("recall_label", "coverage_gap"),
         )
         assertions: Sequence[bool] = ()
-        if case["track"] == "regression" and adapter_name in providers:
-            assertions = providers[adapter_name](case, annotation, run)
-        elif case["track"] == "regression" and "legacy_regression_contract" in annotation:
+        if case["track"] == "regression" and "legacy_regression_contract" in annotation:
             assertions = _default_legacy_assertions(runs, case, annotation, run)
+        elif case["track"] == "regression" and adapter_name in providers:
+            assertions = providers[adapter_name](case, annotation, run)
         if case["track"] == "regression":
             if any(not isinstance(value, bool) for value in assertions):
                 raise CliError("Regression assertion provider must return booleans")

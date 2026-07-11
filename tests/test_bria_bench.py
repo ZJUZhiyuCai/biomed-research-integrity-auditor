@@ -22,6 +22,7 @@ from jsonschema import Draft202012Validator
 import tomllib
 
 import benchmarks.bria_bench.hashing as hashing_module
+import benchmarks.bria_bench.legacy_regression as legacy_regression_module
 import benchmarks.bria_bench.matching as matching_module
 from benchmarks.bria_bench import ContractError, __version__, validate_contract
 from benchmarks.bria_bench.contracts import SCHEMA_ROOT, load_schema
@@ -480,6 +481,114 @@ class BriaBenchLegacyRegressionTests(unittest.TestCase):
                 ).encode("utf-8")
                 self.assertEqual(content, canonical, relative)
 
+    def test_successful_regeneration_is_identical_and_preserves_unowned_siblings(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / "benchmark"
+            expand_legacy_regression(LEGACY_EVAL_ROOT, output)
+            (output / "cases" / "dev").mkdir()
+            (output / "cases" / "dev" / "future.txt").write_bytes(b"future case")
+            (output / "annotations" / "dev" / "future.json").write_bytes(b"{}\n")
+            (output / "results" / "future.txt").write_bytes(b"future result")
+            before = self.tree_snapshot(output)
+
+            expand_legacy_regression(LEGACY_EVAL_ROOT, output)
+
+            self.assertEqual(self.tree_snapshot(output), before)
+
+    def test_generation_failure_before_publish_preserves_existing_collection(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / "benchmark"
+            expand_legacy_regression(LEGACY_EVAL_ROOT, output)
+            (output / "cases" / "dev").mkdir()
+            (output / "cases" / "dev" / "future.txt").write_bytes(b"future case")
+            (output / "annotations" / "dev" / "future.json").write_bytes(b"{}\n")
+            before = self.tree_snapshot(output)
+            original_copy = legacy_regression_module._copy_package
+
+            def fail_case_002(
+                source: Path, destination: Path, *, expected_sha256: str
+            ) -> None:
+                if source.name == "case_002":
+                    raise OSError("injected case_002 copy failure")
+                original_copy(source, destination, expected_sha256=expected_sha256)
+
+            with patch.object(
+                legacy_regression_module, "_copy_package", side_effect=fail_case_002
+            ):
+                with self.assertRaises(LegacyRegressionError):
+                    expand_legacy_regression(LEGACY_EVAL_ROOT, output)
+
+            self.assertEqual(self.tree_snapshot(output), before)
+            manifest = load_manifest(
+                output / "benchmark_manifest.json", require_frozen=True
+            )
+            for case in manifest["cases"]:
+                verify_frozen_case(output, case)
+
+    def test_publish_failure_rolls_back_all_swapped_owned_paths(self) -> None:
+        for fail_at in (2, 3):
+            with self.subTest(fail_at=fail_at), tempfile.TemporaryDirectory() as temporary:
+                output = Path(temporary) / "benchmark"
+                expand_legacy_regression(LEGACY_EVAL_ROOT, output)
+                readme = output / "cases" / "regression" / "README.md"
+                readme.write_bytes(readme.read_bytes() + b"prior generation marker\n")
+                annotation = output / "annotations" / "regression" / "case_001.json"
+                annotation.write_bytes(annotation.read_bytes() + b" ")
+                freeze_manifest(
+                    output / "benchmark_manifest.source.json",
+                    output / "benchmark_manifest.json",
+                    "2026-07-11T00:00:00Z",
+                )
+                (output / "cases" / "dev").mkdir()
+                (output / "cases" / "dev" / "future.txt").write_bytes(b"future case")
+                (output / "annotations" / "dev" / "future.json").write_bytes(b"{}\n")
+                before = self.tree_snapshot(output)
+                canonical_output = output.resolve()
+                original_replace = legacy_regression_module.os.replace
+                publish_count = 0
+
+                def fail_publication(source: Path, destination: Path) -> None:
+                    nonlocal publish_count
+                    source_path = Path(source)
+                    destination_path = Path(destination)
+                    source_is_staged = any(
+                        part.startswith(".legacy-regression-stage-")
+                        for part in source_path.parts
+                    )
+                    destination_is_staged = any(
+                        part.startswith(".legacy-regression-stage-")
+                        for part in destination_path.parts
+                    )
+                    if (
+                        source_is_staged
+                        and not destination_is_staged
+                        and destination_path.is_relative_to(canonical_output)
+                    ):
+                        publish_count += 1
+                        if publish_count == fail_at:
+                            raise OSError(f"injected publish failure {fail_at}")
+                    original_replace(source_path, destination_path)
+
+                with patch.object(
+                    legacy_regression_module.os,
+                    "replace",
+                    side_effect=fail_publication,
+                ):
+                    with self.assertRaises(LegacyRegressionError):
+                        expand_legacy_regression(LEGACY_EVAL_ROOT, output)
+
+                self.assertGreaterEqual(publish_count, fail_at)
+                self.assertEqual(self.tree_snapshot(output), before)
+                manifest = load_manifest(
+                    output / "benchmark_manifest.json", require_frozen=True
+                )
+                for case in manifest["cases"]:
+                    verify_frozen_case(output, case)
+
     def test_materialization_rejects_equal_and_descendant_output_roots_without_mutation(
         self,
     ) -> None:
@@ -526,6 +635,25 @@ class BriaBenchLegacyRegressionTests(unittest.TestCase):
             self.assertEqual([case["case_id"] for case in cases], list(self.CASE_IDS))
             self.assertTrue((output / "benchmark_manifest.json").is_file())
             self.assertEqual(self.tree_snapshot(source), before)
+
+    def test_materialization_canonicalizes_tmp_style_symlink_ancestor(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = self.copy_evals(root)
+            canonical = root / "private-tmp"
+            canonical.mkdir()
+            alias = root / "tmp"
+            try:
+                alias.symlink_to(canonical, target_is_directory=True)
+            except (NotImplementedError, OSError) as exc:
+                self.skipTest(f"symlink creation unavailable: {exc}")
+            output = alias / "bria-bench"
+
+            cases = expand_legacy_regression(source, output)
+
+            self.assertEqual([case["case_id"] for case in cases], list(self.CASE_IDS))
+            self.assertEqual(output.resolve(), (canonical / "bria-bench").resolve())
+            self.assertTrue((canonical / "bria-bench" / "benchmark_manifest.json").is_file())
 
     def test_materialization_rejects_symlinked_cases_ancestor_without_touching_victim(
         self,
@@ -3188,19 +3316,36 @@ class BriaBenchNormalizationTests(unittest.TestCase):
             ["timeout"],
         )
 
-    def test_pipeline_workstreams_artifact_path_is_not_a_failure_list(self) -> None:
-        self.write_fixture(
-            pipeline={
-                "package": str(self.package_dir),
-                "workstreams": str(self.output_dir / "workstreams.json"),
-            }
-        )
+    def test_pipeline_workstreams_string_is_path_metadata_regardless_of_name(self) -> None:
+        for pointer in (
+            self.output_dir / "renamed-workstream-index.json",
+            self.output_dir / "missing" / "not-created.pointer",
+        ):
+            with self.subTest(pointer=pointer):
+                self.write_fixture(
+                    pipeline={
+                        "package": str(self.package_dir),
+                        "workstreams": str(pointer),
+                    }
+                )
+
+                normalized = normalize_audit_output("dev_001", self.output_dir)
+
+                self.assertFalse(
+                    any(
+                        item.get("path") == "pipeline_summary.json.workstreams"
+                        for item in normalized["contract_errors"]
+                    )
+                )
+
+    def test_coverage_workstreams_string_remains_a_contract_error(self) -> None:
+        self.write_fixture(coverage={"workstreams": "renamed-workstream-index.json"})
 
         normalized = normalize_audit_output("dev_001", self.output_dir)
 
-        self.assertFalse(
+        self.assertTrue(
             any(
-                item.get("path") == "pipeline_summary.json.workstreams"
+                item.get("path") == "coverage.json.workstreams"
                 for item in normalized["contract_errors"]
             )
         )
@@ -5892,7 +6037,7 @@ class BriaBenchCliTests(unittest.TestCase):
             self.assertEqual(metrics["detection"][name]["denominator"], 0, name)
         self.assertFalse(metrics["case_results"][0]["headline_detection_eligible"])
 
-    def test_default_legacy_provider_marks_formal_failure_false_and_explicit_override_wins(
+    def test_default_legacy_provider_marks_failure_false_and_cannot_be_overridden(
         self,
     ) -> None:
         self.configure_legacy_regression_case(required_report_terms=["sealed missing term"])
@@ -5928,20 +6073,68 @@ class BriaBenchCliTests(unittest.TestCase):
             self.root / "default-legacy-metrics.json",
             adapters={"fake": self.adapter},
         )
-        overridden = evaluate_benchmark(
+        provider_calls: list[str] = []
+
+        def custom_provider(
+            case: dict[str, Any],
+            annotation: dict[str, Any],
+            run: dict[str, Any],
+        ) -> list[bool]:
+            provider_calls.append(case["case_id"])
+            return [True, True]
+
+        with_provider = evaluate_benchmark(
             self.manifest,
             successful_runs,
             self.root / "override-legacy-metrics.json",
             adapters={"fake": self.adapter},
-            assertion_providers={"fake": lambda case, annotation, run: [True]},
+            assertion_providers={"fake": custom_provider},
         )
         self.assertEqual(
             default["detection"]["regression_assertions"],
             {"met": 0, "not_met": 1, "total": 1},
         )
         self.assertEqual(
-            overridden["detection"]["regression_assertions"],
-            {"met": 1, "not_met": 0, "total": 1},
+            with_provider["detection"]["regression_assertions"],
+            {"met": 0, "not_met": 1, "total": 1},
+        )
+        self.assertEqual(provider_calls, [])
+
+    def test_custom_provider_remains_available_for_unsealed_regression(self) -> None:
+        source = json.loads(self.source.read_text(encoding="utf-8"))
+        source["cases"][0].update(
+            {"track": "regression", "split": "reference", "headline_eligible": False}
+        )
+        self.source.write_text(json.dumps(source), encoding="utf-8")
+        freeze_manifest(self.source, self.manifest, "2026-07-11T00:00:00Z")
+        run_benchmark(
+            self.manifest,
+            self.runs,
+            adapter_name="fake",
+            adapters={"fake": self.adapter},
+        )
+        provider_calls: list[str] = []
+
+        def custom_provider(
+            case: dict[str, Any],
+            annotation: dict[str, Any],
+            run: dict[str, Any],
+        ) -> list[bool]:
+            provider_calls.append(case["case_id"])
+            return [True, False]
+
+        metrics = evaluate_benchmark(
+            self.manifest,
+            self.runs,
+            self.root / "unsealed-regression-metrics.json",
+            adapters={"fake": self.adapter},
+            assertion_providers={"fake": custom_provider},
+        )
+
+        self.assertEqual(provider_calls, ["case_001"])
+        self.assertEqual(
+            metrics["detection"]["regression_assertions"],
+            {"met": 1, "not_met": 1, "total": 2},
         )
 
     def test_case_004_cannot_redirect_legacy_summary_and_report_to_turn_assertion_met(
