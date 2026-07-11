@@ -28,6 +28,7 @@ _TIME_DAY_RE = re.compile(r"(?<![a-z0-9])(?:day\s*(\d+)|(\d+)\s*days?|d\s*(\d+))
 _CELL_RE = re.compile(r"(?<![a-z0-9])([a-z]{1,3})(\d+)(?::([a-z]{1,3})(\d+))?\b", re.IGNORECASE)
 _FILE_RE = re.compile(r"(?<![a-z0-9])(?:[~./\\_-]*[a-z0-9][a-z0-9._/\\_-]*)\.(?:pdf|png|jpe?g|tiff?|xlsx?|csv|docx?)\b", re.IGNORECASE)
 _FILE_SUFFIX_RE = re.compile(r"\.(?:pdf|png|jpe?g|tiff?|xlsx?|csv|docx?)$", re.IGNORECASE)
+_FILE_CUE_RE = re.compile(r"^(?:see|open|file|path)\s*[:=]?\s+(.+)$", re.IGNORECASE)
 _CELL_TEXT_RE = re.compile(r"\b(?:cells?|cell\s+range|range)\s*[:#-]?\s*([a-z]{1,3}\d+(?::[a-z]{1,3}\d+)?)\b", re.IGNORECASE)
 _NAMED_SHEET_RE = re.compile(r"\bsheet\s+([a-z][a-z0-9 _-]*?)(?=\s*(?:,|;|\bcell|\brange|$))", re.IGNORECASE)
 _FIGURE_CHAIN_RE = re.compile(r"(?:\band\s+|[_/,;&]+)\d+\s*[a-z]\b", re.IGNORECASE)
@@ -58,6 +59,8 @@ _GENERIC_LOCATION_TOKENS = frozenset({
     "tables",
     "timepoint",
     "timepoints",
+    "number",
+    "numbers",
 })
 _IGNORABLE_REMAINDER_TOKENS = _GENERIC_LOCATION_TOKENS | frozenset({
     "a",
@@ -381,6 +384,9 @@ def _is_generic_location_text(text: str) -> bool:
 
 def _filename_span(text: str) -> str | None:
     candidate = text.strip()
+    cue = _FILE_CUE_RE.fullmatch(candidate)
+    if cue:
+        candidate = cue.group(1).strip()
     if len(candidate) >= 2 and candidate[0] == candidate[-1] and candidate[0] in {'"', "'"}:
         candidate = candidate[1:-1].strip()
         return candidate if candidate and _FILE_SUFFIX_RE.search(candidate) else None
@@ -468,13 +474,18 @@ def _add_text(location: _Location, value: object, *, terms: bool = False) -> Non
     else:
         for match in _FILE_RE.finditer(text):
             location.files.add(_norm(match.group(0)))
+    after = _structured_snapshot(location)
     if terms:
-        if before == _structured_snapshot(location) and not _is_generic_location_text(text) and text:
+        if before == after and not _is_generic_location_text(text) and text:
             location.terms.add(text)
-    elif before == _structured_snapshot(location) and not _has_structured_location(location):
+        elif before != after:
+            remainder = _opaque_remainder(text)
+            if remainder:
+                location.terms.add(remainder)
+    elif before == after and not _has_structured_location(location):
         if not _is_generic_location_text(text) and text:
             location.terms.add(text)
-    elif before != _structured_snapshot(location):
+    elif before != after:
         remainder = _opaque_remainder(text)
         if remainder:
             location.terms.add(remainder)

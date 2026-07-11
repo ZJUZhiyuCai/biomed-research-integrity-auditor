@@ -3112,6 +3112,8 @@ class BriaBenchMatchingTests(unittest.TestCase):
             "Figure and Panel",
             "See Figure",
             "Section or Paragraph",
+            "Page number",
+            "Figure numbers",
         ):
             with self.subTest(generic=generic):
                 self.assertFalse(
@@ -3150,7 +3152,9 @@ class BriaBenchMatchingTests(unittest.TestCase):
         label = self.label("L1", {"file": "my image.png"})
         self.assertTrue(label_observation_compatible(label, self.observation("O1", "my image.png")).compatible)
         self.assertTrue(label_observation_compatible(label, self.observation("O2", '"my image.png"')).compatible)
+        self.assertTrue(label_observation_compatible(label, self.observation("O2b", "See my image.png")).compatible)
         self.assertFalse(label_observation_compatible(label, self.observation("O3", "other image.png")).compatible)
+        self.assertFalse(label_observation_compatible(label, self.observation("O3b", "See other image.png")).compatible)
         path_label = self.label("L2", {"file": "/tmp/my image.png"})
         self.assertTrue(label_observation_compatible(path_label, self.observation("O4", '"/tmp/my image.png"')).compatible)
         self.assertTrue(label_observation_compatible(path_label, self.observation("O5", "my image.png")).compatible)
@@ -3162,6 +3166,15 @@ class BriaBenchMatchingTests(unittest.TestCase):
 
     def test_plain_compound_text_retains_opaque_remainder(self) -> None:
         label = self.label("L1", {"terms": ["Figure 1A", "left hippocampus"]})
+        self.assertTrue(
+            label_observation_compatible(label, self.observation("O1", "Fig. 1A and LEFT HIPPOCAMPUS")).compatible
+        )
+        self.assertFalse(
+            label_observation_compatible(label, self.observation("O2", "Fig. 1A and RIGHT HIPPOCAMPUS")).compatible
+        )
+
+    def test_single_compound_term_retains_its_opaque_remainder(self) -> None:
+        label = self.label("L1", {"terms": ["Figure 1A and left hippocampus"]})
         self.assertTrue(
             label_observation_compatible(label, self.observation("O1", "Fig. 1A and LEFT HIPPOCAMPUS")).compatible
         )
