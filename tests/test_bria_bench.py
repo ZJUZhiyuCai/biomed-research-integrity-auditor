@@ -1,14 +1,27 @@
 from __future__ import annotations
 
 import copy
+import json
 import re
+import tempfile
 import unittest
 from decimal import Decimal
+from pathlib import Path
+from unittest.mock import patch
 
 from jsonschema import Draft202012Validator
 
 from benchmarks.bria_bench import ContractError, __version__, validate_contract
 from benchmarks.bria_bench.contracts import SCHEMA_ROOT, load_schema
+from benchmarks.bria_bench.hashing import HashingError, hash_tree
+from benchmarks.bria_bench.registry import (
+    RegistryError,
+    freeze_manifest,
+    load_manifest,
+    resolve_case_paths,
+    resolve_inside,
+    verify_frozen_case,
+)
 
 
 SCHEMA_NAMES = (
@@ -793,6 +806,181 @@ class BriaBenchContractTests(unittest.TestCase):
             r"benchmark_manifest\.schema\.json:cases\.0\.track:",
         ):
             validate_contract("benchmark_manifest.schema.json", payload)
+
+
+class BriaBenchRegistryTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._temporary = tempfile.TemporaryDirectory()
+        self.root = Path(self._temporary.name)
+        (self.root / "cases" / "dev_001").mkdir(parents=True)
+        (self.root / "cases" / "dev_001" / "payload.bin").write_bytes(b"alpha")
+        (self.root / "annotations" / "dev").mkdir(parents=True)
+        (self.root / "annotations" / "dev" / "dev_001.json").write_text(
+            "not JSON and intentionally not parsed",
+            encoding="utf-8",
+        )
+
+    def tearDown(self) -> None:
+        self._temporary.cleanup()
+
+    def manifest(self, *, cases: list[dict[str, object]] | None = None) -> dict[str, object]:
+        payload = minimal_manifest()
+        payload["cases"] = cases or payload["cases"]
+        return payload
+
+    def case(self, case_id: str = "dev_001") -> dict[str, object]:
+        return {
+            "case_id": case_id,
+            "track": "blinded_challenge",
+            "split": "dev",
+            "package_path": "cases/dev_001",
+            "annotation_path": "annotations/dev/dev_001.json",
+            "mode": "internal_presubmission",
+            "scan_profile": "quick",
+            "redistributable": True,
+            "license": "CC0-1.0",
+        }
+
+    def write_manifest(self, name: str, payload: dict[str, object]) -> Path:
+        path = self.root / name
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        return path
+
+    def test_tree_hash_is_stable_content_sensitive_and_root_name_independent(self) -> None:
+        left = self.root / "left-name"
+        right = self.root / "right-name"
+        for package in (left, right):
+            (package / "nested").mkdir(parents=True)
+            (package / "b.txt").write_bytes(b"beta\n")
+            (package / "nested" / "a.txt").write_bytes(b"alpha\n")
+        (left / "empty-only").mkdir()
+
+        first = hash_tree(left)
+        self.assertEqual(first, hash_tree(left))
+        self.assertEqual(first, hash_tree(right))
+        (left / "nested" / "a.txt").write_bytes(b"changed\n")
+        self.assertNotEqual(first, hash_tree(left))
+
+    def test_tree_hash_rejects_root_and_nested_symlinks(self) -> None:
+        outside_file = self.root / "outside.txt"
+        outside_file.write_bytes(b"outside")
+        outside_dir = self.root / "outside-dir"
+        outside_dir.mkdir()
+        (outside_dir / "payload").write_bytes(b"outside")
+
+        for name, target in (
+            ("file-link", outside_file),
+            ("directory-link", outside_dir),
+            ("broken-link", self.root / "missing-target"),
+        ):
+            with self.subTest(name=name):
+                package = self.root / name
+                package.mkdir()
+                (package / "link").symlink_to(target)
+                with self.assertRaises(HashingError):
+                    hash_tree(package)
+
+        root_link = self.root / "root-link"
+        root_link.symlink_to(self.root / "cases" / "dev_001", target_is_directory=True)
+        with self.assertRaises(HashingError):
+            hash_tree(root_link)
+
+    def test_resolver_rejects_empty_absolute_traversal_and_symlink_paths(self) -> None:
+        outside = self.root / "outside"
+        outside.mkdir()
+        (outside / "package").mkdir()
+        (self.root / "link").symlink_to(outside, target_is_directory=True)
+        for value in ("", "/tmp/absolute", "../private", "link/package"):
+            with self.subTest(value=value):
+                with self.assertRaises(RegistryError):
+                    resolve_inside(self.root, value)
+
+    def test_resolver_requires_package_directory_and_annotation_file(self) -> None:
+        case = self.case()
+        package, annotation = resolve_case_paths(self.root, case)
+        self.assertTrue(package.is_dir())
+        self.assertTrue(annotation.is_file())
+
+        missing_package = dict(case, package_path="cases/missing")
+        with self.assertRaisesRegex(RegistryError, "package"):
+            resolve_case_paths(self.root, missing_package)
+        missing_annotation = dict(case, annotation_path="annotations/dev/missing.json")
+        with self.assertRaisesRegex(RegistryError, "annotation"):
+            resolve_case_paths(self.root, missing_annotation)
+
+    def test_load_manifest_preserves_order_and_does_not_parse_annotation(self) -> None:
+        source = self.write_manifest("source.json", self.manifest())
+        loaded = load_manifest(source)
+        self.assertEqual([item["case_id"] for item in loaded["cases"]], ["dev_001"])
+
+    def test_load_manifest_rejects_duplicate_ids_and_enforces_frozen_metadata(self) -> None:
+        first = self.case("first")
+        second = self.case("second")
+        duplicate = self.write_manifest(
+            "duplicate.json",
+            self.manifest(cases=[first, dict(first)]),
+        )
+        with self.assertRaises(RegistryError):
+            load_manifest(duplicate)
+
+        source = self.write_manifest("source.json", self.manifest(cases=[first, second]))
+        with self.assertRaisesRegex(RegistryError, "frozen_at"):
+            load_manifest(source, require_frozen=True)
+
+        incomplete = self.manifest(cases=[first, second])
+        incomplete["frozen_at"] = "2026-07-11T00:00:00Z"
+        incomplete["cases"][0]["expected_sha256"] = "a" * 64
+        incomplete_path = self.write_manifest("incomplete.json", incomplete)
+        with self.assertRaisesRegex(RegistryError, "expected_sha256"):
+            load_manifest(incomplete_path, require_frozen=True)
+
+        invalid_hash = self.manifest(cases=[first])
+        invalid_hash["cases"][0]["expected_sha256"] = "A" * 64
+        invalid_hash_path = self.write_manifest("invalid-hash.json", invalid_hash)
+        with self.assertRaises(RegistryError):
+            load_manifest(invalid_hash_path)
+
+    def test_freeze_preserves_case_order_and_verifies_frozen_case(self) -> None:
+        first = self.case("first")
+        second = self.case("second")
+        second["package_path"] = "cases/dev_001"
+        second["annotation_path"] = "annotations/dev/dev_001.json"
+        source = self.write_manifest("source.json", self.manifest(cases=[first, second]))
+        output = self.root / "frozen.json"
+        freeze_manifest(source, output, "2026-07-11T00:00:00Z")
+
+        frozen = load_manifest(output, require_frozen=True)
+        self.assertEqual(
+            [item["case_id"] for item in frozen["cases"]],
+            ["first", "second"],
+        )
+        actual = verify_frozen_case(self.root, frozen["cases"][0])
+        self.assertEqual(actual, frozen["cases"][0]["expected_sha256"])
+
+        mismatch = dict(frozen["cases"][0], expected_sha256="0" * 64)
+        with self.assertRaisesRegex(RegistryError, "Case ID first.*expected.*actual"):
+            verify_frozen_case(self.root, mismatch)
+
+    def test_failed_freeze_serialization_and_replace_preserve_previous_output(self) -> None:
+        source = self.write_manifest("source.json", self.manifest())
+        output = self.root / "frozen.json"
+        output.write_text('{"status":"old"}\n', encoding="utf-8")
+        before = output.read_text(encoding="utf-8")
+
+        with patch("benchmarks.bria_bench.registry.json.dump", side_effect=TypeError("boom")):
+            with self.assertRaises(TypeError):
+                freeze_manifest(source, output, "2026-07-11T00:00:00Z")
+        self.assertEqual(output.read_text(encoding="utf-8"), before)
+        self.assertEqual(list(self.root.glob(".frozen.json.*.tmp")), [])
+
+        with patch(
+            "benchmarks.bria_bench.registry.os.replace",
+            side_effect=OSError("replace failed"),
+        ):
+            with self.assertRaises(OSError):
+                freeze_manifest(source, output, "2026-07-11T00:00:00Z")
+        self.assertEqual(output.read_text(encoding="utf-8"), before)
+        self.assertEqual(list(self.root.glob(".frozen.json.*.tmp")), [])
 
 
 if __name__ == "__main__":
