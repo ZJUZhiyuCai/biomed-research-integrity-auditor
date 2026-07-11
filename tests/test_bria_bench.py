@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import re
 import unittest
+from decimal import Decimal
 
 from jsonschema import Draft202012Validator
 
@@ -646,6 +647,44 @@ class BriaBenchContractTests(unittest.TestCase):
                         rf"{re.escape(path)}:.*finite",
                     ):
                         validate_contract(schema_name, payload)
+
+    def test_numeric_preflight_handles_huge_ints_and_decimals_without_crashing(self) -> None:
+        huge_integer = 10**10000
+        metrics = minimal_metrics()
+        metrics["run_count"] = huge_integer
+        validate_contract("metrics.schema.json", metrics)
+
+        observation = minimal_observation()
+        observation["observations"][0]["confidence"] = huge_integer
+        with self.assertRaisesRegex(
+            ContractError,
+            r"observations\.0\.confidence:.*numeric",
+        ):
+            validate_contract("observation.schema.json", observation)
+
+        for value in (Decimal("NaN"), Decimal("Infinity"), Decimal("-Infinity")):
+            with self.subTest(value=str(value)):
+                run_result = minimal_run_result()
+                run_result["telemetry"]["elapsed_seconds"] = value
+                with self.assertRaisesRegex(
+                    ContractError,
+                    r"telemetry\.elapsed_seconds:.*finite",
+                ):
+                    validate_contract("run_result.schema.json", run_result)
+
+        run_result = minimal_run_result()
+        run_result["telemetry"]["elapsed_seconds"] = Decimal("1.25")
+        validate_contract("run_result.schema.json", run_result)
+
+        annotation = minimal_annotation()
+        annotation["expected_observations"][0]["location"]["region"] = {
+            "x": Decimal("0.25"),
+            "y": 0,
+            "width": 0.5,
+            "height": 0.5,
+            "coordinate_space": "normalized_0_1",
+        }
+        validate_contract("annotation.schema.json", annotation)
 
     def test_metric_case_status_uses_run_result_status_enum(self) -> None:
         run_schema = load_schema("run_result.schema.json")

@@ -4,7 +4,8 @@ import json
 import math
 import re
 from datetime import datetime
-from numbers import Real
+from decimal import Decimal
+from numbers import Integral, Real
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -89,12 +90,85 @@ def _walk(value: Any, path: JsonPath = ()) -> Iterator[tuple[JsonPath, Any]]:
 
 def _reject_non_finite_numbers(name: str, payload: Any) -> None:
     for path, value in _walk(payload):
-        if (
-            isinstance(value, Real)
-            and not isinstance(value, bool)
-            and not math.isfinite(value)
-        ):
+        if isinstance(value, bool) or isinstance(value, Integral):
+            continue
+        if isinstance(value, Decimal):
+            if not value.is_finite():
+                _raise_contract_error(name, path, "numeric value must be finite")
+            continue
+        if not isinstance(value, Real):
+            continue
+        try:
+            finite = math.isfinite(value)
+        except (ArithmeticError, TypeError, ValueError) as exc:
+            _raise_contract_error(
+                name,
+                path,
+                f"numeric finiteness could not be determined: {type(exc).__name__}",
+            )
+        if not finite:
             _raise_contract_error(name, path, "numeric value must be finite")
+
+
+def _as_decimal(name: str, path: JsonPath, value: Any) -> Decimal:
+    try:
+        if isinstance(value, Decimal):
+            return value
+        if isinstance(value, Integral):
+            return Decimal(int(value))
+        if isinstance(value, float):
+            return Decimal.from_float(value)
+        if isinstance(value, Real):
+            numerator = getattr(value, "numerator", None)
+            denominator = getattr(value, "denominator", None)
+            if isinstance(numerator, Integral) and isinstance(denominator, Integral):
+                return Decimal(int(numerator)) / Decimal(int(denominator))
+            return Decimal(str(value))
+    except (ArithmeticError, TypeError, ValueError) as exc:
+        _raise_contract_error(
+            name,
+            path,
+            f"numeric value could not be represented safely: {type(exc).__name__}",
+        )
+    _raise_contract_error(name, path, "value is not a supported finite number")
+
+
+def _numbers_close(name: str, path: JsonPath, left: Any, right: Any) -> bool:
+    try:
+        left_decimal = _as_decimal(name, path, left)
+        right_decimal = _as_decimal(name, path, right)
+        difference = abs(left_decimal - right_decimal)
+        relative_tolerance = Decimal("1e-9") * max(
+            abs(left_decimal),
+            abs(right_decimal),
+        )
+        return difference <= max(Decimal("1e-12"), relative_tolerance)
+    except ContractError:
+        raise
+    except (ArithmeticError, TypeError, ValueError) as exc:
+        _raise_contract_error(
+            name,
+            path,
+            f"numeric values could not be compared safely: {type(exc).__name__}",
+        )
+
+
+def _exception_numeric_path(payload: Any) -> JsonPath:
+    for path, value in _walk(payload):
+        if isinstance(value, Decimal):
+            return path
+        if (
+            isinstance(value, Integral)
+            and not isinstance(value, bool)
+        ):
+            try:
+                if int(value).bit_length() > 4096:
+                    return path
+            except (ArithmeticError, TypeError, ValueError):
+                return path
+        if isinstance(value, Real) and not isinstance(value, (bool, int, float)):
+            return path
+    return ()
 
 
 def _require_unique(
@@ -124,7 +198,10 @@ def _validate_regions(name: str, payload: Any, path: JsonPath = ()) -> None:
         if not isinstance(value, dict) or not region_fields.issubset(value):
             continue
 
-        coordinates = {field: value[field] for field in ("x", "y", "width", "height")}
+        coordinates = {
+            field: _as_decimal(name, region_path + (field,), value[field])
+            for field in ("x", "y", "width", "height")
+        }
         if value["coordinate_space"] == "normalized_0_1":
             for field, coordinate in coordinates.items():
                 if coordinate < 0 or coordinate > 1:
@@ -133,13 +210,13 @@ def _validate_regions(name: str, payload: Any, path: JsonPath = ()) -> None:
                         region_path + (field,),
                         f"{field} must be within [0, 1] for normalized_0_1 coordinates",
                     )
-            if value["x"] + value["width"] > 1:
+            if coordinates["x"] + coordinates["width"] > 1:
                 _raise_contract_error(
                     name,
                     region_path + ("width",),
                     "x + width must be <= 1 for normalized_0_1 coordinates",
                 )
-            if value["y"] + value["height"] > 1:
+            if coordinates["y"] + coordinates["height"] > 1:
                 _raise_contract_error(
                     name,
                     region_path + ("height",),
@@ -243,13 +320,8 @@ def _validate_fraction(name: str, path: JsonPath, value: dict[str, Any]) -> None
             _raise_contract_error(name, path + ("value",), "must be null when denominator is zero")
         return
 
-    expected = numerator / denominator
-    if measured is None or not math.isclose(
-        measured,
-        expected,
-        rel_tol=1e-9,
-        abs_tol=1e-12,
-    ):
+    expected = Decimal(numerator) / Decimal(denominator)
+    if measured is None or not _numbers_close(name, path + ("value",), measured, expected):
         _raise_contract_error(
             name,
             path + ("value",),
@@ -268,20 +340,23 @@ def _validate_distribution(name: str, path: JsonPath, value: dict[str, Any]) -> 
         _raise_contract_error(name, path + ("p50",), "p50 and p95 must be null when count is zero")
     if count > 0 and (p50 is None or p95 is None):
         _raise_contract_error(name, path + ("p50",), "p50 and p95 are required when count is positive")
-    if p50 is not None and p95 is not None and p50 > p95:
+    if (
+        p50 is not None
+        and p95 is not None
+        and _as_decimal(name, path + ("p50",), p50)
+        > _as_decimal(name, path + ("p95",), p95)
+    ):
         _raise_contract_error(name, path + ("p50",), "must be <= p95")
     if count > 0:
-        ordered = sorted(values)
+        ordered = sorted(
+            _as_decimal(name, path + ("values", index), item)
+            for index, item in enumerate(values)
+        )
         for field, percentile in (("p50", 0.50), ("p95", 0.95)):
             rank = max(1, math.ceil(percentile * count))
             expected = ordered[rank - 1]
             measured = value[field]
-            if not math.isclose(
-                measured,
-                expected,
-                rel_tol=1e-9,
-                abs_tol=1e-12,
-            ):
+            if not _numbers_close(name, path + (field,), measured, expected):
                 _raise_contract_error(
                     name,
                     path + (field,),
@@ -332,8 +407,16 @@ def validate_contract(name: str, payload: Any) -> None:
     except SchemaError as exc:
         raise ContractError(f"Invalid BRIA-Bench schema: {name}") from exc
 
+    try:
+        validation_errors = list(validator.iter_errors(payload))
+    except (ArithmeticError, TypeError, ValueError) as exc:
+        _raise_contract_error(
+            name,
+            _exception_numeric_path(payload),
+            f"numeric value could not be validated safely: {type(exc).__name__}",
+        )
     errors = sorted(
-        validator.iter_errors(payload),
+        validation_errors,
         key=lambda error: (tuple(str(part) for part in error.path), error.message),
     )
     if errors:
@@ -341,4 +424,13 @@ def validate_contract(name: str, payload: Any) -> None:
         location = ".".join(str(part) for part in first.path) or "<root>"
         raise ContractError(f"{name}:{location}: {first.message}")
 
-    _SEMANTIC_VALIDATORS[name](name, payload)
+    try:
+        _SEMANTIC_VALIDATORS[name](name, payload)
+    except ContractError:
+        raise
+    except (ArithmeticError, TypeError, ValueError) as exc:
+        _raise_contract_error(
+            name,
+            _exception_numeric_path(payload),
+            f"numeric semantics could not be evaluated safely: {type(exc).__name__}",
+        )
