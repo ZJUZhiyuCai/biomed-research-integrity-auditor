@@ -40,13 +40,11 @@ _RELIABILITY_METRICS = (
     ("atomic_output_preservation", "Atomic output preservation"),
     ("previous_result_preservation", "Previous result preservation"),
 )
-_CASE_DENOMINATED_RELIABILITY = frozenset(
-    {
-        "silent_failure_rate",
-        "boundary_violation_rate",
-        "report_contract_validity",
-        "run_completion_rate",
-    }
+_CASE_DENOMINATED_RELIABILITY = (
+    "silent_failure_rate",
+    "boundary_violation_rate",
+    "report_contract_validity",
+    "run_completion_rate",
 )
 _CORE_DISTRIBUTIONS = (
     ("wall_time_seconds", "Wall time", "seconds"),
@@ -417,12 +415,18 @@ def _validate_reliability_case_rows(
         sum(case["status"] == "success" for case in case_results),
         denominator,
     )
-    _validate_fraction_counts(
-        reliability,
-        "report_contract_validity",
-        sum(case["status"] not in _REPORT_INVALID_STATUSES for case in case_results),
-        denominator,
+    contract_validity_upper_bound = sum(
+        case["status"] not in _REPORT_INVALID_STATUSES for case in case_results
     )
+    report_contract_validity = reliability.get("report_contract_validity")
+    if (
+        report_contract_validity is not None
+        and report_contract_validity["numerator"] > contract_validity_upper_bound
+    ):
+        raise _contract_error(
+            "reliability.report_contract_validity",
+            "exceeds the upper bound derivable from case_results statuses",
+        )
     if all("boundary_violation_count" in case for case in case_results):
         _validate_fraction_counts(
             reliability,
@@ -722,11 +726,11 @@ def _append_case_table(lines: list[str], cases: list[Mapping[str, Any]]) -> None
         )
 
 
-def render_metrics_report(metrics: Mapping[str, Any]) -> str:
+def render_metrics_report(metrics: dict[str, Any]) -> str:
     """Return a deterministic Markdown report for one metrics artifact.
 
-    Rendering reads only the supplied mapping and module-level schema constants.
-    The input mapping is validated but never modified.
+    Rendering reads only the supplied dictionary and module-level schema constants.
+    The input dictionary is validated but never modified.
     """
     _validate_schema(metrics)
     _validate_safe_fields(metrics)

@@ -14,6 +14,7 @@ import time
 import unittest
 from decimal import Decimal, localcontext
 from pathlib import Path
+from typing import Any, get_type_hints
 from unittest.mock import patch
 
 from jsonschema import Draft202012Validator
@@ -4902,7 +4903,6 @@ class BriaBenchReportTests(unittest.TestCase):
             "run_completion_rate": (3, 3),
             "boundary_violation_rate": (0, 3),
             "silent_failure_rate": (0, 3),
-            "report_contract_validity": (2, 3),
         }
         for key, (numerator, denominator) in contradictions.items():
             with self.subTest(metric=key):
@@ -4914,6 +4914,15 @@ class BriaBenchReportTests(unittest.TestCase):
                 }
                 with self.assertRaisesRegex(ContractError, key):
                     render_metrics_report(metrics)
+
+        invalid_status = self.metrics_fixture()
+        next(
+            case
+            for case in invalid_status["case_results"]
+            if case["status"] == "process_error"
+        )["status"] = "normalization_error"
+        with self.assertRaisesRegex(ContractError, "report_contract_validity"):
+            render_metrics_report(invalid_status)
 
         success = minimal_metrics()
         success["run_count"] = 1
@@ -5133,6 +5142,37 @@ class BriaBenchReportTests(unittest.TestCase):
         self.assertIn("E+", actual)
         self.assertLess(len(actual), 20_000)
 
+    def test_public_type_and_case_metric_error_order_are_fixed(self) -> None:
+        self.assertEqual(
+            get_type_hints(render_metrics_report)["metrics"], dict[str, Any]
+        )
+        metrics = minimal_metrics()
+        metrics["run_count"] = 1
+        metrics["case_results"] = [
+            {
+                "case_id": "case_order",
+                "track": "blinded_challenge",
+                "split": "dev",
+                "status": "success",
+            }
+        ]
+        for key in (
+            "silent_failure_rate",
+            "boundary_violation_rate",
+            "report_contract_validity",
+            "run_completion_rate",
+        ):
+            metrics["reliability"][key] = {
+                "numerator": 0,
+                "denominator": 0,
+                "value": None,
+            }
+
+        with self.assertRaisesRegex(
+            ContractError, r"reliability\.silent_failure_rate\.denominator"
+        ):
+            render_metrics_report(metrics)
+
     def test_boundary_language_and_prohibited_report_language(self) -> None:
         report = render_metrics_report(self.metrics_fixture())
 
@@ -5229,6 +5269,62 @@ class BriaBenchCliTests(unittest.TestCase):
         metrics = minimal_metrics()
         metrics_path.write_text(json.dumps(metrics), encoding="utf-8")
 
+        self.assertEqual(
+            bria_bench_main(
+                [
+                    "report",
+                    "--metrics",
+                    str(metrics_path),
+                    "--output",
+                    str(output_path),
+                ]
+            ),
+            0,
+        )
+        self.assertEqual(
+            output_path.read_text(encoding="utf-8"),
+            render_metrics_report(metrics),
+        )
+
+    def test_process_error_contract_errors_render_through_cli(self) -> None:
+        code = (
+            "import pathlib, sys\n"
+            "output = pathlib.Path(sys.argv[1])\n"
+            "output.mkdir(parents=True, exist_ok=True)\n"
+            "(output / 'AUDIT_JSON_SUMMARY.json').write_text('{bad')\n"
+            "sys.exit(9)\n"
+        )
+        adapter = CommandAdapter(
+            "malformed-process",
+            "1",
+            (sys.executable, "-c", code, "{output}"),
+        )
+        summary = run_benchmark(
+            self.manifest,
+            self.runs,
+            adapter_name="malformed-process",
+            adapters={"malformed-process": adapter},
+        )
+        self.assertEqual(summary["cases"][0]["status"], "process_error")
+        run_result = json.loads(
+            (self.runs / summary["cases"][0]["run_result"]).read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertTrue(run_result["normalized_observation"]["contract_errors"])
+
+        metrics_path = self.root / "process-error-metrics.json"
+        metrics = evaluate_benchmark(
+            self.manifest,
+            self.runs,
+            metrics_path,
+            adapters={"malformed-process": adapter},
+        )
+        self.assertEqual(
+            metrics["reliability"]["report_contract_validity"],
+            {"numerator": 0, "denominator": 1, "value": 0.0},
+        )
+        output_path = self.root / "process-error-REPORT.md"
         self.assertEqual(
             bria_bench_main(
                 [
