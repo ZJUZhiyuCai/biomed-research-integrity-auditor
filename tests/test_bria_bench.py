@@ -1044,6 +1044,55 @@ class BriaBenchRegistryTests(unittest.TestCase):
             with self.assertRaisesRegex(HashingError, "changed"):
                 hash_tree(self.root / "cases" / "dev_001")
 
+    def test_final_verification_rejects_file_replacement_after_hashing(self) -> None:
+        self.require_secure_hashing()
+        package = self.root / "cases" / "dev_001"
+        payload = package / "payload.bin"
+        replacement = self.root / "replacement-after-hash.bin"
+        replacement.write_bytes(b"new!!")
+        real_hash_file = hashing_module._hash_file_record
+
+        def hash_then_replace(
+            digest: object,
+            record: object,
+            file_fd: int,
+            parent_fd: int,
+        ) -> None:
+            real_hash_file(digest, record, file_fd, parent_fd)
+            os.replace(replacement, payload)
+
+        with patch.object(hashing_module, "_hash_file_record", side_effect=hash_then_replace):
+            with self.assertRaisesRegex(HashingError, "payload.bin"):
+                hash_tree(package)
+
+    def test_final_verification_rejects_nested_directory_path_replacement(self) -> None:
+        self.require_secure_hashing()
+        package = self.root / "cases" / "dev_001"
+        nested = package / "nested-final"
+        nested.mkdir()
+        replacement = self.root / "replacement-nested-final"
+        replacement.mkdir()
+        real_list_names = hashing_module._list_names
+        nested_list_calls = 0
+
+        def enumerate_then_replace(fd: int, relative: str) -> tuple[str, ...]:
+            nonlocal nested_list_calls
+            names = real_list_names(fd, relative)
+            if relative == "nested-final":
+                nested_list_calls += 1
+                if nested_list_calls == 3:
+                    nested.rmdir()
+                    os.replace(replacement, nested)
+            return names
+
+        with patch.object(
+            hashing_module,
+            "_list_names",
+            side_effect=enumerate_then_replace,
+        ):
+            with self.assertRaisesRegex(HashingError, "nested-final"):
+                hash_tree(package)
+
     def test_tree_hash_rejects_directory_entry_additions_and_deletions(self) -> None:
         self.require_secure_hashing()
         package = self.root / "cases" / "dev_001"

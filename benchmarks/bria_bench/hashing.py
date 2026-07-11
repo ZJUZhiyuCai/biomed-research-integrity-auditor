@@ -196,19 +196,24 @@ def _open_directory_component(
     name: str,
     relative: str,
     expected: os.stat_result | None = None,
+    check_expected_metadata: bool = True,
 ) -> tuple[int, os.stat_result]:
     before = _stat_at(parent_fd, name, relative)
     _ensure_directory(before, relative, "before open")
-    if expected is not None:
+    if expected is not None and check_expected_metadata:
         _ensure_stable(expected, before, relative, "before open")
+    elif expected is not None and not _same_identity(expected, before):
+        raise HashingError(f"Package directory identity changed before open: {relative}")
     descriptor = -1
     try:
         descriptor = os.open(name, _directory_flags(), dir_fd=parent_fd)
         opened = _fstat(descriptor, relative, "after open")
         _ensure_directory(opened, relative, "after open")
         _ensure_stable(before, opened, relative, "between inspection and open")
-        if expected is not None:
+        if expected is not None and check_expected_metadata:
             _ensure_stable(expected, opened, relative, "after open")
+        elif expected is not None and not _same_identity(expected, opened):
+            raise HashingError(f"Package directory identity changed after open: {relative}")
         return descriptor, opened
     except HashingError:
         if descriptor != -1:
@@ -223,6 +228,7 @@ def _open_directory_component(
 def _open_directory_chain(
     path: Path,
     expected: os.stat_result | None = None,
+    check_expected_metadata: bool = True,
 ) -> tuple[list[int], int, os.stat_result]:
     path_stat = _stat_path(path)
     _ensure_directory(path_stat, str(path), "before open")
@@ -242,8 +248,10 @@ def _open_directory_chain(
             descriptors.append(next_fd)
             current_fd = next_fd
         _ensure_stable(path_stat, opened, str(path), "after open")
-        if expected is not None:
+        if expected is not None and check_expected_metadata:
             _ensure_stable(expected, opened, str(path), "against expected snapshot")
+        elif expected is not None and not _same_identity(expected, opened):
+            raise HashingError(f"Package directory identity changed against expected snapshot: {path}")
         return descriptors, current_fd, opened
     except HashingError:
         for descriptor in reversed(descriptors):
@@ -346,9 +354,14 @@ def _open_file_record(
     root: Path,
     record: _FileRecord,
     expected_directories: dict[str, _DirectoryRecord],
+    check_directory_metadata: bool = True,
 ) -> tuple[int, list[int], int]:
     root_record = expected_directories[""]
-    descriptors, current_fd, _ = _open_directory_chain(root, root_record.initial_stat)
+    descriptors, current_fd, _ = _open_directory_chain(
+        root,
+        root_record.initial_stat,
+        check_directory_metadata,
+    )
     try:
         for index, component in enumerate(record.components[:-1]):
             relative = "/".join(record.components[: index + 1])
@@ -360,6 +373,7 @@ def _open_file_record(
                 component,
                 relative,
                 expected.initial_stat,
+                check_directory_metadata,
             )
             descriptors.append(next_fd)
             current_fd = next_fd
@@ -542,8 +556,47 @@ def _verify_directory_record(
             raise HashingError(
                 f"Package directory entries changed during final verification: {record.relative or '.'}"
             )
+        final_fd_stat = _fstat(fd, record.relative, "after final enumeration")
+        _ensure_directory(final_fd_stat, record.relative or str(root), "after final enumeration")
+        _ensure_stable(record.initial_stat, final_fd_stat, record.relative or str(root), "after final enumeration")
+        if record.components:
+            final_path_stat = _stat_at(descriptors[-2], record.name or "", record.relative)
+        else:
+            final_path_stat = _stat_path(root)
+        _ensure_directory(final_path_stat, record.relative or str(root), "after final enumeration")
+        _ensure_stable(record.initial_stat, final_path_stat, record.relative or str(root), "after final enumeration")
     finally:
         _close_chain(descriptors, f"directory {record.relative or '.'}")
+
+
+def _verify_file_record(
+    root: Path,
+    record: _FileRecord,
+    expected_directories: dict[str, _DirectoryRecord],
+) -> None:
+    file_fd, descriptors, parent_fd = _open_file_record(
+        root,
+        record,
+        expected_directories,
+        check_directory_metadata=False,
+    )
+    file_closed = False
+    try:
+        reopened = _fstat(file_fd, record.relative, "during final verification")
+        _ensure_regular(reopened, record.relative, "during final verification")
+        _ensure_stable(record.initial_stat, reopened, record.relative, "during final verification")
+        _close_fd(file_fd, f"final file verification {record.relative}")
+        file_closed = True
+        final_path_stat = _stat_at(parent_fd, record.name, record.relative)
+        _ensure_regular(final_path_stat, record.relative, "after final verification")
+        _ensure_stable(record.initial_stat, final_path_stat, record.relative, "after final verification")
+    finally:
+        if not file_closed:
+            try:
+                _close_fd(file_fd, f"final file verification {record.relative}")
+            except HashingError:
+                pass
+        _close_chain(descriptors, f"final file path {record.relative}")
 
 
 def hash_tree(root: Path | str) -> str:
@@ -579,6 +632,9 @@ def hash_tree(root: Path | str) -> str:
             _hash_file_record(digest, record, file_fd, parent_fd)
         finally:
             _close_chain(descriptors, f"file path {record.relative}")
+
+    for record in sorted(files, key=lambda item: item.relative):
+        _verify_file_record(package_root, record, expected_directories)
 
     for record in sorted(directories, key=lambda item: (len(item.components), item.relative)):
         _verify_directory_record(package_root, record, expected_directories)
