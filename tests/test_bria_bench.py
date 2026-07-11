@@ -40,7 +40,15 @@ from benchmarks.bria_bench.registry import (
     verify_frozen_case,
 )
 import benchmarks.bria_bench.runtime as runtime_module
+import benchmarks.bria_bench.cli as cli_module
 from benchmarks.bria_bench.runtime import RuntimeResult, run_monitored, write_json_atomic
+from benchmarks.bria_bench.cli import (
+    CliError,
+    CommandAdapter,
+    evaluate_benchmark,
+    main as bria_bench_main,
+    run_benchmark,
+)
 
 
 SCHEMA_NAMES = (
@@ -4440,6 +4448,218 @@ class BriaBenchMetricAggregationTests(unittest.TestCase):
         unknown_fact["attack_resistance"] = True
         with self.assertRaises((ValueError, ContractError)):
             self.aggregate([unknown_fact])
+
+
+class BriaBenchCliTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.root = Path(self.temporary.name)
+        self.package = self.root / "package"
+        self.package.mkdir()
+        (self.package / "input.txt").write_text("input\n", encoding="utf-8")
+        self.annotation = self.root / "annotation.json"
+        annotation = minimal_annotation()
+        annotation["case_id"] = "case_001"
+        self.annotation.write_text(json.dumps(annotation), encoding="utf-8")
+        source = minimal_manifest()
+        source["cases"][0].update(
+            {
+                "case_id": "case_001",
+                "package_path": "package",
+                "annotation_path": "annotation.json",
+                "headline_eligible": True,
+            }
+        )
+        self.source = self.root / "source.json"
+        self.source.write_text(json.dumps(source), encoding="utf-8")
+        self.manifest = self.root / "manifest.json"
+        freeze_manifest(self.source, self.manifest, "2026-07-11T00:00:00Z")
+        self.runs = self.root / "runs"
+        self.producer = self.root / "producer.py"
+        self.producer.write_text(
+            "import json, pathlib, sys\n"
+            "output = pathlib.Path(sys.argv[1]); case_id = sys.argv[2]\n"
+            "output.mkdir(parents=True, exist_ok=True)\n"
+            "finding = {'finding_id':'F-1','finding_type':'local_patch_reuse','risk_level':'R2','location':'Figure 1A'}\n"
+            "(output/'AUDIT_JSON_SUMMARY.json').write_text(json.dumps({'case_id':case_id,'findings':[finding]}))\n"
+            "(output/'coverage.json').write_text('{}')\n"
+            "(output/'pipeline_summary.json').write_text('{}')\n"
+            "(output/'audit-report.md').write_text('Scientific review remains required.')\n",
+            encoding="utf-8",
+        )
+        self.adapter = CommandAdapter(
+            name="fake",
+            version="1",
+            argv_template=(sys.executable, str(self.producer), "{output}", "{case_id}"),
+        )
+
+    def tearDown(self) -> None:
+        self.temporary.cleanup()
+
+    def test_module_help_and_entry_point_metadata(self) -> None:
+        self.assertEqual(bria_bench_main(["--help"]), 0)
+        project = tomllib.loads((Path(__file__).parents[1] / "pyproject.toml").read_text())
+        self.assertEqual(
+            project["project"]["scripts"]["bria-bench"],
+            "benchmarks.bria_bench.cli:main",
+        )
+
+    def test_run_is_fresh_then_reused_and_evaluates(self) -> None:
+        first = run_benchmark(
+            self.manifest,
+            self.runs,
+            adapter_name="fake",
+            adapters={"fake": self.adapter},
+            timeout_seconds=5,
+        )
+        second = run_benchmark(
+            self.manifest,
+            self.runs,
+            adapter_name="fake",
+            adapters={"fake": self.adapter},
+            timeout_seconds=5,
+        )
+        self.assertEqual(first["cases"][0]["cache_status"], "fresh")
+        self.assertEqual(second["cases"][0]["cache_status"], "reused")
+        metrics_path = self.root / "metrics.json"
+        metrics = evaluate_benchmark(
+            self.manifest,
+            self.runs,
+            metrics_path,
+            adapters={"fake": self.adapter},
+        )
+        self.assertEqual(metrics["detection"]["expected_finding_recall"]["value"], 1)
+        self.assertNotIn("generated_at", metrics)
+
+    def test_unknown_and_duplicate_case_filters_fail(self) -> None:
+        for case_ids, message in ((["missing"], "unknown"), (["case_001", "case_001"], "duplicate")):
+            with self.subTest(case_ids=case_ids):
+                with self.assertRaisesRegex(ValueError, message):
+                    run_benchmark(
+                        self.manifest,
+                        self.runs,
+                        case_ids=case_ids,
+                        adapter_name="fake",
+                        adapters={"fake": self.adapter},
+                    )
+
+    def test_runner_command_and_environment_changes_invalidate(self) -> None:
+        run_benchmark(self.manifest, self.runs, adapter_name="fake", adapters={"fake": self.adapter})
+        original_key = json.loads(
+            (self.runs / "cases/case_001/run_result.json").read_text(encoding="utf-8")
+        )["cache_key"]
+
+        self.producer.write_text(self.producer.read_text() + "# runner changed\n", encoding="utf-8")
+        runner = run_benchmark(self.manifest, self.runs, adapter_name="fake", adapters={"fake": self.adapter})
+        self.assertEqual(runner["cases"][0]["cache_status"], "invalidated")
+        runner_key = json.loads(
+            (self.runs / "cases/case_001/run_result.json").read_text(encoding="utf-8")
+        )["cache_key"]
+        self.assertNotEqual(original_key, runner_key)
+
+        changed_command = CommandAdapter(
+            "fake", "1", self.adapter.argv_template + ("ignored-argument",)
+        )
+        command = run_benchmark(
+            self.manifest, self.runs, adapter_name="fake", adapters={"fake": changed_command}
+        )
+        self.assertEqual(command["cases"][0]["cache_status"], "invalidated")
+
+        with patch("benchmarks.bria_bench.cli.platform.python_version", return_value="0.0-test"):
+            environment = run_benchmark(
+                self.manifest,
+                self.runs,
+                adapter_name="fake",
+                adapters={"fake": changed_command},
+            )
+        self.assertEqual(environment["cases"][0]["cache_status"], "invalidated")
+
+    def test_tampered_current_result_is_rejected_and_rerun(self) -> None:
+        run_benchmark(self.manifest, self.runs, adapter_name="fake", adapters={"fake": self.adapter})
+        current = self.runs / "cases/case_001/run_result.json"
+        payload = json.loads(current.read_text(encoding="utf-8"))
+        payload["normalized_observation"]["observations"] = []
+        current.write_text(json.dumps(payload), encoding="utf-8")
+
+        summary = run_benchmark(
+            self.manifest, self.runs, adapter_name="fake", adapters={"fake": self.adapter}
+        )
+
+        self.assertEqual(summary["cases"][0]["cache_status"], "invalidated")
+        repaired = json.loads(current.read_text(encoding="utf-8"))
+        self.assertEqual(len(repaired["normalized_observation"]["observations"]), 1)
+
+    def test_timeout_and_missing_output_are_formal_failed_results(self) -> None:
+        timeout = CommandAdapter(
+            "timeout",
+            "1",
+            (sys.executable, "-c", "import time; time.sleep(2)"),
+        )
+        timed = run_benchmark(
+            self.manifest,
+            self.runs,
+            adapter_name="timeout",
+            adapters={"timeout": timeout},
+            timeout_seconds=0.05,
+        )
+        self.assertEqual(timed["cases"][0]["status"], "timeout")
+        result = json.loads(
+            (self.runs / "cases/case_001/run_result.json").read_text(encoding="utf-8")
+        )
+        validate_contract("run_result.schema.json", result)
+        self.assertTrue(result["telemetry"]["timed_out"])
+
+        other_runs = self.root / "missing-runs"
+        missing = CommandAdapter("missing", "1", (sys.executable, "-c", "pass"))
+        summary = run_benchmark(
+            self.manifest,
+            other_runs,
+            adapter_name="missing",
+            adapters={"missing": missing},
+        )
+        self.assertEqual(summary["cases"][0]["status"], "missing_output")
+        metrics = evaluate_benchmark(
+            self.manifest,
+            other_runs,
+            self.root / "failed-metrics.json",
+            adapters={"missing": missing},
+        )
+        self.assertEqual(metrics["detection"]["expected_finding_recall"]["value"], 0)
+        self.assertEqual(metrics["reliability"]["run_completion_rate"]["value"], 0)
+
+    def test_publication_failure_preserves_prior_success(self) -> None:
+        run_benchmark(self.manifest, self.runs, adapter_name="fake", adapters={"fake": self.adapter})
+        current = self.runs / "cases/case_001/run_result.json"
+        before = current.read_bytes()
+        self.producer.write_text(self.producer.read_text() + "# invalidate\n", encoding="utf-8")
+
+        with patch.object(cli_module, "_publish_directory", side_effect=OSError("injected")):
+            summary = run_benchmark(
+                self.manifest, self.runs, adapter_name="fake", adapters={"fake": self.adapter}
+            )
+
+        self.assertEqual(summary["cases"][0]["status"], "environment_failure")
+        self.assertEqual(current.read_bytes(), before)
+
+    def test_command_adapter_rejects_shell_templates_and_path_escape_ids(self) -> None:
+        with self.assertRaisesRegex(ValueError, "complete argv"):
+            CommandAdapter("bad", "1", ("python {output}",))
+        source = json.loads(self.source.read_text(encoding="utf-8"))
+        source["cases"][0]["case_id"] = "../escape"
+        self.source.write_text(json.dumps(source), encoding="utf-8")
+        freeze_manifest(self.source, self.manifest, "2026-07-11T00:00:00Z")
+        with self.assertRaisesRegex(CliError, "Unsafe case ID"):
+            run_benchmark(
+                self.manifest, self.runs, adapter_name="fake", adapters={"fake": self.adapter}
+            )
+
+    def test_future_commands_fail_actionably_without_placeholder_output(self) -> None:
+        report = self.root / "report.md"
+        self.assertNotEqual(
+            bria_bench_main(["report", "--metrics", str(self.root / "missing.json"), "--output", str(report)]),
+            0,
+        )
+        self.assertFalse(report.exists())
 
 
 if __name__ == "__main__":
