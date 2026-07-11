@@ -28,7 +28,7 @@ from benchmarks.bria_bench.matching import (
     label_observation_compatible,
     match_labels,
 )
-from benchmarks.bria_bench.metrics import aggregate_metrics
+from benchmarks.bria_bench.metrics import aggregate_metrics, select_evaluation_labels
 from benchmarks.bria_bench.normalize import normalize_audit_output
 from benchmarks.bria_bench.registry import (
     RegistryError,
@@ -3578,6 +3578,197 @@ class BriaBenchMetricAggregationTests(unittest.TestCase):
             )["headline_detection_eligible"]
         )
 
+    def test_real_matcher_uses_only_evaluated_roles_and_preserves_false_alerts(
+        self,
+    ) -> None:
+        case = metric_bundle("mixed-roles")
+        annotation = case["annotation"]
+        recall = annotation["expected_observations"][0]
+        coverage = copy.deepcopy(recall)
+        coverage.update(
+            {
+                "observation_id": "coverage_001",
+                "role": "coverage_gap",
+                "location": "Figure 2A",
+            }
+        )
+        guardrail = copy.deepcopy(recall)
+        guardrail.update(
+            {
+                "observation_id": "guardrail_001",
+                "role": "negative_guardrail",
+                "location": "Figure 3A",
+            }
+        )
+        reference = copy.deepcopy(recall)
+        reference.update(
+            {
+                "observation_id": "reference_001",
+                "role": "reference_only",
+                "location": "Figure 3A",
+            }
+        )
+        annotation["expected_observations"] = [
+            recall,
+            coverage,
+            guardrail,
+            reference,
+        ]
+        extra_observation = copy.deepcopy(
+            case["run_result"]["normalized_observation"]["observations"][0]
+        )
+        extra_observation.update(
+            {"observation_id": "obs_ignored_roles", "location": "Figure 3A"}
+        )
+        observations = case["run_result"]["normalized_observation"]["observations"]
+        observations.append(extra_observation)
+        selected = select_evaluation_labels(case["manifest_case"], annotation)
+        case["match_result"] = match_labels(
+            selected,
+            observations,
+            roles=("recall_label", "coverage_gap"),
+        )
+
+        result = self.aggregate([case])
+
+        self.assertEqual(
+            result["detection"]["expected_finding_recall"],
+            {"numerator": 1, "denominator": 1, "value": 1.0},
+        )
+        self.assertEqual(
+            result["detection"]["coverage_gap_recall"],
+            {"numerator": 0, "denominator": 1, "value": 0.0},
+        )
+        self.assertEqual(result["case_results"][0]["expected_label_count"], 2)
+        self.assertEqual(result["case_results"][0]["false_alert_count"], 1)
+
+    def test_match_result_rejects_ids_from_ignored_roles(self) -> None:
+        for field in ("matches", "unmatched_label_ids"):
+            with self.subTest(field=field):
+                case = metric_bundle(f"ignored-{field}")
+                ignored = copy.deepcopy(case["annotation"]["expected_observations"][0])
+                ignored.update(
+                    {"observation_id": "ignored_001", "role": "reference_only"}
+                )
+                case["annotation"]["expected_observations"].append(ignored)
+                case["match_result"] = case["match_result"].to_dict()
+                if field == "matches":
+                    case["match_result"]["matches"] = [
+                        {
+                            "label_id": "ignored_001",
+                            "observation_id": "obs_001",
+                            "compatibility": Compatibility(
+                                True, True, True, True, (1,)
+                            ).to_dict(),
+                        }
+                    ]
+                    case["match_result"]["unmatched_label_ids"] = ["label_001"]
+                    case["match_result"]["unmatched_observation_ids"] = []
+                else:
+                    case["match_result"]["unmatched_label_ids"] = [
+                        "label_001",
+                        "ignored_001",
+                    ]
+                with self.assertRaisesRegex(ValueError, "unknown label"):
+                    self.aggregate([case])
+
+    def test_public_concern_coverage_uses_only_localization_recall_labels(
+        self,
+    ) -> None:
+        case = metric_bundle(
+            "concern-mixed",
+            matched=True,
+            track="public_concern",
+            scope="localization_only",
+        )
+        recall = case["annotation"]["expected_observations"][0]
+        coverage = copy.deepcopy(recall)
+        coverage.update(
+            {
+                "observation_id": "coverage_001",
+                "role": "coverage_gap",
+                "location": recall["location"],
+            }
+        )
+        reference = copy.deepcopy(recall)
+        reference.update(
+            {
+                "observation_id": "reference_001",
+                "role": "reference_only",
+                "location": recall["location"],
+            }
+        )
+        case["annotation"]["expected_observations"].extend([coverage, reference])
+        selected = select_evaluation_labels(
+            case["manifest_case"], case["annotation"]
+        )
+        self.assertEqual(
+            [label["observation_id"] for label in selected], ["label_001"]
+        )
+        case["match_result"] = match_labels(
+            selected,
+            case["run_result"]["normalized_observation"]["observations"],
+            roles=("recall_label", "coverage_gap"),
+        )
+
+        result = self.aggregate([case])
+
+        self.assertEqual(
+            result["detection"]["public_concern_location_coverage"],
+            {"numerator": 1, "denominator": 1, "value": 1.0},
+        )
+        self.assertEqual(result["case_results"][0]["expected_label_count"], 1)
+
+    def test_evaluation_label_selector_is_track_and_scope_specific(self) -> None:
+        scopes_by_track = {
+            "blinded_challenge": (None, "headline_detection"),
+            "public_realism": (None, "headline_detection"),
+            "regression": (None, "regression_only"),
+            "robustness_scale": (None, "reliability_only"),
+        }
+        for track, allowed_scopes in scopes_by_track.items():
+            with self.subTest(track=track):
+                case = metric_bundle(f"selector-{track}", track=track)
+                base = case["annotation"]["expected_observations"][0]
+                labels = []
+                for index, (role, scope) in enumerate(
+                    (
+                        ("recall_label", None),
+                        ("coverage_gap", allowed_scopes[1]),
+                        ("recall_label", "reference_only"),
+                        ("negative_guardrail", None),
+                        ("reference_only", None),
+                    )
+                ):
+                    label = copy.deepcopy(base)
+                    label.update({"observation_id": f"label_{index}", "role": role})
+                    if scope is not None:
+                        label["evaluation_scope"] = scope
+                    labels.append(label)
+                case["annotation"]["expected_observations"] = labels
+
+                selected = select_evaluation_labels(
+                    case["manifest_case"], case["annotation"]
+                )
+
+                self.assertEqual(
+                    [label["observation_id"] for label in selected],
+                    ["label_0", "label_1"],
+                )
+
+    def test_normalization_error_is_not_report_contract_valid(self) -> None:
+        case = metric_bundle("normalization-error", status="normalization_error")
+        self.assertEqual(
+            case["run_result"]["normalized_observation"]["contract_errors"], []
+        )
+
+        result = self.aggregate([case])
+
+        self.assertEqual(
+            result["reliability"]["report_contract_validity"],
+            {"numerator": 0, "denominator": 1, "value": 0.0},
+        )
+
     def test_match_counts_are_one_to_one_and_risk_uses_matched_denominator(
         self,
     ) -> None:
@@ -3602,6 +3793,64 @@ class BriaBenchMetricAggregationTests(unittest.TestCase):
             {"numerator": 0, "denominator": 1, "value": 0.0},
         )
         self.assertEqual(result["case_results"][0]["matched_label_count"], 1)
+
+    def test_matched_and_unmatched_label_ids_must_be_disjoint(self) -> None:
+        case = metric_bundle("label-overlap", matched=True)
+        case["match_result"] = case["match_result"].to_dict()
+        case["match_result"]["unmatched_label_ids"] = ["label_001"]
+
+        with self.assertRaisesRegex(ValueError, "matched and unmatched label"):
+            self.aggregate([case])
+
+    def test_matched_and_unmatched_observation_ids_must_be_disjoint(self) -> None:
+        case = metric_bundle("observation-overlap", matched=True)
+        case["match_result"] = case["match_result"].to_dict()
+        case["match_result"]["unmatched_observation_ids"] = ["obs_001"]
+
+        with self.assertRaisesRegex(ValueError, "matched and unmatched observation"):
+            self.aggregate([case])
+
+    def test_selected_match_must_be_compatible(self) -> None:
+        case = metric_bundle("incompatible", matched=True)
+        case["match_result"] = case["match_result"].to_dict()
+        case["match_result"]["matches"][0]["compatibility"]["compatible"] = False
+
+        with self.assertRaisesRegex(ValueError, "compatible must be true"):
+            self.aggregate([case])
+
+    def test_selected_match_must_be_issue_compatible(self) -> None:
+        case = metric_bundle("issue-incompatible", matched=True)
+        case["match_result"] = case["match_result"].to_dict()
+        case["match_result"]["matches"][0]["compatibility"][
+            "issue_compatible"
+        ] = False
+
+        with self.assertRaisesRegex(ValueError, "issue_compatible must be true"):
+            self.aggregate([case])
+
+    def test_selected_match_must_be_location_compatible(self) -> None:
+        case = metric_bundle("location-incompatible", matched=True)
+        case["match_result"] = case["match_result"].to_dict()
+        case["match_result"]["matches"][0]["compatibility"][
+            "location_compatible"
+        ] = False
+
+        with self.assertRaisesRegex(ValueError, "location_compatible must be true"):
+            self.aggregate([case])
+
+    def test_selected_match_requires_boolean_compatibility_fields(self) -> None:
+        for key in (
+            "compatible",
+            "issue_compatible",
+            "location_compatible",
+            "risk_compatible",
+        ):
+            with self.subTest(key=key):
+                case = metric_bundle(f"bad-{key}", matched=True)
+                case["match_result"] = case["match_result"].to_dict()
+                case["match_result"]["matches"][0]["compatibility"][key] = 1
+                with self.assertRaisesRegex(ValueError, rf"{key} must be boolean"):
+                    self.aggregate([case])
 
     def test_failure_events_use_module_and_detail_and_process_fallback(self) -> None:
         partial = metric_bundle("partial")

@@ -10,6 +10,12 @@ and ``over_budget``.  Presence makes an optional boolean fact applicable.
 Facts are never inferred from prose.  In particular, a failed eligible negative
 control is conservatively counted as an alerted package, because it did not
 produce evidence that the package was clean.
+
+The evaluator must call ``select_evaluation_labels(manifest_case, annotation)``
+and produce ``match_result`` with ``match_labels(selected_labels, observations,
+roles=("recall_label", "coverage_gap"))``.  The selector applies track and scope
+boundaries before one-to-one assignment; ``negative_guardrail`` and
+``reference_only`` labels are intentionally outside the matcher partition.
 """
 
 from __future__ import annotations
@@ -31,8 +37,14 @@ _TRACKS = (
     "robustness_scale",
 )
 _PROFILES = ("quick", "standard", "deep")
+_EVALUATED_MATCH_ROLES = ("recall_label", "coverage_gap")
 _SUCCESS = "success"
-_REPORT_INVALID_STATUSES = {"contract_error", "missing_output", "invalid_output"}
+_REPORT_INVALID_STATUSES = {
+    "contract_error",
+    "missing_output",
+    "invalid_output",
+    "normalization_error",
+}
 _BUNDLE_KEYS = {
     "manifest_case",
     "annotation",
@@ -82,6 +94,46 @@ def _require_mapping(value: object, name: str) -> Mapping[str, Any]:
     return value
 
 
+def select_evaluation_labels(
+    manifest_case: Mapping[str, Any], annotation: Mapping[str, Any]
+) -> list[Mapping[str, Any]]:
+    """Return the exact annotation-order label partition Task 7 must match.
+
+    Use the returned list directly with ``match_labels(...,
+    roles=("recall_label", "coverage_gap"))``.  Track-specific scope filtering is
+    applied before matching so labels outside an evaluated metric cannot consume
+    observations in the shared one-to-one assignment.
+    """
+    manifest_case = _require_mapping(manifest_case, "manifest_case")
+    annotation = _require_mapping(annotation, "annotation")
+    track = manifest_case.get("track")
+    labels = annotation.get("expected_observations")
+    if not isinstance(labels, list):
+        raise ValueError("annotation.expected_observations must be an array")
+
+    if track in {"blinded_challenge", "public_realism"}:
+        roles = _EVALUATED_MATCH_ROLES
+        scopes = {None, "headline_detection"}
+    elif track == "public_concern":
+        roles = ("recall_label",)
+        scopes = {"localization_only"}
+    elif track == "regression":
+        roles = _EVALUATED_MATCH_ROLES
+        scopes = {None, "regression_only"}
+    elif track == "robustness_scale":
+        roles = _EVALUATED_MATCH_ROLES
+        scopes = {None, "reliability_only"}
+    else:
+        raise ValueError(f"unsupported benchmark track: {track!r}")
+
+    selected: list[Mapping[str, Any]] = []
+    for raw_label in labels:
+        label = _require_mapping(raw_label, "expected observation")
+        if label.get("role") in roles and label.get("evaluation_scope") in scopes:
+            selected.append(label)
+    return selected
+
+
 def _require_bool(bundle: Mapping[str, Any], key: str) -> bool | None:
     if key not in bundle:
         return None
@@ -128,9 +180,17 @@ def _match_rows(payload: Mapping[str, Any]) -> list[Mapping[str, Any]]:
         if label_id in label_ids or observation_id in observation_ids:
             raise ValueError("match_result matches must be one-to-one")
         compatibility = _require_mapping(compatibility, "match compatibility")
-        for key in ("location_compatible", "risk_compatible"):
+        for key in (
+            "compatible",
+            "issue_compatible",
+            "location_compatible",
+            "risk_compatible",
+        ):
             if not isinstance(compatibility.get(key), bool):
                 raise ValueError(f"match compatibility {key} must be boolean")
+        for key in ("compatible", "issue_compatible", "location_compatible"):
+            if not compatibility[key]:
+                raise ValueError(f"selected match compatibility {key} must be true")
         label_ids.add(label_id)
         observation_ids.add(observation_id)
         rows.append(row)
@@ -202,7 +262,10 @@ def _validate_bundle(
             "manifest, annotation, and run result case_id values must match"
         )
 
-    label_ids = {item["observation_id"] for item in annotation["expected_observations"]}
+    label_ids = {
+        item["observation_id"]
+        for item in select_evaluation_labels(manifest_case, annotation)
+    }
     observation_ids = {
         item["observation_id"] for item in run["normalized_observation"]["observations"]
     }
@@ -217,17 +280,21 @@ def _validate_bundle(
     ):
         values = match[key]
         if any(not isinstance(item, str) or item not in valid_ids for item in values):
-            raise ValueError(f"match_result.{key} contains an unknown id")
+            kind = "label" if key == "unmatched_label_ids" else "observation"
+            raise ValueError(f"match_result.{key} contains an unknown {kind} id")
         if len(values) != len(set(values)):
             raise ValueError(f"match_result.{key} contains duplicates")
     matched_label_ids = {row["label_id"] for row in rows}
     matched_observation_ids = {row["observation_id"] for row in rows}
-    if matched_label_ids | set(match["unmatched_label_ids"]) != label_ids:
+    unmatched_label_ids = set(match["unmatched_label_ids"])
+    unmatched_observation_ids = set(match["unmatched_observation_ids"])
+    if matched_label_ids & unmatched_label_ids:
+        raise ValueError("matched and unmatched label ids must be disjoint")
+    if matched_observation_ids & unmatched_observation_ids:
+        raise ValueError("matched and unmatched observation ids must be disjoint")
+    if matched_label_ids | unmatched_label_ids != label_ids:
         raise ValueError("match_result must account for every label exactly once")
-    if (
-        matched_observation_ids | set(match["unmatched_observation_ids"])
-        != observation_ids
-    ):
+    if matched_observation_ids | unmatched_observation_ids != observation_ids:
         raise ValueError("match_result must account for every observation exactly once")
     return manifest_case, annotation, run, match
 
@@ -318,15 +385,16 @@ def aggregate_metrics(
         track_counts[track] += 1
         track_eligible[track] = track_eligible[track] or eligible
 
+        evaluated_labels = select_evaluation_labels(manifest_case, annotation)
         headline_labels = [
             label
-            for label in annotation["expected_observations"]
+            for label in evaluated_labels
             if label["role"] == "recall_label"
             and label.get("evaluation_scope") in (None, "headline_detection")
         ]
         coverage_labels = [
             label
-            for label in annotation["expected_observations"]
+            for label in evaluated_labels
             if label["role"] == "coverage_gap"
             and label.get("evaluation_scope") in (None, "headline_detection")
         ]
@@ -374,20 +442,14 @@ def aggregate_metrics(
             }
             and not match["assignment_ambiguous"]
         ):
-            concern_labels = [
-                label
-                for label in annotation["expected_observations"]
-                if label["role"] != "negative_guardrail"
-                and label.get("evaluation_scope") == "localization_only"
-            ]
             detection_counts["concern_numerator"] += sum(
                 label["observation_id"] in rows_by_label
                 and rows_by_label[label["observation_id"]]["compatibility"][
                     "location_compatible"
                 ]
-                for label in concern_labels
+                for label in evaluated_labels
             )
-            detection_counts["concern_denominator"] += len(concern_labels)
+            detection_counts["concern_denominator"] += len(evaluated_labels)
 
         if track == "regression":
             assertions = bundle.get("regression_assertions", [])
@@ -456,7 +518,7 @@ def aggregate_metrics(
                 "adapter": run["adapter"],
                 "headline_detection_eligible": eligible,
                 "matched_label_count": len(successful_rows),
-                "expected_label_count": len(annotation["expected_observations"]),
+                "expected_label_count": len(evaluated_labels),
                 "false_alert_count": (
                     len(match["unmatched_observation_ids"])
                     if status == _SUCCESS
