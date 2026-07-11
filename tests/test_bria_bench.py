@@ -1397,6 +1397,27 @@ class BriaBenchRegistryTests(unittest.TestCase):
         self.assertFalse((package / "frozen.json").exists())
         self.assertEqual(hash_tree(package), package_hash)
 
+    def test_freeze_rejects_cross_directory_source_file_symlink_without_mutation(self) -> None:
+        self.require_secure_hashing()
+        source = self.write_manifest("source.json", self.manifest())
+        lexical_root = self.root / "lexical-root"
+        lexical_root.mkdir()
+        shutil.copytree(self.root / "cases", lexical_root / "cases")
+        shutil.copytree(self.root / "annotations", lexical_root / "annotations")
+        source_link = lexical_root / "source-link.json"
+        source_link.symlink_to(source)
+        output = self.root / "frozen.json"
+        output.write_text("preserve output\n", encoding="utf-8")
+        source_before = source.read_bytes()
+        lexical_package_before = hash_tree(lexical_root / "cases/dev_001")
+
+        with self.assertRaisesRegex(RegistryError, "source manifest.*symlink"):
+            freeze_manifest(source_link, output, "2026-07-11T00:00:00Z")
+
+        self.assertEqual(output.read_text(encoding="utf-8"), "preserve output\n")
+        self.assertEqual(source.read_bytes(), source_before)
+        self.assertEqual(hash_tree(lexical_root / "cases/dev_001"), lexical_package_before)
+
     def test_module_cli_freeze_enforces_output_contract(self) -> None:
         self.require_secure_hashing()
         source = self.write_manifest("source.json", self.manifest())
@@ -4705,8 +4726,35 @@ class BriaBenchCliTests(unittest.TestCase):
         self.assertEqual(second["cases"][0]["cache_status"], "invalidated")
         self.assertNotEqual(first["cases"][0]["run_result"], second["cases"][0]["run_result"])
 
-    def test_shared_runner_digest_is_computed_once_per_run_invocation(self) -> None:
+    def test_shared_runner_change_at_same_path_is_rehashed_between_cases(self) -> None:
         self.make_two_case_manifest()
+        config = self.root / "shared-runner.cfg"
+        config.write_text("version-one\n", encoding="utf-8")
+        mutating_producer = self.root / "mutating-producer.py"
+        mutating_producer.write_text(
+            "import json, pathlib, sys\n"
+            "output=pathlib.Path(sys.argv[1]); case_id=sys.argv[2]; config=pathlib.Path(sys.argv[3])\n"
+            "output.mkdir(parents=True, exist_ok=True)\n"
+            "finding={'finding_id':'F-1','finding_type':'local_patch_reuse','risk_level':'R2','location':'Figure 1A'}\n"
+            "(output/'AUDIT_JSON_SUMMARY.json').write_text(json.dumps({'case_id':case_id,'findings':[finding]}))\n"
+            "(output/'coverage.json').write_text('{}')\n"
+            "(output/'pipeline_summary.json').write_text('{}')\n"
+            "(output/'audit-report.md').write_text('Scientific review remains required.')\n"
+            "if case_id == 'case_001': config.write_text('version-two\\n')\n",
+            encoding="utf-8",
+        )
+        cwd = cli_module.repository_root()
+        adapter = CommandAdapter(
+            "mutating",
+            "1",
+            (
+                sys.executable,
+                os.path.relpath(mutating_producer, cwd),
+                "{output}",
+                "{case_id}",
+                os.path.relpath(config, cwd),
+            ),
+        )
         original_hash = cli_module._hash_files
         calls = 0
 
@@ -4717,10 +4765,16 @@ class BriaBenchCliTests(unittest.TestCase):
 
         with patch.object(cli_module, "_hash_files", side_effect=counted):
             summary = run_benchmark(
-                self.manifest, self.runs, adapter_name="fake", adapters={"fake": self.adapter}
+                self.manifest,
+                self.runs,
+                adapter_name="mutating",
+                adapters={"mutating": adapter},
             )
         self.assertEqual([case["status"] for case in summary["cases"]], ["success", "success"])
-        self.assertEqual(calls, 1)
+        first = json.loads((self.runs / summary["cases"][0]["run_result"]).read_text())
+        second = json.loads((self.runs / summary["cases"][1]["run_result"]).read_text())
+        self.assertEqual(calls, 2)
+        self.assertNotEqual(first["hashes"]["runner_sha256"], second["hashes"]["runner_sha256"])
 
     def test_timeout_policy_changes_cache_identity_and_shorter_timeout_runs(self) -> None:
         self.producer.write_text(

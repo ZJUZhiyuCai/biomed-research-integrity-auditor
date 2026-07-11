@@ -286,6 +286,8 @@ def freeze_manifest(
 
     source = _as_path(source_path, label="source manifest path")
     output = _as_path(output_path, label="output manifest path")
+    if source.is_symlink():
+        raise RegistryError("Freeze source manifest must not be a symlink")
     source_manifest = load_manifest(source, require_frozen=False)
     try:
         source_resolved = source.resolve(strict=True)
