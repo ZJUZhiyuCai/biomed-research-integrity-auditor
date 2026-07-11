@@ -23,9 +23,12 @@ from benchmarks.bria_bench.contracts import SCHEMA_ROOT, load_schema
 from benchmarks.bria_bench.hashing import HashingError, hash_file, hash_tree
 from benchmarks.bria_bench.matching import (
     Compatibility,
+    Match,
+    MatchResult,
     label_observation_compatible,
     match_labels,
 )
+from benchmarks.bria_bench.metrics import aggregate_metrics
 from benchmarks.bria_bench.normalize import normalize_audit_output
 from benchmarks.bria_bench.registry import (
     RegistryError,
@@ -177,6 +180,76 @@ def minimal_metrics() -> dict[str, object]:
                 "values": [1.25],
             }
         },
+    }
+
+
+def metric_bundle(
+    case_id: str,
+    *,
+    negative: bool = False,
+    status: str = "success",
+    matched: bool = False,
+    track: str = "blinded_challenge",
+    review_status: str = "controlled_ground_truth",
+    scope: str | None = None,
+    profile: str = "quick",
+) -> dict[str, object]:
+    manifest_case = copy.deepcopy(minimal_manifest()["cases"][0])
+    manifest_case.update(
+        {
+            "case_id": case_id,
+            "track": track,
+            "scan_profile": profile,
+            "headline_eligible": True,
+        }
+    )
+    annotation = copy.deepcopy(minimal_annotation())
+    annotation["case_id"] = case_id
+    annotation["negative_control"] = negative
+    annotation["review_status"] = review_status
+    label = annotation["expected_observations"][0]
+    if scope is not None:
+        label["evaluation_scope"] = scope
+    if negative:
+        annotation["expected_observations"] = []
+
+    run_result = copy.deepcopy(minimal_run_result())
+    run_result["case_id"] = case_id
+    run_result["normalized_observation"]["case_id"] = case_id
+    run_result["status"] = status
+    if status != "success":
+        run_result["failure"] = failure_details(status)
+        run_result["normalized_observation"]["observations"] = []
+    elif negative:
+        run_result["normalized_observation"]["observations"] = []
+
+    matches: tuple[Match, ...] = ()
+    unmatched_labels: tuple[str, ...] = () if negative else ("label_001",)
+    unmatched_observations: tuple[str, ...] = (
+        ("obs_001",) if not negative and status == "success" else ()
+    )
+    if matched:
+        compatibility = Compatibility(
+            compatible=True,
+            issue_compatible=True,
+            location_compatible=True,
+            risk_compatible=True,
+            score=(1,),
+        )
+        matches = (Match("label_001", "obs_001", compatibility),)
+        unmatched_labels = ()
+        unmatched_observations = ()
+    return {
+        "manifest_case": manifest_case,
+        "annotation": annotation,
+        "run_result": run_result,
+        "match_result": MatchResult(
+            matches=matches,
+            unmatched_label_ids=unmatched_labels,
+            unmatched_observation_ids=unmatched_observations,
+            candidate_edges=matches,
+            assignment_ambiguous=False,
+        ),
     }
 
 
@@ -3414,6 +3487,259 @@ class BriaBenchMatchingTests(unittest.TestCase):
         self.assertEqual(len(result.matches), 1)
         self.assertEqual(len(result.candidate_edges), 2)
         self.assertIn("components", payload["candidate_edges"][0])
+
+
+class BriaBenchMetricAggregationTests(unittest.TestCase):
+    def aggregate(self, cases: list[dict[str, object]]) -> dict[str, object]:
+        return aggregate_metrics(
+            cases=cases,
+            benchmark_id="bria-bench-dev",
+            benchmark_version="0.1.0",
+        )
+
+    def test_three_case_plan_separates_detection_and_silent_failure(self) -> None:
+        positive = metric_bundle("positive", matched=True)
+        negative = metric_bundle("negative", negative=True)
+        failed = metric_bundle("failed", status="process_error")
+        failed["run_result"]["failure"]["module"] = "image_detector"
+
+        result = self.aggregate([positive, negative, failed])
+
+        self.assertEqual(
+            result["detection"]["expected_finding_recall"],
+            {"numerator": 1, "denominator": 2, "value": 0.5},
+        )
+        self.assertEqual(
+            result["detection"]["negative_package_false_alert_rate"],
+            {"numerator": 0, "denominator": 1, "value": 0.0},
+        )
+        self.assertEqual(
+            result["reliability"]["silent_failure_rate"],
+            {"numerator": 1, "denominator": 3, "value": 1 / 3},
+        )
+        self.assertNotIn("score", result)
+        self.assertNotIn("overall_score", result)
+        validate_contract("metrics.schema.json", result)
+
+    def test_zero_denominators_and_failed_negative_are_conservative(self) -> None:
+        empty = self.aggregate([])
+        for section in (empty["detection"], empty["reliability"]):
+            for metric in section.values():
+                if "denominator" in metric:
+                    self.assertEqual(
+                        metric, {"numerator": 0, "denominator": 0, "value": None}
+                    )
+
+        failed_negative = metric_bundle(
+            "failed-negative", negative=True, status="timeout"
+        )
+        failed_negative["run_result"]["telemetry"]["timed_out"] = True
+        failed_negative["run_result"]["failure"]["timed_out"] = True
+        result = self.aggregate([failed_negative])
+        self.assertEqual(
+            result["detection"]["negative_package_false_alert_rate"],
+            {"numerator": 1, "denominator": 1, "value": 1.0},
+        )
+
+    def test_track_review_and_scope_boundaries_are_enforced(self) -> None:
+        regression = metric_bundle("regression", matched=True, track="regression")
+        regression["regression_assertions"] = [True, False, True]
+        concern = metric_bundle(
+            "concern", matched=True, track="public_concern", scope="localization_only"
+        )
+        robust = metric_bundle("robust", matched=True, track="robustness_scale")
+        robust["attack_resisted"] = True
+        pending = metric_bundle(
+            "pending", matched=True, review_status="independent_pending"
+        )
+        ambiguous = metric_bundle("ambiguous", matched=True, review_status="ambiguous")
+
+        result = self.aggregate([regression, concern, robust, pending, ambiguous])
+
+        self.assertEqual(
+            result["detection"]["expected_finding_recall"],
+            {"numerator": 0, "denominator": 0, "value": None},
+        )
+        self.assertEqual(
+            result["detection"]["public_concern_location_coverage"],
+            {"numerator": 1, "denominator": 1, "value": 1.0},
+        )
+        self.assertEqual(
+            result["detection"]["regression_assertions"],
+            {"met": 2, "not_met": 1, "total": 3},
+        )
+        self.assertEqual(
+            result["reliability"]["manifest_attack_resistance"],
+            {"numerator": 1, "denominator": 1, "value": 1.0},
+        )
+        self.assertFalse(
+            next(
+                item for item in result["case_results"] if item["case_id"] == "pending"
+            )["headline_detection_eligible"]
+        )
+
+    def test_match_counts_are_one_to_one_and_risk_uses_matched_denominator(
+        self,
+    ) -> None:
+        case = metric_bundle("risk", matched=True)
+        match = case["match_result"].matches[0]
+        case["match_result"] = MatchResult(
+            matches=(
+                Match(
+                    match.label_id,
+                    match.observation_id,
+                    Compatibility(True, True, True, False, (1,)),
+                ),
+            ),
+            unmatched_label_ids=(),
+            unmatched_observation_ids=(),
+            candidate_edges=(),
+            assignment_ambiguous=False,
+        )
+        result = self.aggregate([case])
+        self.assertEqual(
+            result["detection"]["risk_band_agreement"],
+            {"numerator": 0, "denominator": 1, "value": 0.0},
+        )
+        self.assertEqual(result["case_results"][0]["matched_label_count"], 1)
+
+    def test_failure_events_use_module_and_detail_and_process_fallback(self) -> None:
+        partial = metric_bundle("partial")
+        normalized = partial["run_result"]["normalized_observation"]
+        normalized["technical_failures"] = [
+            {"module": "images", "failure_type": "decode"},
+            {"module": "images", "failure_type": "timeout"},
+        ]
+        normalized["reported_technical_failures"] = [
+            {"module": "images", "failure_type": "decode"}
+        ]
+        process = metric_bundle("process", status="process_error")
+        process["run_result"]["failure"]["module"] = "runner"
+
+        result = self.aggregate([partial, process])
+
+        self.assertEqual(
+            result["reliability"]["technical_failure_disclosure_rate"],
+            {"numerator": 1, "denominator": 3, "value": 1 / 3},
+        )
+        self.assertEqual(
+            result["reliability"]["silent_failure_rate"],
+            {"numerator": 2, "denominator": 2, "value": 1.0},
+        )
+
+    def test_performance_is_nearest_rank_profiled_and_explicitly_budgeted(self) -> None:
+        cases = []
+        for index, (elapsed, profile) in enumerate(
+            ((4.0, "deep"), (1.0, "quick"), (3.0, "deep"), (2.0, "standard"))
+        ):
+            case = metric_bundle(f"case-{index}", profile=profile)
+            telemetry = case["run_result"]["telemetry"]
+            telemetry.update(
+                {
+                    "elapsed_seconds": elapsed,
+                    "cpu_seconds": elapsed / 2,
+                    "peak_rss_bytes": int(elapsed * 100),
+                    "output_size_bytes": int(elapsed * 10),
+                    "module_seconds": {"images": elapsed / 4},
+                    "llm": {
+                        "provider": "fixture",
+                        "model": "model",
+                        "input_tokens": int(elapsed * 10),
+                        "output_tokens": int(elapsed * 2),
+                        "latency_seconds": elapsed / 3,
+                        "estimated_cost_cny": elapsed / 100,
+                    },
+                }
+            )
+            if index != 3:
+                case["over_budget"] = index == 0
+            cases.append(case)
+
+        result = self.aggregate(cases)
+        wall = result["performance"]["wall_time_seconds"]
+        self.assertEqual(wall["values"], [1.0, 2.0, 3.0, 4.0])
+        self.assertEqual((wall["p50"], wall["p95"]), (2.0, 4.0))
+        self.assertEqual(
+            result["performance"]["profiles"]["deep"]["wall_time_seconds"]["values"],
+            [3.0, 4.0],
+        )
+        self.assertEqual(result["performance"]["module_seconds"]["images"]["p50"], 0.5)
+        self.assertEqual(
+            result["performance"]["llm_input_tokens"]["values"], [10, 20, 30, 40]
+        )
+        self.assertEqual(
+            result["performance"]["over_budget_rate"],
+            {"numerator": 1, "denominator": 3, "value": 1 / 3},
+        )
+
+    def test_nearest_rank_handles_small_odd_and_even_samples(self) -> None:
+        expected = {
+            (9.0,): (9.0, 9.0),
+            (1.0, 2.0): (1.0, 2.0),
+            (1.0, 2.0, 3.0): (2.0, 3.0),
+            (1.0, 2.0, 3.0, 4.0): (2.0, 4.0),
+        }
+        for values, percentiles in expected.items():
+            with self.subTest(values=values):
+                cases = []
+                for index, value in enumerate(reversed(values)):
+                    case = metric_bundle(f"case-{index}")
+                    case["run_result"]["telemetry"]["elapsed_seconds"] = value
+                    cases.append(case)
+                distribution = self.aggregate(cases)["performance"]["wall_time_seconds"]
+                self.assertEqual(
+                    (distribution["p50"], distribution["p95"]), percentiles
+                )
+
+    def test_explicit_preservation_facts_order_and_inputs_are_stable(self) -> None:
+        second = metric_bundle("b")
+        second.update(
+            {"atomic_output_preserved": False, "previous_output_preserved": True}
+        )
+        first = metric_bundle("a")
+        first.update(
+            {"atomic_output_preserved": True, "previous_output_preserved": False}
+        )
+        before = copy.deepcopy([second, first])
+
+        left = self.aggregate([second, first])
+        right = self.aggregate([first, second])
+
+        self.assertEqual(left, right)
+        self.assertEqual([second, first], before)
+        self.assertNotIn("generated_at", left)
+        self.assertEqual([item["case_id"] for item in left["case_results"]], ["a", "b"])
+        self.assertEqual(
+            left["reliability"]["atomic_output_preservation"],
+            {"numerator": 1, "denominator": 2, "value": 0.5},
+        )
+        self.assertEqual(
+            left["reliability"]["previous_result_preservation"],
+            {"numerator": 1, "denominator": 2, "value": 0.5},
+        )
+
+    def test_malformed_bundle_fails_closed(self) -> None:
+        case = metric_bundle("bad")
+        case["run_result"]["case_id"] = "other"
+        with self.assertRaises((ValueError, ContractError)):
+            self.aggregate([case])
+
+        malformed_match = metric_bundle("bad-match", matched=True)
+        malformed_match["match_result"] = malformed_match["match_result"].to_dict()
+        malformed_match["match_result"]["matches"][0]["observation_id"] = "unknown"
+        with self.assertRaises((ValueError, ContractError)):
+            self.aggregate([malformed_match])
+
+        incomplete = metric_bundle("incomplete")
+        incomplete["match_result"] = incomplete["match_result"].to_dict()
+        incomplete["match_result"]["unmatched_label_ids"] = []
+        with self.assertRaises((ValueError, ContractError)):
+            self.aggregate([incomplete])
+
+        unknown_fact = metric_bundle("unknown-fact")
+        unknown_fact["attack_resistance"] = True
+        with self.assertRaises((ValueError, ContractError)):
+            self.aggregate([unknown_fact])
 
 
 if __name__ == "__main__":
