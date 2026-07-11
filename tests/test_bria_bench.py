@@ -12,7 +12,7 @@ import sys
 import tempfile
 import time
 import unittest
-from decimal import Decimal
+from decimal import Decimal, localcontext
 from pathlib import Path
 from unittest.mock import patch
 
@@ -4775,6 +4775,10 @@ class BriaBenchReportTests(unittest.TestCase):
         self.assertIn(
             "| CPU time | 0 | not measured | not measured | seconds |", report
         )
+        self.assertIn("| Regression assertions met | not measured |", report)
+        self.assertNotIn("not met: 0", report)
+        self.assertIn("Module timing distributions: not measured.", report)
+        self.assertNotIn("Module timing distributions are unavailable.", report)
         self.assertIn("| Regression | unavailable | unavailable |", report)
         self.assertIn(
             "Case-level results are unavailable in this metrics artifact.", report
@@ -4857,6 +4861,94 @@ class BriaBenchReportTests(unittest.TestCase):
             with self.subTest(name=name), self.assertRaises(ContractError):
                 render_metrics_report(payload)
 
+    def test_regression_headline_eligibility_is_always_rejected(self) -> None:
+        case_level = self.metrics_fixture()
+        del case_level["tracks"]
+        next(
+            case
+            for case in case_level["case_results"]
+            if case["track"] == "regression"
+        )["headline_detection_eligible"] = True
+
+        track_level = self.metrics_fixture()
+        del track_level["case_results"]
+        track_level["tracks"]["regression"][
+            "headline_detection_eligible"
+        ] = True
+
+        for level, payload in (("case", case_level), ("track", track_level)):
+            with self.subTest(level=level), self.assertRaisesRegex(
+                ContractError, "headline_detection_eligible"
+            ):
+                render_metrics_report(payload)
+
+    def test_reliability_fractions_reconcile_with_case_appendix(self) -> None:
+        contradictions = {
+            "run_completion_rate": (3, 3),
+            "boundary_violation_rate": (0, 3),
+            "silent_failure_rate": (0, 3),
+            "report_contract_validity": (2, 3),
+        }
+        for key, (numerator, denominator) in contradictions.items():
+            with self.subTest(metric=key):
+                metrics = self.metrics_fixture()
+                metrics["reliability"][key] = {
+                    "numerator": numerator,
+                    "denominator": denominator,
+                    "value": numerator / denominator,
+                }
+                with self.assertRaisesRegex(ContractError, key):
+                    render_metrics_report(metrics)
+
+        success = minimal_metrics()
+        success["run_count"] = 1
+        success["case_results"] = [
+            {
+                "case_id": "case_success",
+                "track": "blinded_challenge",
+                "split": "dev",
+                "status": "success",
+            }
+        ]
+        success["reliability"]["run_completion_rate"] = {
+            "numerator": 0,
+            "denominator": 1,
+            "value": 0.0,
+        }
+        with self.assertRaisesRegex(ContractError, "run_completion_rate"):
+            render_metrics_report(success)
+
+        row_denominator = self.metrics_fixture()
+        del row_denominator["run_count"]
+        row_denominator["reliability"]["run_completion_rate"] = {
+            "numerator": 1,
+            "denominator": 2,
+            "value": 0.5,
+        }
+        with self.assertRaisesRegex(ContractError, "run_completion_rate"):
+            render_metrics_report(row_denominator)
+
+    def test_core_distributions_reconcile_with_appendix_without_case_values(
+        self,
+    ) -> None:
+        matching = self.metrics_fixture()
+        del matching["performance"]["wall_time_seconds"]["case_values"]
+        render_metrics_report(matching)
+
+        conflicting = copy.deepcopy(matching)
+        conflicting["performance"]["wall_time_seconds"].update(
+            {"count": 3, "values": [1.0, 2.0, 4.0], "p50": 2.0, "p95": 4.0}
+        )
+        with self.assertRaisesRegex(ContractError, "wall_time_seconds"):
+            render_metrics_report(conflicting)
+
+        missing = self.metrics_fixture()
+        del missing["performance"]["cpu_time_seconds"]
+        report = render_metrics_report(missing)
+        self.assertIn(
+            "| CPU time | 0 | not measured | not measured | seconds |", report
+        )
+
     def test_markdown_is_escaped_and_free_form_notes_are_never_rendered(self) -> None:
         metrics = self.metrics_fixture()
         metrics["benchmark_id"] = "bria_[bench]*"
@@ -4907,6 +4999,14 @@ class BriaBenchReportTests(unittest.TestCase):
             ("secret", "api_key=do-not-leak", "adapter"),
             ("token", "sk-proj-1234567890abcdef", "adapter"),
             ("windows path", r"C:\\Users\\alice\\result", "adapter"),
+            (
+                "generic token",
+                "token=verylongcredentialvalue",
+                "adapter",
+            ),
+            ("fullwidth path", "／Users／alice／private", "adapter"),
+            ("prohibited language", "PASS overall score", "adapter"),
+            ("line separator", "case_safe\u2028# heading", "case_id"),
         )
         for name, value, field in attacks:
             with self.subTest(name=name):
@@ -4931,6 +5031,54 @@ class BriaBenchReportTests(unittest.TestCase):
         with self.assertRaisesRegex(ContractError, "unsafe") as raised:
             render_metrics_report(module_metrics)
         self.assertNotIn("do-not-leak", str(raised.exception))
+
+    def test_numeric_formatting_is_independent_of_decimal_context(self) -> None:
+        huge_bytes = 10**1000
+        metrics = {
+            "schema_version": "1.0.0",
+            "benchmark_id": "bria-bench-decimal",
+            "benchmark_version": "0.1.0",
+            "detection": {
+                "expected_finding_recall": {
+                    "numerator": 1,
+                    "denominator": 3,
+                    "value": 1 / 3,
+                }
+            },
+            "reliability": {},
+            "performance": {
+                "wall_time_seconds": {
+                    "count": 1,
+                    "p50": 1.23456,
+                    "p95": 1.23456,
+                    "values": [1.23456],
+                },
+                "peak_rss_bytes": {
+                    "count": 1,
+                    "p50": 1536,
+                    "p95": 1536,
+                    "values": [1536],
+                },
+                "output_size_bytes": {
+                    "count": 1,
+                    "p50": huge_bytes,
+                    "p95": huge_bytes,
+                    "values": [huge_bytes],
+                },
+            },
+        }
+        expected = render_metrics_report(metrics)
+
+        with localcontext() as context:
+            context.prec = 3
+            actual = render_metrics_report(metrics)
+
+        self.assertEqual(actual, expected)
+        self.assertIn("1 / 3 (33.33%)", actual)
+        self.assertIn("| Wall time | 1 | 1.2346 | 1.2346 | seconds |", actual)
+        self.assertIn("| Peak RSS | 1 | 1.5 KiB | 1.5 KiB | bytes (IEC) |", actual)
+        self.assertIn("E+", actual)
+        self.assertLess(len(actual), 20_000)
 
     def test_boundary_language_and_prohibited_report_language(self) -> None:
         report = render_metrics_report(self.metrics_fixture())

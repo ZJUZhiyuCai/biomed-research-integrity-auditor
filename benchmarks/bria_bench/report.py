@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 import unicodedata
 from collections.abc import Iterator, Mapping
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Context, Decimal, ROUND_HALF_UP, localcontext
 from typing import Any
 
 from jsonschema import Draft202012Validator
@@ -61,6 +61,7 @@ _LLM_DISTRIBUTIONS = (
     ("llm_estimated_cost_cny", "LLM estimated cost", "cny"),
 )
 _PROFILES = ("quick", "standard", "deep")
+_HEADLINE_ELIGIBLE_TRACKS = frozenset({"blinded_challenge", "public_realism"})
 _TRACKS = (
     ("regression", "Regression"),
     ("blinded_challenge", "Blinded challenge"),
@@ -69,6 +70,14 @@ _TRACKS = (
     ("robustness_scale", "Robustness and scale"),
 )
 _TRACK_KEYS = frozenset(key for key, _ in _TRACKS)
+_REPORT_INVALID_STATUSES = frozenset(
+    {
+        "contract_error",
+        "missing_output",
+        "invalid_output",
+        "normalization_error",
+    }
+)
 _CASE_VALUE_FIELDS = {
     "wall_time_seconds": "elapsed_seconds",
     "cpu_time_seconds": "cpu_seconds",
@@ -85,10 +94,23 @@ _SECRET_TOKEN = re.compile(
     r"\bxox[baprs]-[A-Za-z0-9-]{10,}\b|\b(?:sk|rk)-(?:proj-)?[A-Za-z0-9_-]{12,}\b)",
     re.IGNORECASE,
 )
+_CREDENTIAL_ASSIGNMENT = re.compile(
+    r"(?:^|[^a-z0-9])(?:token|[a-z0-9_-]+[_-]token|api[_-]?key|"
+    r"password|passwd|private[_-]?key|secret)\s*[:=]",
+    re.IGNORECASE,
+)
+_PROHIBITED_REPORT_LANGUAGE = re.compile(
+    r"(?<![a-z0-9])(?:pass|fail|verdict)(?![a-z0-9])|"
+    r"(?<![a-z0-9])(?:overall[^a-z0-9]+score|composite[^a-z0-9]+score|"
+    r"weighted[^a-z0-9]+ranking)(?![a-z0-9])",
+    re.IGNORECASE,
+)
 _EMAIL = re.compile(
     r"(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}"
 )
 _ENCODED_PATH_SEPARATOR = re.compile(r"%(?:2f|5c)", re.IGNORECASE)
+_VALIDATION_CONTEXT = Context(prec=100, rounding=ROUND_HALF_UP)
+_FORMAT_CONTEXT = Context(prec=80, rounding=ROUND_HALF_UP)
 
 
 def _contract_error(path: str, message: str) -> ContractError:
@@ -96,52 +118,57 @@ def _contract_error(path: str, message: str) -> ContractError:
 
 
 def _validate_schema(metrics: object) -> None:
-    _contracts._reject_non_finite_numbers(_SCHEMA_NAME, metrics)
-    try:
-        errors = sorted(
-            _METRICS_VALIDATOR.iter_errors(metrics),
-            key=lambda error: (
-                tuple(str(part) for part in error.path),
-                error.message,
-            ),
-        )
-    except (ArithmeticError, TypeError, ValueError) as exc:
-        raise _contract_error(
-            "<root>",
-            f"numeric value could not be validated safely: {type(exc).__name__}",
-        ) from exc
-    if errors:
-        first = errors[0]
-        location = ".".join(str(part) for part in first.path) or "<root>"
-        raise _contract_error(location, first.message)
+    with localcontext(_VALIDATION_CONTEXT):
+        _contracts._reject_non_finite_numbers(_SCHEMA_NAME, metrics)
+        try:
+            errors = sorted(
+                _METRICS_VALIDATOR.iter_errors(metrics),
+                key=lambda error: (
+                    tuple(str(part) for part in error.path),
+                    error.message,
+                ),
+            )
+        except (ArithmeticError, TypeError, ValueError) as exc:
+            raise _contract_error(
+                "<root>",
+                f"numeric value could not be validated safely: {type(exc).__name__}",
+            ) from exc
+        if errors:
+            first = errors[0]
+            location = ".".join(str(part) for part in first.path) or "<root>"
+            raise _contract_error(location, first.message)
 
-    try:
-        _contracts._validate_metrics(_SCHEMA_NAME, metrics)
-    except ContractError:
-        raise
-    except (ArithmeticError, TypeError, ValueError) as exc:
-        raise _contract_error(
-            "<root>",
-            f"numeric semantics could not be evaluated safely: {type(exc).__name__}",
-        ) from exc
+        try:
+            _contracts._validate_metrics(_SCHEMA_NAME, metrics)
+        except ContractError:
+            raise
+        except (ArithmeticError, TypeError, ValueError) as exc:
+            raise _contract_error(
+                "<root>",
+                f"numeric semantics could not be evaluated safely: {type(exc).__name__}",
+            ) from exc
 
 
 def _is_unsafe_identifier(value: str) -> bool:
-    if value in {".", ".."}:
+    normalized = unicodedata.normalize("NFKC", value)
+    if normalized in {".", ".."}:
         return True
     if any(
-        unicodedata.category(character) in {"Cc", "Cf", "Cs"} for character in value
+        unicodedata.category(character) in {"Cc", "Cf", "Cs", "Zl", "Zp"}
+        for character in normalized
     ):
         return True
-    lowered = value.casefold()
+    lowered = normalized.casefold()
     return bool(
-        "/" in value
-        or "\\" in value
+        "/" in normalized
+        or "\\" in normalized
         or "file:" in lowered
-        or _ENCODED_PATH_SEPARATOR.search(value)
-        or _EMAIL.search(value)
-        or _SECRET_WORD.search(value)
-        or _SECRET_TOKEN.search(value)
+        or _ENCODED_PATH_SEPARATOR.search(normalized)
+        or _EMAIL.search(normalized)
+        or _SECRET_WORD.search(normalized)
+        or _SECRET_TOKEN.search(normalized)
+        or _CREDENTIAL_ASSIGNMENT.search(normalized)
+        or _PROHIBITED_REPORT_LANGUAGE.search(normalized)
         or "-----begin" in lowered
     )
 
@@ -198,7 +225,10 @@ def _validate_safe_fields(metrics: Mapping[str, Any]) -> None:
 
 
 def _numbers_close(left: object, right: object, path: str) -> bool:
-    return _contracts._numbers_close(_SCHEMA_NAME, tuple(path.split(".")), left, right)
+    with localcontext(_VALIDATION_CONTEXT):
+        return _contracts._numbers_close(
+            _SCHEMA_NAME, tuple(path.split(".")), left, right
+        )
 
 
 def _validate_distribution_case_values(
@@ -268,6 +298,56 @@ def _validate_distribution_case_values(
                 )
 
 
+def _validate_core_distributions(
+    metrics: Mapping[str, Any], case_results: list[Mapping[str, Any]] | None
+) -> None:
+    if case_results is None:
+        return
+    performance = metrics["performance"]
+    for metric, case_field in _CASE_VALUE_FIELDS.items():
+        distribution = performance.get(metric)
+        if distribution is None:
+            continue
+        appendix_values = [
+            case[case_field] for case in case_results if case_field in case
+        ]
+        if not appendix_values:
+            continue
+        path = f"performance.{metric}"
+        if distribution["count"] != len(appendix_values):
+            raise _contract_error(f"{path}.count", "contradicts case_results values")
+        recorded_values = sorted(
+            distribution["values"],
+            key=lambda value: _contracts._as_decimal(
+                _SCHEMA_NAME, ("performance", metric, "values"), value
+            ),
+        )
+        expected_values = sorted(
+            appendix_values,
+            key=lambda value: _contracts._as_decimal(
+                _SCHEMA_NAME, ("case_results", case_field), value
+            ),
+        )
+        if any(
+            not _numbers_close(left, right, f"{path}.values")
+            for left, right in zip(recorded_values, expected_values, strict=True)
+        ):
+            raise _contract_error(f"{path}.values", "contradicts case_results values")
+        count = len(expected_values)
+        expected_percentiles = {
+            "p50": expected_values[max(1, (50 * count + 99) // 100) - 1],
+            "p95": expected_values[max(1, (95 * count + 99) // 100) - 1],
+        }
+        for percentile, expected in expected_percentiles.items():
+            if not _numbers_close(
+                distribution[percentile], expected, f"{path}.{percentile}"
+            ):
+                raise _contract_error(
+                    f"{path}.{percentile}",
+                    f"contradicts case_results nearest-rank {percentile}",
+                )
+
+
 def _validate_profile_totals(metrics: Mapping[str, Any]) -> None:
     performance = metrics["performance"]
     profiles = performance.get("profiles")
@@ -304,6 +384,67 @@ def _validate_profile_totals(metrics: Mapping[str, Any]) -> None:
         )
 
 
+def _validate_fraction_counts(
+    reliability: Mapping[str, Any], key: str, numerator: int, denominator: int
+) -> None:
+    fraction = reliability.get(key)
+    if fraction is None:
+        return
+    if (fraction["numerator"], fraction["denominator"]) != (
+        numerator,
+        denominator,
+    ):
+        raise _contract_error(
+            f"reliability.{key}", "contradicts derivable case_results counts"
+        )
+
+
+def _validate_reliability_case_rows(
+    reliability: Mapping[str, Any], case_results: list[Mapping[str, Any]]
+) -> None:
+    denominator = len(case_results)
+    for key in _CASE_DENOMINATED_RELIABILITY:
+        fraction = reliability.get(key)
+        if fraction is not None and fraction["denominator"] != denominator:
+            raise _contract_error(
+                f"reliability.{key}.denominator",
+                "must equal the number of case_results rows",
+            )
+
+    _validate_fraction_counts(
+        reliability,
+        "run_completion_rate",
+        sum(case["status"] == "success" for case in case_results),
+        denominator,
+    )
+    _validate_fraction_counts(
+        reliability,
+        "report_contract_validity",
+        sum(case["status"] not in _REPORT_INVALID_STATUSES for case in case_results),
+        denominator,
+    )
+    if all("boundary_violation_count" in case for case in case_results):
+        _validate_fraction_counts(
+            reliability,
+            "boundary_violation_rate",
+            sum(case["boundary_violation_count"] > 0 for case in case_results),
+            denominator,
+        )
+    if all(
+        "technical_failure_count" in case and "reported_failure_count" in case
+        for case in case_results
+    ):
+        _validate_fraction_counts(
+            reliability,
+            "silent_failure_rate",
+            sum(
+                case["reported_failure_count"] < case["technical_failure_count"]
+                for case in case_results
+            ),
+            denominator,
+        )
+
+
 def _validate_cross_fields(metrics: Mapping[str, Any]) -> None:
     case_results = metrics.get("case_results")
     rows_by_id = (
@@ -320,6 +461,14 @@ def _validate_cross_fields(metrics: Mapping[str, Any]) -> None:
         raise _contract_error("run_count", "must equal the number of case_results rows")
 
     for index, case in enumerate(case_results or []):
+        if (
+            case.get("headline_detection_eligible") is True
+            and case["track"] not in _HEADLINE_ELIGIBLE_TRACKS
+        ):
+            raise _contract_error(
+                f"case_results.{index}.headline_detection_eligible",
+                "may be true only for blinded_challenge or public_realism",
+            )
         matched = case.get("matched_label_count")
         expected = case.get("expected_label_count")
         if matched is not None and expected is not None and matched > expected:
@@ -337,6 +486,15 @@ def _validate_cross_fields(metrics: Mapping[str, Any]) -> None:
 
     tracks = metrics.get("tracks")
     if tracks is not None:
+        for key, summary in tracks.items():
+            if (
+                summary["headline_detection_eligible"]
+                and key not in _HEADLINE_ELIGIBLE_TRACKS
+            ):
+                raise _contract_error(
+                    f"tracks.{key}.headline_detection_eligible",
+                    "may be true only for blinded_challenge or public_realism",
+                )
         if run_count is not None:
             for key, summary in tracks.items():
                 if summary["case_count"] > run_count:
@@ -379,7 +537,9 @@ def _validate_cross_fields(metrics: Mapping[str, Any]) -> None:
                         "requires at least one eligible case_results row",
                     )
 
-    if run_count is not None:
+    if case_results is not None:
+        _validate_reliability_case_rows(metrics["reliability"], case_results)
+    elif run_count is not None:
         reliability = metrics["reliability"]
         for key in _CASE_DENOMINATED_RELIABILITY:
             if key in reliability and reliability[key]["denominator"] not in {
@@ -392,6 +552,7 @@ def _validate_cross_fields(metrics: Mapping[str, Any]) -> None:
                 )
 
     _validate_distribution_case_values(metrics, rows_by_id)
+    _validate_core_distributions(metrics, case_results)
     _validate_profile_totals(metrics)
 
 
@@ -406,23 +567,36 @@ def _escape_markdown(value: object) -> str:
 
 def _format_number(value: object, *, places: int = 4) -> str:
     number = Decimal(str(value))
-    if number == number.to_integral_value():
-        return str(int(number))
-    quantum = Decimal(1).scaleb(-places)
-    rounded = number.quantize(quantum, rounding=ROUND_HALF_UP)
-    if rounded == 0 and number != 0:
-        return f"< {format(quantum, 'f')}"
-    return format(rounded, "f").rstrip("0").rstrip(".")
+    if number and (number.adjusted() >= 12 or number.adjusted() <= -8):
+        with localcontext(_FORMAT_CONTEXT):
+            mantissa, exponent = format(number, f".{places}E").split("E")
+        mantissa = mantissa.rstrip("0").rstrip(".")
+        return f"{mantissa}E{int(exponent):+d}"
+
+    digits = len(number.as_tuple().digits)
+    exponent = number.as_tuple().exponent
+    precision = max(_FORMAT_CONTEXT.prec, digits + abs(exponent) + places + 10)
+    with localcontext(Context(prec=precision, rounding=ROUND_HALF_UP)):
+        if number == number.to_integral_value():
+            return str(int(number))
+        quantum = Decimal(1).scaleb(-places)
+        rounded = number.quantize(quantum, rounding=ROUND_HALF_UP)
+        if rounded == 0 and number != 0:
+            return f"< {format(quantum, 'f')}"
+        return format(rounded, "f").rstrip("0").rstrip(".")
 
 
 def _format_percentage(numerator: int, denominator: int) -> str:
-    percentage = Decimal(numerator) * Decimal(100) / Decimal(denominator)
-    rounded = percentage.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-    if rounded == 0 and numerator:
+    with localcontext(_FORMAT_CONTEXT):
+        hundredths = (2 * numerator * 10_000 + denominator) // (2 * denominator)
+    if hundredths == 0 and numerator:
         return "<0.01%"
-    if rounded == 100 and numerator < denominator:
+    if hundredths == 10_000 and numerator < denominator:
         return ">99.99%"
-    return f"{format(rounded, 'f').rstrip('0').rstrip('.')}%"
+    whole, fractional = divmod(hundredths, 100)
+    if fractional == 0:
+        return f"{whole}%"
+    return f"{whole}.{fractional:02d}".rstrip("0") + "%"
 
 
 def _format_fraction(value: Mapping[str, Any] | None) -> str:
@@ -437,9 +611,10 @@ def _format_bytes(value: object) -> str:
     number = Decimal(str(value))
     units = ("B", "KiB", "MiB", "GiB", "TiB", "PiB")
     unit_index = 0
-    while abs(number) >= 1024 and unit_index < len(units) - 1:
-        number /= Decimal(1024)
-        unit_index += 1
+    with localcontext(_FORMAT_CONTEXT):
+        while abs(number) >= 1024 and unit_index < len(units) - 1:
+            number /= Decimal(1024)
+            unit_index += 1
     return f"{_format_number(number)} {units[unit_index]}"
 
 
@@ -581,7 +756,7 @@ def render_metrics_report(metrics: Mapping[str, Any]) -> str:
         lines.append(f"| {label} | {_format_fraction(detection.get(key))} |")
     assertions = detection.get("regression_assertions")
     if assertions is None:
-        assertion_result = "0 / 0 (not measured); not met: 0"
+        assertion_result = "not measured"
     else:
         assertion_result = (
             f"{_format_fraction({'numerator': assertions['met'], 'denominator': assertions['total']})}; "
@@ -643,10 +818,8 @@ def render_metrics_report(metrics: Mapping[str, Any]) -> str:
 
     lines.extend(["", "### Module timings", ""])
     modules = performance.get("module_seconds")
-    if modules is None:
-        lines.append("Module timing distributions are unavailable.")
-    elif not modules:
-        lines.append("No module timing distributions were recorded.")
+    if not modules:
+        lines.append("Module timing distributions: not measured.")
     else:
         lines.extend(
             [
