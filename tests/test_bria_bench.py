@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import json
 import os
+import random
 import re
 import signal
 import sys
@@ -222,34 +223,22 @@ def metric_bundle(
         run_result["normalized_observation"]["observations"] = []
     elif negative:
         run_result["normalized_observation"]["observations"] = []
+    elif not matched:
+        run_result["normalized_observation"]["observations"][0][
+            "location"
+        ] = "Figure 9B"
 
-    matches: tuple[Match, ...] = ()
-    unmatched_labels: tuple[str, ...] = () if negative else ("label_001",)
-    unmatched_observations: tuple[str, ...] = (
-        ("obs_001",) if not negative and status == "success" else ()
+    selected = select_evaluation_labels(manifest_case, annotation)
+    canonical_match = match_labels(
+        selected,
+        run_result["normalized_observation"]["observations"],
+        roles=("recall_label", "coverage_gap"),
     )
-    if matched:
-        compatibility = Compatibility(
-            compatible=True,
-            issue_compatible=True,
-            location_compatible=True,
-            risk_compatible=True,
-            score=(1,),
-        )
-        matches = (Match("label_001", "obs_001", compatibility),)
-        unmatched_labels = ()
-        unmatched_observations = ()
     return {
         "manifest_case": manifest_case,
         "annotation": annotation,
         "run_result": run_result,
-        "match_result": MatchResult(
-            matches=matches,
-            unmatched_label_ids=unmatched_labels,
-            unmatched_observation_ids=unmatched_observations,
-            candidate_edges=matches,
-            assignment_ambiguous=False,
-        ),
+        "match_result": canonical_match,
     }
 
 
@@ -3409,6 +3398,47 @@ class BriaBenchMatchingTests(unittest.TestCase):
         expanded = match_labels(labels, [self.observation("O1", "Figure 1A")], roles=("coverage_gap",))
         self.assertEqual([(m.label_id, m.observation_id) for m in expanded.matches], [("L2", "O1")])
 
+    def test_issue_only_mode_matches_right_issue_at_wrong_location(self) -> None:
+        result = match_labels(
+            [self.label("L1", "Figure 1A")],
+            [self.observation("O1", "Figure 2B")],
+            require_location=False,
+        )
+
+        self.assertEqual(
+            [(match.label_id, match.observation_id) for match in result.matches],
+            [("L1", "O1")],
+        )
+        self.assertTrue(result.matches[0].compatibility.issue_compatible)
+        self.assertFalse(result.matches[0].compatibility.location_compatible)
+        self.assertFalse(result.matches[0].compatibility.compatible)
+
+    def test_issue_only_score_prioritizes_exact_issue_then_location(self) -> None:
+        exact_wrong_location = self.label("L1", "Figure 1A", family="family_a")
+        allowed_right_location = self.label(
+            "L2", "Figure 2B", family="family_b", compatible=["family_a"]
+        )
+        observation = self.observation(
+            "O1", "Figure 2B", family="family_a"
+        )
+
+        exact_result = match_labels(
+            [exact_wrong_location, allowed_right_location],
+            [observation],
+            require_location=False,
+        )
+        self.assertEqual(exact_result.matches[0].label_id, "L1")
+
+        location_result = match_labels(
+            [
+                self.label("L1", "Figure 1A", family="family_a"),
+                self.label("L2", "Figure 2B", family="family_a"),
+            ],
+            [observation],
+            require_location=False,
+        )
+        self.assertEqual(location_result.matches[0].label_id, "L2")
+
     def test_assignment_maximizes_semantic_score_before_tie_breaking(self) -> None:
         labels = [
             self.label("L1", "Figure 1"),
@@ -3487,6 +3517,99 @@ class BriaBenchMatchingTests(unittest.TestCase):
         self.assertEqual(len(result.matches), 1)
         self.assertEqual(len(result.candidate_edges), 2)
         self.assertIn("components", payload["candidate_edges"][0])
+
+    def test_randomized_small_assignments_match_bruteforce_in_both_modes(
+        self,
+    ) -> None:
+        rng = random.Random(20260711)
+        for trial in range(40):
+            labels = [
+                self.label(
+                    f"L{index}",
+                    f"Figure {rng.randint(1, 3)}A",
+                    family=f"family_{rng.randint(1, 2)}",
+                )
+                for index in range(rng.randint(1, 4))
+            ]
+            observations = [
+                self.observation(
+                    f"O{index}",
+                    f"Figure {rng.randint(1, 3)}A",
+                    family=f"family_{rng.randint(1, 2)}",
+                    risk=f"R{rng.randint(0, 4)}",
+                )
+                for index in range(rng.randint(1, 4))
+            ]
+            for require_location in (True, False):
+                with self.subTest(
+                    trial=trial, require_location=require_location
+                ):
+                    edges = {}
+                    for label in labels:
+                        for observation in observations:
+                            compatibility = label_observation_compatible(
+                                label, observation
+                            )
+                            if compatibility.issue_compatible and (
+                                compatibility.location_compatible
+                                or not require_location
+                            ):
+                                score = compatibility.score
+                                if not require_location:
+                                    score = (
+                                        score[0],
+                                        int(compatibility.location_compatible),
+                                        *score[1:],
+                                    )
+                                edges[
+                                    (
+                                        label["observation_id"],
+                                        observation["observation_id"],
+                                    )
+                                ] = score
+
+                    assignments: list[tuple[tuple[int, ...], frozenset[tuple[str, str]]]] = []
+                    label_ids = sorted(label["observation_id"] for label in labels)
+
+                    def enumerate_assignments(
+                        index: int,
+                        used: frozenset[str],
+                        pairs: frozenset[tuple[str, str]],
+                    ) -> None:
+                        if index == len(label_ids):
+                            score_length = len(next(iter(edges.values()))) if edges else 0
+                            totals = tuple(
+                                sum(edges[pair][component] for pair in pairs)
+                                for component in range(score_length)
+                            )
+                            assignments.append(((len(pairs), *totals), pairs))
+                            return
+                        enumerate_assignments(index + 1, used, pairs)
+                        label_id = label_ids[index]
+                        for pair in sorted(edges):
+                            if pair[0] == label_id and pair[1] not in used:
+                                enumerate_assignments(
+                                    index + 1,
+                                    used | {pair[1]},
+                                    pairs | {pair},
+                                )
+
+                    enumerate_assignments(0, frozenset(), frozenset())
+                    best = max(objective for objective, _ in assignments)
+                    optima = {
+                        pairs for objective, pairs in assignments if objective == best
+                    }
+                    result = match_labels(
+                        labels,
+                        observations,
+                        require_location=require_location,
+                    )
+                    selected = frozenset(
+                        (match.label_id, match.observation_id)
+                        for match in result.matches
+                    )
+                    self.assertIn(selected, optima)
+                    self.assertEqual(result.assignment_ambiguous, len(optima) > 1)
 
 
 class BriaBenchMetricAggregationTests(unittest.TestCase):
@@ -3612,6 +3735,7 @@ class BriaBenchMetricAggregationTests(unittest.TestCase):
             {
                 "observation_id": "guardrail_001",
                 "role": "negative_guardrail",
+                "issue_family": "ignored_family",
                 "location": "Figure 3A",
             }
         )
@@ -3620,6 +3744,7 @@ class BriaBenchMetricAggregationTests(unittest.TestCase):
             {
                 "observation_id": "reference_001",
                 "role": "reference_only",
+                "issue_family": "ignored_family",
                 "location": "Figure 3A",
             }
         )
@@ -3633,9 +3758,14 @@ class BriaBenchMetricAggregationTests(unittest.TestCase):
             case["run_result"]["normalized_observation"]["observations"][0]
         )
         extra_observation.update(
-            {"observation_id": "obs_ignored_roles", "location": "Figure 3A"}
+            {
+                "observation_id": "obs_ignored_roles",
+                "issue_family": "ignored_family",
+                "location": "Figure 3A",
+            }
         )
         observations = case["run_result"]["normalized_observation"]["observations"]
+        observations[0]["location"] = "Figure 1A"
         observations.append(extra_observation)
         selected = select_evaluation_labels(case["manifest_case"], annotation)
         case["match_result"] = match_labels(
@@ -3788,19 +3918,16 @@ class BriaBenchMetricAggregationTests(unittest.TestCase):
         self,
     ) -> None:
         case = metric_bundle("risk", matched=True)
-        match = case["match_result"].matches[0]
-        case["match_result"] = MatchResult(
-            matches=(
-                Match(
-                    match.label_id,
-                    match.observation_id,
-                    Compatibility(True, True, True, False, (1,)),
-                ),
-            ),
-            unmatched_label_ids=(),
-            unmatched_observation_ids=(),
-            candidate_edges=(),
-            assignment_ambiguous=False,
+        case["run_result"]["normalized_observation"]["observations"][0][
+            "risk_level"
+        ] = "R4"
+        selected = select_evaluation_labels(
+            case["manifest_case"], case["annotation"]
+        )
+        case["match_result"] = match_labels(
+            selected,
+            case["run_result"]["normalized_observation"]["observations"],
+            roles=("recall_label", "coverage_gap"),
         )
         result = self.aggregate([case])
         self.assertEqual(
@@ -3808,6 +3935,122 @@ class BriaBenchMetricAggregationTests(unittest.TestCase):
             {"numerator": 0, "denominator": 1, "value": 0.0},
         )
         self.assertEqual(result["case_results"][0]["matched_label_count"], 1)
+
+    def test_issue_recall_is_separate_from_location_and_keeps_risk_denominator(
+        self,
+    ) -> None:
+        case = metric_bundle("wrong-panel")
+        observations = case["run_result"]["normalized_observation"]["observations"]
+        observations[0]["location"] = "Figure 2B"
+        selected = select_evaluation_labels(
+            case["manifest_case"], case["annotation"]
+        )
+        case["match_result"] = match_labels(
+            selected,
+            observations,
+            roles=("recall_label", "coverage_gap"),
+        )
+
+        result = self.aggregate([case])
+
+        self.assertEqual(
+            result["detection"]["expected_finding_recall"],
+            {"numerator": 1, "denominator": 1, "value": 1.0},
+        )
+        self.assertEqual(
+            result["detection"]["location_match_rate"],
+            {"numerator": 0, "denominator": 1, "value": 0.0},
+        )
+        self.assertEqual(
+            result["detection"]["risk_band_agreement"],
+            {"numerator": 1, "denominator": 1, "value": 1.0},
+        )
+
+    def test_public_concern_wrong_location_does_not_count_as_coverage(self) -> None:
+        case = metric_bundle(
+            "concern-wrong-panel",
+            track="public_concern",
+            scope="localization_only",
+        )
+        observations = case["run_result"]["normalized_observation"]["observations"]
+        observations[0]["location"] = "Figure 2B"
+        selected = select_evaluation_labels(
+            case["manifest_case"], case["annotation"]
+        )
+        case["match_result"] = match_labels(
+            selected,
+            observations,
+            roles=("recall_label", "coverage_gap"),
+        )
+
+        result = self.aggregate([case])
+
+        self.assertEqual(
+            result["detection"]["public_concern_location_coverage"],
+            {"numerator": 0, "denominator": 1, "value": 0.0},
+        )
+
+    def test_issue_assignment_is_one_to_one_across_recall_and_coverage(self) -> None:
+        case = metric_bundle("mixed-issue-assignment")
+        recall = case["annotation"]["expected_observations"][0]
+        recall["observation_id"] = "a_recall"
+        coverage = copy.deepcopy(recall)
+        coverage.update(
+            {
+                "observation_id": "z_coverage",
+                "role": "coverage_gap",
+                "issue_family": "compatible_family",
+                "compatible_issue_families": [recall["issue_family"]],
+            }
+        )
+        case["annotation"]["expected_observations"].append(coverage)
+        selected = select_evaluation_labels(
+            case["manifest_case"], case["annotation"]
+        )
+        observations = case["run_result"]["normalized_observation"]["observations"]
+        case["match_result"] = match_labels(
+            selected,
+            observations,
+            roles=("recall_label", "coverage_gap"),
+        )
+
+        result = self.aggregate([case])
+
+        self.assertEqual(
+            result["detection"]["expected_finding_recall"],
+            {"numerator": 1, "denominator": 1, "value": 1.0},
+        )
+        self.assertEqual(
+            result["detection"]["coverage_gap_recall"],
+            {"numerator": 0, "denominator": 1, "value": 0.0},
+        )
+
+    def test_ambiguous_cross_role_assignment_is_excluded_from_headline_metrics(
+        self,
+    ) -> None:
+        case = metric_bundle("ambiguous-cross-role", matched=True)
+        coverage = copy.deepcopy(case["annotation"]["expected_observations"][0])
+        coverage.update(
+            {"observation_id": "coverage_001", "role": "coverage_gap"}
+        )
+        case["annotation"]["expected_observations"].append(coverage)
+        selected = select_evaluation_labels(
+            case["manifest_case"], case["annotation"]
+        )
+        case["match_result"] = match_labels(
+            selected,
+            case["run_result"]["normalized_observation"]["observations"],
+            roles=("recall_label", "coverage_gap"),
+        )
+        self.assertTrue(case["match_result"].assignment_ambiguous)
+
+        result = self.aggregate([case])
+
+        self.assertFalse(result["case_results"][0]["headline_detection_eligible"])
+        self.assertEqual(
+            result["detection"]["expected_finding_recall"],
+            {"numerator": 0, "denominator": 0, "value": None},
+        )
 
     def test_matched_and_unmatched_label_ids_must_be_disjoint(self) -> None:
         case = metric_bundle("label-overlap", matched=True)
@@ -3889,6 +4132,54 @@ class BriaBenchMetricAggregationTests(unittest.TestCase):
         self.assertEqual(
             result["reliability"]["silent_failure_rate"],
             {"numerator": 2, "denominator": 2, "value": 1.0},
+        )
+
+    def test_failure_event_keys_normalize_unicode_case_and_separators(self) -> None:
+        aliases = (
+            ("Image Detector", "Timed-Out"),
+            ("Ｉｍａｇｅ　Ｄｅｔｅｃｔｏｒ", "Ｔｉｍｅｄ－Ｏｕｔ"),
+        )
+        for index, (module, failure_type) in enumerate(aliases):
+            with self.subTest(module=module, failure_type=failure_type):
+                case = metric_bundle(f"failure-alias-{index}")
+                normalized = case["run_result"]["normalized_observation"]
+                normalized["technical_failures"] = [
+                    {"module": module, "failure_type": failure_type}
+                ]
+                normalized["reported_technical_failures"] = [
+                    {"module": "image_detector", "failure_type": "timed out"}
+                ]
+
+                result = self.aggregate([case])
+
+                self.assertEqual(
+                    result["reliability"]["technical_failure_disclosure_rate"],
+                    {"numerator": 1, "denominator": 1, "value": 1.0},
+                )
+                self.assertEqual(
+                    result["reliability"]["silent_failure_rate"],
+                    {"numerator": 0, "denominator": 1, "value": 0.0},
+                )
+
+    def test_failure_event_keys_do_not_fuzz_different_failure_types(self) -> None:
+        case = metric_bundle("failure-different")
+        normalized = case["run_result"]["normalized_observation"]
+        normalized["technical_failures"] = [
+            {"module": "Image Detector", "failure_type": "Timed-Out"}
+        ]
+        normalized["reported_technical_failures"] = [
+            {"module": "image_detector", "failure_type": "decode error"}
+        ]
+
+        result = self.aggregate([case])
+
+        self.assertEqual(
+            result["reliability"]["technical_failure_disclosure_rate"],
+            {"numerator": 0, "denominator": 1, "value": 0.0},
+        )
+        self.assertEqual(
+            result["reliability"]["silent_failure_rate"],
+            {"numerator": 1, "denominator": 1, "value": 1.0},
         )
 
     def test_performance_is_nearest_rank_profiled_and_explicitly_budgeted(self) -> None:
@@ -3981,6 +4272,151 @@ class BriaBenchMetricAggregationTests(unittest.TestCase):
             left["reliability"]["previous_result_preservation"],
             {"numerator": 1, "denominator": 2, "value": 0.5},
         )
+
+    def test_aggregation_rejects_forged_source_incompatible_pair(self) -> None:
+        case = metric_bundle("forged-pair", matched=True)
+        case["run_result"]["normalized_observation"]["observations"][0][
+            "location"
+        ] = "Figure 2B"
+
+        with self.assertRaisesRegex(ValueError, "canonical selected pairs"):
+            self.aggregate([case])
+
+    def test_aggregation_rejects_forged_assignment_ambiguity(self) -> None:
+        case = metric_bundle("forged-ambiguity", matched=True)
+        case["match_result"] = case["match_result"].to_dict()
+        case["match_result"]["assignment_ambiguous"] = True
+
+        with self.assertRaisesRegex(ValueError, "canonical assignment_ambiguous"):
+            self.aggregate([case])
+
+    def test_aggregation_rejects_forged_independent_compatibility_flag(self) -> None:
+        case = metric_bundle("forged-risk-flag", matched=True)
+        case["match_result"] = case["match_result"].to_dict()
+        case["match_result"]["matches"][0]["compatibility"][
+            "risk_compatible"
+        ] = False
+
+        with self.assertRaisesRegex(ValueError, "risk_compatible differs"):
+            self.aggregate([case])
+
+    def test_aggregation_rejects_compatible_but_suboptimal_assignment(self) -> None:
+        case = metric_bundle("suboptimal-assignment")
+        base_label = case["annotation"]["expected_observations"][0]
+        expected_region = {
+            "x": 0.0,
+            "y": 0.0,
+            "width": 0.5,
+            "height": 0.5,
+            "coordinate_space": "normalized_0_1",
+        }
+        weak_region = {
+            "x": 0.4,
+            "y": 0.0,
+            "width": 0.5,
+            "height": 0.5,
+            "coordinate_space": "normalized_0_1",
+        }
+        first_label = copy.deepcopy(base_label)
+        first_label.update({"observation_id": "label_001", "location": "Figure 1"})
+        second_label = copy.deepcopy(base_label)
+        second_label.update(
+            {
+                "observation_id": "label_002",
+                "location": {"figure": "1", "region": expected_region},
+            }
+        )
+        case["annotation"]["expected_observations"] = [first_label, second_label]
+        first_observation = case["run_result"]["normalized_observation"][
+            "observations"
+        ][0]
+        first_observation["location"] = {
+            "figure": "1A",
+            "region": expected_region,
+        }
+        second_observation = copy.deepcopy(first_observation)
+        second_observation.update(
+            {
+                "observation_id": "obs_002",
+                "location": {"figure": "1", "region": weak_region},
+            }
+        )
+        observations = case["run_result"]["normalized_observation"]["observations"]
+        observations.append(second_observation)
+        swapped_pairs = (
+            (first_label, first_observation),
+            (second_label, second_observation),
+        )
+        swapped_matches = tuple(
+            Match(
+                label["observation_id"],
+                observation["observation_id"],
+                label_observation_compatible(label, observation),
+            )
+            for label, observation in swapped_pairs
+        )
+        self.assertTrue(all(match.compatibility.compatible for match in swapped_matches))
+        case["match_result"] = MatchResult(
+            matches=swapped_matches,
+            unmatched_label_ids=(),
+            unmatched_observation_ids=(),
+            candidate_edges=swapped_matches,
+            assignment_ambiguous=False,
+        )
+
+        with self.assertRaisesRegex(ValueError, "canonical selected pairs"):
+            self.aggregate([case])
+
+    def test_aggregation_rejects_nonmaximal_assignment(self) -> None:
+        case = metric_bundle("nonmaximal-assignment", matched=True)
+        second_label = copy.deepcopy(case["annotation"]["expected_observations"][0])
+        second_label.update(
+            {"observation_id": "label_002", "location": "Figure 2A"}
+        )
+        case["annotation"]["expected_observations"].append(second_label)
+        second_observation = copy.deepcopy(
+            case["run_result"]["normalized_observation"]["observations"][0]
+        )
+        second_observation.update(
+            {"observation_id": "obs_002", "location": "Figure 2A"}
+        )
+        case["run_result"]["normalized_observation"]["observations"].append(
+            second_observation
+        )
+        supplied = case["match_result"]
+        case["match_result"] = MatchResult(
+            matches=supplied.matches,
+            unmatched_label_ids=("label_002",),
+            unmatched_observation_ids=("obs_002",),
+            candidate_edges=supplied.candidate_edges,
+            assignment_ambiguous=False,
+        )
+
+        with self.assertRaisesRegex(ValueError, "canonical selected pairs"):
+            self.aggregate([case])
+
+    def test_non_native_telemetry_is_returned_as_json_safe_numbers(self) -> None:
+        case = metric_bundle("decimal-telemetry")
+        telemetry = case["run_result"]["telemetry"]
+        telemetry.update(
+            {
+                "elapsed_seconds": Decimal("1.25"),
+                "cpu_seconds": Decimal("0.75"),
+                "module_seconds": {"images": Decimal("0.5")},
+                "llm": {
+                    "provider": "fixture",
+                    "model": "model",
+                    "latency_seconds": Decimal("0.4"),
+                    "estimated_cost_cny": Decimal("0.03"),
+                },
+            }
+        )
+
+        result = self.aggregate([case])
+
+        json.dumps(result)
+        self.assertIsInstance(result["case_results"][0]["peak_rss_bytes"], int)
+        self.assertIsInstance(result["case_results"][0]["elapsed_seconds"], float)
 
     def test_malformed_bundle_fails_closed(self) -> None:
         case = metric_bundle("bad")

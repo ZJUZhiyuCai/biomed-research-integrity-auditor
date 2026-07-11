@@ -963,8 +963,20 @@ def _maximum_cardinality(labels: Sequence[str], observations: Sequence[str], edg
     return sum(visit(label_id, set()) for label_id in labels)
 
 
-def match_labels(labels: Sequence[Mapping[str, Any]], observations: Sequence[Mapping[str, Any]], *, roles: Sequence[str] = ("recall_label",)) -> MatchResult:
-    """Return a deterministic maximum-cardinality, maximum-semantic-score assignment."""
+def match_labels(
+    labels: Sequence[Mapping[str, Any]],
+    observations: Sequence[Mapping[str, Any]],
+    *,
+    roles: Sequence[str] = ("recall_label",),
+    require_location: bool = True,
+) -> MatchResult:
+    """Return a deterministic maximum-cardinality semantic assignment.
+
+    By default, edges require issue and location compatibility.  With
+    ``require_location=False``, edges require only issue compatibility and score
+    exact issue family before location compatibility and existing location
+    semantics.  Risk never participates in edge eligibility or assignment.
+    """
 
     if not isinstance(labels, Sequence) or isinstance(labels, (str, bytes)) or not isinstance(observations, Sequence) or isinstance(observations, (str, bytes)):
         raise ValueError("labels and observations must be sequences")
@@ -972,6 +984,8 @@ def match_labels(labels: Sequence[Mapping[str, Any]], observations: Sequence[Map
         raise ValueError("roles must be a non-empty sequence of strings")
     if any(not isinstance(role, str) or not role.strip() for role in roles):
         raise ValueError("roles must be a non-empty sequence of non-empty strings")
+    if not isinstance(require_location, bool):
+        raise ValueError("require_location must be boolean")
     selected_roles = set(roles)
     all_label_ids: set[str] = set()
     label_records: dict[str, Mapping[str, Any]] = {}
@@ -1005,8 +1019,27 @@ def match_labels(labels: Sequence[Mapping[str, Any]], observations: Sequence[Map
     for label_id in eligible_labels:
         for observation_id in observation_ids:
             compatibility = label_observation_compatible(label_records[label_id], observation_records[observation_id])
-            if compatibility.compatible:
-                candidate_edges[(label_id, observation_id)] = Match(label_id, observation_id, compatibility)
+            if compatibility.issue_compatible and (
+                compatibility.location_compatible or not require_location
+            ):
+                edge_compatibility = compatibility
+                if not require_location:
+                    edge_compatibility = Compatibility(
+                        compatible=compatibility.compatible,
+                        issue_compatible=compatibility.issue_compatible,
+                        location_compatible=compatibility.location_compatible,
+                        risk_compatible=compatibility.risk_compatible,
+                        score=(
+                            compatibility.score[0],
+                            int(compatibility.location_compatible),
+                            *compatibility.score[1:],
+                        ),
+                        reasons=compatibility.reasons,
+                        components=compatibility.components,
+                    )
+                candidate_edges[(label_id, observation_id)] = Match(
+                    label_id, observation_id, edge_compatibility
+                )
     cardinality = _maximum_cardinality(eligible_labels, observation_ids, candidate_edges)
     score_base = max((max(item.compatibility.score, default=0) for item in candidate_edges.values()), default=0) * max(len(eligible_labels), 1) + 2
     score_base = max(score_base, len(eligible_labels) + 2)

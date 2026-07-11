@@ -22,12 +22,15 @@ boundaries before one-to-one assignment; ``negative_guardrail`` and
 from __future__ import annotations
 
 import math
+import unicodedata
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
+from decimal import Decimal
+from numbers import Integral, Real
 from typing import Any
 
 from .contracts import validate_contract
-from .matching import MatchResult
+from .matching import MatchResult, match_labels
 
 
 _TRACKS = (
@@ -87,6 +90,40 @@ def _distribution(items: Sequence[tuple[str, int | float]]) -> dict[str, Any]:
         "values": values,
         "case_values": case_values,
     }
+
+
+def _json_safe_numbers(value: Any, path: str = "result") -> Any:
+    if isinstance(value, dict):
+        return {
+            key: _json_safe_numbers(item, f"{path}.{key}")
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [
+            _json_safe_numbers(item, f"{path}[{index}]")
+            for index, item in enumerate(value)
+        ]
+    if isinstance(value, bool) or value is None or isinstance(value, str):
+        return value
+    if isinstance(value, Integral):
+        return int(value)
+    if isinstance(value, Decimal):
+        if not value.is_finite():
+            raise ValueError(f"{path} must be finite and JSON-safe")
+        if value == value.to_integral_value():
+            return int(value)
+        converted = float(value)
+        if not math.isfinite(converted):
+            raise ValueError(f"{path} cannot be represented as a finite JSON number")
+        return converted
+    if isinstance(value, float):
+        return value
+    if isinstance(value, Real):
+        converted = float(value)
+        if not math.isfinite(converted):
+            raise ValueError(f"{path} cannot be represented as a finite JSON number")
+        return converted
+    return value
 
 
 def _require_mapping(value: object, name: str) -> Mapping[str, Any]:
@@ -165,7 +202,9 @@ def _match_payload(value: object) -> Mapping[str, Any]:
     return payload
 
 
-def _match_rows(payload: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+def _match_rows(
+    payload: Mapping[str, Any], *, require_location: bool = True
+) -> list[Mapping[str, Any]]:
     rows: list[Mapping[str, Any]] = []
     label_ids: set[str] = set()
     observation_ids: set[str] = set()
@@ -189,7 +228,12 @@ def _match_rows(payload: Mapping[str, Any]) -> list[Mapping[str, Any]]:
         ):
             if not isinstance(compatibility.get(key), bool):
                 raise ValueError(f"match compatibility {key} must be boolean")
-        for key in ("compatible", "issue_compatible", "location_compatible"):
+        required_true = (
+            ("compatible", "issue_compatible", "location_compatible")
+            if require_location
+            else ("issue_compatible",)
+        )
+        for key in required_true:
             if not compatibility[key]:
                 raise ValueError(f"selected match compatibility {key} must be true")
         label_ids.add(label_id)
@@ -198,16 +242,33 @@ def _match_rows(payload: Mapping[str, Any]) -> list[Mapping[str, Any]]:
     return rows
 
 
+def _canonical_event_component(value: str) -> str:
+    normalized = unicodedata.normalize("NFKC", value).casefold()
+    parts: list[str] = []
+    pending_separator = False
+    for character in normalized:
+        if character.isalnum():
+            if pending_separator and parts:
+                parts.append("_")
+            parts.append(character)
+            pending_separator = False
+        else:
+            pending_separator = True
+    return "".join(parts)
+
+
 def _event_parts(
     event: Mapping[str, Any], default_module: str
 ) -> tuple[str, str | None]:
-    module = str(event.get("module") or default_module).strip().casefold()
+    module = _canonical_event_component(str(event.get("module") or default_module))
     if not module:
-        module = default_module
+        module = _canonical_event_component(default_module)
     for field in ("failure_type", "category", "status"):
         detail = event.get(field)
         if isinstance(detail, str) and detail.strip():
-            return module, detail.strip().casefold()
+            normalized_detail = _canonical_event_component(detail)
+            if normalized_detail:
+                return module, normalized_detail
     return module, None
 
 
@@ -263,12 +324,11 @@ def _validate_bundle(
             "manifest, annotation, and run result case_id values must match"
         )
 
-    label_ids = {
-        item["observation_id"]
-        for item in select_evaluation_labels(manifest_case, annotation)
-    }
+    selected_labels = select_evaluation_labels(manifest_case, annotation)
+    label_ids = {item["observation_id"] for item in selected_labels}
+    observations = run["normalized_observation"]["observations"]
     observation_ids = {
-        item["observation_id"] for item in run["normalized_observation"]["observations"]
+        item["observation_id"] for item in observations
     }
     rows = _match_rows(match)
     if any(row["label_id"] not in label_ids for row in rows):
@@ -297,7 +357,45 @@ def _validate_bundle(
         raise ValueError("match_result must account for every label exactly once")
     if matched_observation_ids | unmatched_observation_ids != observation_ids:
         raise ValueError("match_result must account for every observation exactly once")
-    return manifest_case, annotation, run, match
+
+    canonical = match_labels(
+        selected_labels,
+        observations,
+        roles=_EVALUATED_MATCH_ROLES,
+    ).to_dict()
+    canonical_rows = _match_rows(canonical)
+    supplied_by_pair = {
+        (row["label_id"], row["observation_id"]): row for row in rows
+    }
+    canonical_by_pair = {
+        (row["label_id"], row["observation_id"]): row for row in canonical_rows
+    }
+    if set(supplied_by_pair) != set(canonical_by_pair):
+        raise ValueError("match_result selected pairs differ from canonical selected pairs")
+    if set(match["unmatched_label_ids"]) != set(canonical["unmatched_label_ids"]):
+        raise ValueError("match_result unmatched labels differ from canonical partition")
+    if set(match["unmatched_observation_ids"]) != set(
+        canonical["unmatched_observation_ids"]
+    ):
+        raise ValueError("match_result unmatched observations differ from canonical partition")
+    if match["assignment_ambiguous"] != canonical["assignment_ambiguous"]:
+        raise ValueError(
+            "match_result assignment_ambiguous differs from canonical assignment_ambiguous"
+        )
+    for pair, canonical_row in canonical_by_pair.items():
+        supplied_compatibility = supplied_by_pair[pair]["compatibility"]
+        canonical_compatibility = canonical_row["compatibility"]
+        for key in (
+            "compatible",
+            "issue_compatible",
+            "location_compatible",
+            "risk_compatible",
+        ):
+            if supplied_compatibility[key] != canonical_compatibility[key]:
+                raise ValueError(
+                    f"match_result compatibility {key} differs from canonical match"
+                )
+    return manifest_case, annotation, run, canonical
 
 
 def aggregate_metrics(
@@ -368,25 +466,35 @@ def aggregate_metrics(
     track_eligible = defaultdict(bool)
     case_results: list[dict[str, Any]] = []
 
-    for bundle, manifest_case, annotation, run, match in prepared:
+    for bundle, manifest_case, annotation, run, full_match in prepared:
         case_id = manifest_case["case_id"]
         track = manifest_case["track"]
         status = run["status"]
         normalized = run["normalized_observation"]
-        rows = _match_rows(match)
-        successful_rows = rows if status == _SUCCESS else []
+        evaluated_labels = select_evaluation_labels(manifest_case, annotation)
+        issue_match = match_labels(
+            evaluated_labels,
+            normalized["observations"],
+            roles=_EVALUATED_MATCH_ROLES,
+            require_location=False,
+        ).to_dict()
+        issue_rows = _match_rows(issue_match, require_location=False)
+        successful_rows = issue_rows if status == _SUCCESS else []
         rows_by_label = {row["label_id"]: row for row in successful_rows}
+        attribution_ambiguous = status == _SUCCESS and (
+            full_match["assignment_ambiguous"]
+            or issue_match["assignment_ambiguous"]
+        )
         eligible = (
             track in {"blinded_challenge", "public_realism"}
             and manifest_case.get("headline_eligible") is True
             and annotation["review_status"]
             in {"controlled_ground_truth", "independent_adjudicated"}
-            and not match["assignment_ambiguous"]
+            and not attribution_ambiguous
         )
         track_counts[track] += 1
         track_eligible[track] = track_eligible[track] or eligible
 
-        evaluated_labels = select_evaluation_labels(manifest_case, annotation)
         headline_labels = [
             label
             for label in evaluated_labels
@@ -403,7 +511,11 @@ def aggregate_metrics(
             label["observation_id"] in rows_by_label for label in headline_labels
         )
         matched_coverage = sum(
-            label["observation_id"] in rows_by_label for label in coverage_labels
+            label["observation_id"] in rows_by_label
+            and rows_by_label[label["observation_id"]]["compatibility"][
+                "location_compatible"
+            ]
+            for label in coverage_labels
         )
 
         if eligible:
@@ -423,7 +535,7 @@ def aggregate_metrics(
                     for label in headline_labels
                     if label["observation_id"] in rows_by_label
                 )
-                detection_counts["location_denominator"] += len(headline_labels)
+                detection_counts["location_denominator"] += matched_headline
                 detection_counts["risk_numerator"] += sum(
                     bool(row["compatibility"]["risk_compatible"])
                     for row in rows_by_label.values()
@@ -441,7 +553,7 @@ def aggregate_metrics(
                 "controlled_ground_truth",
                 "independent_adjudicated",
             }
-            and not match["assignment_ambiguous"]
+            and not attribution_ambiguous
         ):
             detection_counts["concern_numerator"] += sum(
                 label["observation_id"] in rows_by_label
@@ -522,7 +634,7 @@ def aggregate_metrics(
                 "matched_label_count": len(successful_rows),
                 "expected_label_count": len(evaluated_labels),
                 "false_alert_count": (
-                    len(match["unmatched_observation_ids"])
+                    len(issue_match["unmatched_observation_ids"])
                     if status == _SUCCESS
                     else int(annotation["negative_control"])
                 ),
@@ -657,5 +769,6 @@ def aggregate_metrics(
         result["manifest_sha256"] = manifest_sha256
     if generated_at is not None:
         result["generated_at"] = generated_at
+    result = _json_safe_numbers(result)
     validate_contract("metrics.schema.json", result)
     return result
