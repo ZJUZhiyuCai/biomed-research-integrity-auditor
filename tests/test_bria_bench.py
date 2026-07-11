@@ -1478,7 +1478,7 @@ class BriaBenchRuntimeTests(unittest.TestCase):
     @unittest.skipUnless(os.name == "posix", "process identity tests require POSIX")
     def test_child_rss_contributes_to_peak(self) -> None:
         child_code = (
-            "buf = bytearray(48 * 1024 * 1024); "
+            "import time; buf = bytearray(48 * 1024 * 1024); "
             "buf[::4096] = b\"x\" * (48 * 1024); time.sleep(0.8)"
         )
         source = (
@@ -1489,6 +1489,8 @@ class BriaBenchRuntimeTests(unittest.TestCase):
         result = self.run_python(source, timeout_seconds=5.0)
 
         self.assertEqual(result.status, "success")
+        self.assertEqual(result.returncode, 0)
+        self.assertFalse(result.timed_out)
         self.assertGreater(result.peak_rss_bytes, 24 * 1024 * 1024)
 
     @unittest.skipUnless(os.name == "posix", "process identity tests require POSIX")
