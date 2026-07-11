@@ -27,6 +27,7 @@ import psutil
 
 DEFAULT_TAIL_BYTES = 64 * 1024
 _READ_CHUNK_BYTES = 64 * 1024
+_MAX_CLEANUP_ERRORS = 64
 _DIRECTORY_FSYNC_UNSUPPORTED = frozenset(
     {
         errno.EINVAL,
@@ -176,28 +177,83 @@ def _is_live(process: psutil.Process, identity: Identity) -> bool:
         return False
 
 
+def _append_error(errors: list[str], error: str | None) -> None:
+    if error is None or error in errors:
+        return
+    if len(errors) >= _MAX_CLEANUP_ERRORS:
+        marker = "additional cleanup errors omitted"
+        if marker not in errors:
+            errors.append(marker)
+        return
+    errors.append(error)
+
+
 def _discover_group_members(
     tracked: dict[Identity, _TrackedProcess],
     process_group_id: int | None,
+    errors: list[str],
 ) -> None:
     if os.name != "posix" or process_group_id is None:
         return
     try:
         candidates = psutil.process_iter()
-    except (psutil.Error, OSError, TypeError, ValueError):
+    except Exception as exc:
+        _append_error(
+            errors,
+            "process discovery/verification incomplete: "
+            f"process_iter setup failed: {type(exc).__name__}: {exc}",
+        )
         return
-    for candidate in candidates:
-        try:
-            if candidate.pid == os.getpid() or os.getpgid(candidate.pid) != process_group_id:
+    try:
+        for candidate in candidates:
+            try:
+                if candidate.pid == os.getpid() or os.getpgid(candidate.pid) != process_group_id:
+                    continue
+                candidate_identity = candidate.pid, float(candidate.create_time())
+            except (ProcessLookupError, psutil.NoSuchProcess):
                 continue
-            candidate_identity = _identity(candidate)
-        except (OSError, psutil.Error, TypeError, ValueError):
-            continue
-        if candidate_identity is not None and candidate_identity not in tracked:
-            tracked[candidate_identity] = _TrackedProcess(candidate)
+            except Exception as exc:
+                _append_error(
+                    errors,
+                    "process discovery/verification incomplete: "
+                    f"process candidate failed: {type(exc).__name__}: {exc}",
+                )
+                continue
+            if candidate_identity is not None and candidate_identity not in tracked:
+                tracked[candidate_identity] = _TrackedProcess(candidate)
+    except Exception as exc:
+        _append_error(
+            errors,
+            "process discovery/verification incomplete: "
+            f"process_iter iteration failed: {type(exc).__name__}: {exc}",
+        )
 
 
-def _discover_and_sample(tracked: dict[Identity, _TrackedProcess], peak_rss: int) -> int:
+def _probe_process_group(process_group_id: int | None) -> tuple[bool, str | None]:
+    if os.name != "posix" or process_group_id is None or not hasattr(os, "killpg"):
+        return False, None
+    try:
+        os.killpg(process_group_id, 0)
+    except OSError as exc:
+        if exc.errno == errno.ESRCH:
+            return False, None
+        if exc.errno == errno.EPERM:
+            return True, (
+                "process discovery/verification incomplete: "
+                f"process group {process_group_id} exists but probe permission was denied"
+            )
+        return True, (
+            "process discovery/verification incomplete: "
+            f"process group {process_group_id} probe failed: {type(exc).__name__}: {exc}"
+        )
+    return True, None
+
+
+def _discover_and_sample(
+    tracked: dict[Identity, _TrackedProcess],
+    peak_rss: int,
+    errors: list[str],
+) -> int:
     """Discover descendants and sample each identity at most once per pass."""
 
     pending = list(tracked)
@@ -224,7 +280,14 @@ def _discover_and_sample(tracked: dict[Identity, _TrackedProcess], peak_rss: int
 
         try:
             children = process.children(recursive=False)
-        except (psutil.Error, OSError, TypeError, ValueError):
+        except (ProcessLookupError, psutil.NoSuchProcess):
+            children = []
+        except Exception as exc:
+            _append_error(
+                errors,
+                "process discovery/verification incomplete: "
+                f"child enumeration failed: {type(exc).__name__}: {exc}",
+            )
             children = []
         for child in children:
             child_identity = _identity(child)
@@ -312,18 +375,8 @@ def _signal_process_group(
 ) -> str | None:
     if os.name != "posix" or process_group_id is None or not hasattr(os, "killpg"):
         return None
-    verified_member = False
-    for process_identity in tracked:
-        process = _current_process(process_identity)
-        if process is None or not _is_live(process, process_identity):
-            continue
-        try:
-            if os.getpgid(process_identity[0]) == process_group_id:
-                verified_member = True
-                break
-        except OSError:
-            continue
-    if not verified_member:
+    group_exists, _ = _probe_process_group(process_group_id)
+    if not group_exists:
         return None
     try:
         os.killpg(process_group_id, signum)
@@ -334,21 +387,17 @@ def _signal_process_group(
     return None
 
 
-def _append_error(errors: list[str], error: str | None) -> None:
-    if error is not None and error not in errors:
-        errors.append(error)
-
-
 def _terminate_process_tree(
     process: subprocess.Popen[bytes],
     root_identity: Identity | None,
     process_group_id: int | None,
     tracked: dict[Identity, _TrackedProcess],
     poll_interval: float,
+    cleanup_errors: list[str],
 ) -> _CleanupReport:
-    errors: list[str] = []
+    errors = cleanup_errors
     peak_rss = 0
-    _discover_group_members(tracked, process_group_id)
+    _discover_group_members(tracked, process_group_id, errors)
     _append_error(errors, _signal_process_group(process_group_id, tracked, signal.SIGTERM))
 
     def signal_live(signum: int) -> list[Identity]:
@@ -360,19 +409,22 @@ def _terminate_process_tree(
     signal_live(signal.SIGTERM)
     term_deadline = time.monotonic() + 1.0
     while time.monotonic() < term_deadline:
-        _discover_group_members(tracked, process_group_id)
-        peak_rss = _discover_and_sample(tracked, peak_rss)
+        _discover_group_members(tracked, process_group_id, errors)
+        peak_rss = _discover_and_sample(tracked, peak_rss, errors)
         live = signal_live(signal.SIGTERM)
-        if not live:
+        group_exists, _ = _probe_process_group(process_group_id)
+        if not live and not group_exists:
             break
         time.sleep(min(poll_interval, max(0.0, term_deadline - time.monotonic())))
 
+    _append_error(errors, _signal_process_group(process_group_id, tracked, signal.SIGKILL))
     kill_deadline = time.monotonic() + 1.0
     while time.monotonic() < kill_deadline:
-        _discover_group_members(tracked, process_group_id)
-        peak_rss = _discover_and_sample(tracked, peak_rss)
+        _discover_group_members(tracked, process_group_id, errors)
+        peak_rss = _discover_and_sample(tracked, peak_rss, errors)
         live = signal_live(signal.SIGKILL)
-        if not live:
+        group_exists, _ = _probe_process_group(process_group_id)
+        if not live and not group_exists:
             break
         time.sleep(min(poll_interval, max(0.0, kill_deadline - time.monotonic())))
 
@@ -395,11 +447,19 @@ def _terminate_process_tree(
     except OSError as exc:
         _append_error(errors, f"could not wait for root process: {exc}")
 
-    _discover_group_members(tracked, process_group_id)
-    peak_rss = _discover_and_sample(tracked, peak_rss)
+    _discover_group_members(tracked, process_group_id, errors)
+    peak_rss = _discover_and_sample(tracked, peak_rss, errors)
     survivors = tuple(_live_identities(tracked))
     if survivors:
         _append_error(errors, f"surviving process identities after cleanup: {survivors}")
+    group_exists, probe_error = _probe_process_group(process_group_id)
+    _append_error(errors, probe_error)
+    if group_exists:
+        _append_error(
+            errors,
+            f"process group {process_group_id} still exists after cleanup; "
+            "survivor verification incomplete",
+        )
     return _CleanupReport(peak_rss, survivors, tuple(errors))
 
 
@@ -496,10 +556,10 @@ def run_monitored(
     refresh_root_identity()
     process_group_id = process.pid if os.name == "posix" else None
 
-    peak_rss = _discover_and_sample(tracked, 0)
+    cleanup_errors: list[str] = []
+    peak_rss = _discover_and_sample(tracked, 0, cleanup_errors)
     root_returncode: int | None = None
     timed_out = False
-    cleanup_errors: list[str] = []
     deadline = started + timeout
     while True:
         if root_returncode is None and root_identity is None:
@@ -509,11 +569,13 @@ def run_monitored(
             if polled is not None:
                 root_returncode = polled
         if root_returncode is not None:
-            _discover_group_members(tracked, process_group_id)
-        peak_rss = _discover_and_sample(tracked, peak_rss)
+            _discover_group_members(tracked, process_group_id, cleanup_errors)
+        peak_rss = _discover_and_sample(tracked, peak_rss, cleanup_errors)
         live = _live_identities(tracked)
         if root_returncode is not None and not live:
-            break
+            group_exists, _ = _probe_process_group(process_group_id)
+            if not group_exists:
+                break
         now = time.monotonic()
         if now >= deadline:
             timed_out = True
@@ -523,9 +585,9 @@ def run_monitored(
                 process_group_id,
                 tracked,
                 poll_interval,
+                cleanup_errors,
             )
             peak_rss = max(peak_rss, report.peak_rss)
-            cleanup_errors.extend(report.errors)
             break
         time.sleep(min(poll_interval, max(0.0, deadline - now)))
 

@@ -1635,6 +1635,77 @@ class BriaBenchRuntimeTests(unittest.TestCase):
                     pass
                 self.assert_identity_gone(pid, create_time)
 
+    def run_with_discovery_failure(self, process_iter: object) -> None:
+        marker = self.root / "discovery-identities.txt"
+        child_code = "import signal, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(30)"
+        source = (
+            "import os, subprocess, sys\n"
+            f"child = subprocess.Popen([sys.executable, '-c', {child_code!r}])\n"
+            "identities = (f'child|{child.pid}|{__import__(\"psutil\").Process(child.pid).create_time()}\\n' "
+            "f'root|{os.getpid()}|{__import__(\"psutil\").Process().create_time()}\\n')\n"
+            f"with open({str(marker)!r}, 'w', encoding='utf-8') as handle: handle.write(identities)\n"
+            "print(identities, end='', flush=True)\n"
+            "raise SystemExit(0)\n"
+        )
+        result: RuntimeResult | None = None
+        identities: list[tuple[int, float]] = []
+        try:
+            with patch.object(runtime_module.psutil, "process_iter", side_effect=process_iter):
+                result = self.run_python(source, timeout_seconds=0.3, tail_bytes=1024)
+
+            self.assertEqual(result.status, "timeout")
+            self.assertTrue(result.timed_out)
+            self.assertFalse(result.cleanup_complete)
+            self.assertTrue(
+                any("discovery/verification incomplete" in error for error in result.cleanup_errors)
+            )
+            self.assertEqual(len(result.cleanup_errors), len(set(result.cleanup_errors)))
+        finally:
+            if marker.exists():
+                for line in marker.read_text(encoding="utf-8").splitlines():
+                    parts = line.split("|")
+                    if len(parts) != 3:
+                        continue
+                    try:
+                        identities.append((int(parts[1]), float(parts[2])))
+                    except ValueError:
+                        pass
+            if result is not None:
+                for line in result.stdout_tail.splitlines():
+                    parts = line.split("|")
+                    if len(parts) != 3:
+                        continue
+                    try:
+                        identity = (int(parts[1]), float(parts[2]))
+                    except ValueError:
+                        continue
+                    if identity not in identities:
+                        identities.append(identity)
+            for pid, create_time in identities:
+                try:
+                    process = runtime_module.psutil.Process(pid)
+                    if process.create_time() == create_time:
+                        os.kill(pid, signal.SIGKILL)
+                except (OSError, runtime_module.psutil.Error):
+                    pass
+                self.assert_identity_gone(pid, create_time)
+
+    @unittest.skipUnless(os.name == "posix", "process group tests require POSIX")
+    def test_process_iter_access_denied_is_disclosed_and_group_is_cleaned(self) -> None:
+        def denied_process_iter() -> object:
+            raise runtime_module.psutil.AccessDenied(pid=os.getpid())
+
+        self.run_with_discovery_failure(denied_process_iter)
+
+    @unittest.skipUnless(os.name == "posix", "process group tests require POSIX")
+    def test_process_iter_generator_access_denied_is_disclosed_and_group_is_cleaned(self) -> None:
+        def late_denied_process_iter() -> object:
+            if False:
+                yield None
+            raise runtime_module.psutil.AccessDenied(pid=os.getpid())
+
+        self.run_with_discovery_failure(late_denied_process_iter)
+
     @unittest.skipUnless(os.name == "posix", "process group tests require POSIX")
     def test_root_exit_waits_for_finite_descendant(self) -> None:
         child_code = "import time; time.sleep(0.35)"
