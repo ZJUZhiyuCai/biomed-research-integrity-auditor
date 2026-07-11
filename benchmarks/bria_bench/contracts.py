@@ -4,6 +4,7 @@ import json
 import math
 import re
 from datetime import datetime
+from numbers import Real
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -84,6 +85,16 @@ def _walk(value: Any, path: JsonPath = ()) -> Iterator[tuple[JsonPath, Any]]:
     elif isinstance(value, list):
         for index, child in enumerate(value):
             yield from _walk(child, path + (index,))
+
+
+def _reject_non_finite_numbers(name: str, payload: Any) -> None:
+    for path, value in _walk(payload):
+        if (
+            isinstance(value, Real)
+            and not isinstance(value, bool)
+            and not math.isfinite(value)
+        ):
+            _raise_contract_error(name, path, "numeric value must be finite")
 
 
 def _require_unique(
@@ -259,6 +270,28 @@ def _validate_distribution(name: str, path: JsonPath, value: dict[str, Any]) -> 
         _raise_contract_error(name, path + ("p50",), "p50 and p95 are required when count is positive")
     if p50 is not None and p95 is not None and p50 > p95:
         _raise_contract_error(name, path + ("p50",), "must be <= p95")
+    if count > 0:
+        ordered = sorted(values)
+        for field, percentile in (("p50", 0.50), ("p95", 0.95)):
+            rank = max(1, math.ceil(percentile * count))
+            expected = ordered[rank - 1]
+            measured = value[field]
+            if not math.isclose(
+                measured,
+                expected,
+                rel_tol=1e-9,
+                abs_tol=1e-12,
+            ):
+                _raise_contract_error(
+                    name,
+                    path + (field,),
+                    f"must match nearest-rank {field} computed from values",
+                )
+
+
+def _validate_count_summary(name: str, path: JsonPath, value: dict[str, Any]) -> None:
+    if value["total"] != value["met"] + value["not_met"]:
+        _raise_contract_error(name, path + ("total",), "must equal met + not_met")
 
 
 def _validate_metrics(name: str, payload: dict[str, Any]) -> None:
@@ -275,6 +308,8 @@ def _validate_metrics(name: str, payload: dict[str, Any]) -> None:
                 _validate_fraction(name, path, value)
             if {"count", "p50", "p95", "values"}.issubset(value):
                 _validate_distribution(name, path, value)
+            if {"met", "not_met", "total"}.issubset(value):
+                _validate_count_summary(name, path, value)
 
     _require_unique(name, payload.get("case_results", []), "case_id", ("case_results",))
 
@@ -290,6 +325,7 @@ _SEMANTIC_VALIDATORS = {
 
 def validate_contract(name: str, payload: Any) -> None:
     schema = load_schema(name)
+    _reject_non_finite_numbers(name, payload)
     try:
         Draft202012Validator.check_schema(schema)
         validator = Draft202012Validator(schema, format_checker=_FORMAT_CHECKER)

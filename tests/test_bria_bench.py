@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import re
 import unittest
 
 from jsonschema import Draft202012Validator
@@ -295,7 +296,23 @@ class BriaBenchContractTests(unittest.TestCase):
         ):
             validate_contract("annotation.schema.json", annotation)
 
-    def test_annotation_requires_nonempty_explanations_materials_and_terms(self) -> None:
+    def test_annotation_rejects_accusation_key_inside_region(self) -> None:
+        for key in ("misconduct", "fraud", "fake", "guilty"):
+            with self.subTest(key=key):
+                annotation = minimal_annotation()
+                region = {
+                    "x": 0,
+                    "y": 0,
+                    "width": 0.5,
+                    "height": 0.5,
+                    "coordinate_space": "normalized_0_1",
+                    key: True,
+                }
+                annotation["expected_observations"][0]["location"]["region"] = region
+                with self.assertRaises(ContractError):
+                    validate_contract("annotation.schema.json", annotation)
+
+    def test_annotation_requires_nonempty_observation_and_location_lists(self) -> None:
         for field in ("benign_explanations", "required_materials"):
             with self.subTest(field=field):
                 annotation = minimal_annotation()
@@ -303,10 +320,19 @@ class BriaBenchContractTests(unittest.TestCase):
                 with self.assertRaises(ContractError):
                     validate_contract("annotation.schema.json", annotation)
 
-        annotation = minimal_annotation()
-        annotation["expected_observations"][0]["location"]["terms"] = []
-        with self.assertRaises(ContractError):
-            validate_contract("annotation.schema.json", annotation)
+        for field in ("terms", "columns", "rows"):
+            with self.subTest(location_field=field):
+                annotation = minimal_annotation()
+                annotation["expected_observations"][0]["location"][field] = []
+                with self.assertRaises(ContractError):
+                    validate_contract("annotation.schema.json", annotation)
+
+        for field in ("columns", "rows"):
+            with self.subTest(normalized_location_field=field):
+                observation = minimal_observation()
+                observation["observations"][0]["location"] = {field: []}
+                with self.assertRaises(ContractError):
+                    validate_contract("observation.schema.json", observation)
 
     def test_regions_require_coordinate_space_and_validate_coordinates(self) -> None:
         invalid_regions = (
@@ -358,8 +384,8 @@ class BriaBenchContractTests(unittest.TestCase):
             {
                 "x": 0,
                 "y": 0,
-                "width": 0,
-                "height": 0,
+                "width": 1,
+                "height": 1,
                 "coordinate_space": "pixels",
             },
         ):
@@ -367,6 +393,32 @@ class BriaBenchContractTests(unittest.TestCase):
                 annotation = minimal_annotation()
                 annotation["expected_observations"][0]["location"]["region"] = region
                 validate_contract("annotation.schema.json", annotation)
+
+    def test_regions_require_positive_width_and_height(self) -> None:
+        for coordinate_space in ("normalized_0_1", "pixels"):
+            for dimension in ("width", "height"):
+                for schema_name in ("annotation.schema.json", "observation.schema.json"):
+                    with self.subTest(
+                        schema=schema_name,
+                        coordinate_space=coordinate_space,
+                        dimension=dimension,
+                    ):
+                        region = {
+                            "x": 0,
+                            "y": 0,
+                            "width": 0.5 if coordinate_space == "normalized_0_1" else 1,
+                            "height": 0.5 if coordinate_space == "normalized_0_1" else 1,
+                            "coordinate_space": coordinate_space,
+                        }
+                        region[dimension] = 0
+                        if schema_name == "annotation.schema.json":
+                            payload = minimal_annotation()
+                            payload["expected_observations"][0]["location"]["region"] = region
+                        else:
+                            payload = minimal_observation()
+                            payload["observations"][0]["location"] = {"region": region}
+                        with self.assertRaises(ContractError):
+                            validate_contract(schema_name, payload)
 
     def test_normalized_region_semantics_apply_standalone_and_in_run_result(self) -> None:
         invalid_region = {
@@ -535,6 +587,66 @@ class BriaBenchContractTests(unittest.TestCase):
         ):
             validate_contract("metrics.schema.json", payload)
 
+    def test_contracts_recursively_reject_non_finite_numbers(self) -> None:
+        for label, non_finite in (
+            ("nan", float("nan")),
+            ("positive_infinity", float("inf")),
+            ("negative_infinity", float("-inf")),
+        ):
+            payloads: list[tuple[str, dict[str, object], str]] = []
+
+            manifest = minimal_manifest()
+            manifest["cases"][0]["redistributable"] = non_finite
+            payloads.append(
+                ("benchmark_manifest.schema.json", manifest, "cases.0.redistributable")
+            )
+
+            annotation = minimal_annotation()
+            annotation["expected_observations"][0]["location"]["region"] = {
+                "x": non_finite,
+                "y": 0,
+                "width": 0.5,
+                "height": 0.5,
+                "coordinate_space": "normalized_0_1",
+            }
+            payloads.append(
+                (
+                    "annotation.schema.json",
+                    annotation,
+                    "expected_observations.0.location.region.x",
+                )
+            )
+
+            observation = minimal_observation()
+            observation["observations"][0]["confidence"] = non_finite
+            payloads.append(
+                ("observation.schema.json", observation, "observations.0.confidence")
+            )
+
+            run_result = minimal_run_result()
+            run_result["telemetry"]["elapsed_seconds"] = non_finite
+            payloads.append(
+                ("run_result.schema.json", run_result, "telemetry.elapsed_seconds")
+            )
+
+            metrics = minimal_metrics()
+            metrics["performance"]["wall_time_seconds"]["values"][0] = non_finite
+            payloads.append(
+                (
+                    "metrics.schema.json",
+                    metrics,
+                    "performance.wall_time_seconds.values.0",
+                )
+            )
+
+            for schema_name, payload, path in payloads:
+                with self.subTest(value=label, schema=schema_name):
+                    with self.assertRaisesRegex(
+                        ContractError,
+                        rf"{re.escape(path)}:.*finite",
+                    ):
+                        validate_contract(schema_name, payload)
+
     def test_metric_case_status_uses_run_result_status_enum(self) -> None:
         run_schema = load_schema("run_result.schema.json")
         metrics_schema = load_schema("metrics.schema.json")
@@ -577,11 +689,26 @@ class BriaBenchContractTests(unittest.TestCase):
         }
         validate_contract("metrics.schema.json", payload)
 
+    def test_metric_count_summary_total_matches_parts(self) -> None:
+        payload = minimal_metrics()
+        payload["detection"]["regression_assertions"] = {
+            "met": 2,
+            "not_met": 1,
+            "total": 4,
+        }
+        with self.assertRaisesRegex(ContractError, r"regression_assertions\.total"):
+            validate_contract("metrics.schema.json", payload)
+
+        payload["detection"]["regression_assertions"]["total"] = 3
+        validate_contract("metrics.schema.json", payload)
+
     def test_percentile_summary_semantics(self) -> None:
         invalid_summaries = (
             {"count": 2, "p50": 2.0, "p95": 1.0, "values": [1.0, 2.0]},
             {"count": 2, "p50": 1.0, "p95": 1.0, "values": [1.0]},
             {"count": 0, "p50": 0.0, "p95": 0.0, "values": []},
+            {"count": 4, "p50": 2.5, "p95": 4.0, "values": [4.0, 1.0, 3.0, 2.0]},
+            {"count": 4, "p50": 2.0, "p95": 3.5, "values": [4.0, 1.0, 3.0, 2.0]},
         )
         for index, summary in enumerate(invalid_summaries):
             with self.subTest(summary=index):
@@ -596,6 +723,14 @@ class BriaBenchContractTests(unittest.TestCase):
             "p50": None,
             "p95": None,
             "values": [],
+        }
+        validate_contract("metrics.schema.json", payload)
+
+        payload["performance"]["wall_time_seconds"] = {
+            "count": 4,
+            "p50": 2.0 + 1e-12,
+            "p95": 4.0,
+            "values": [4.0, 1.0, 3.0, 2.0],
         }
         validate_contract("metrics.schema.json", payload)
 
