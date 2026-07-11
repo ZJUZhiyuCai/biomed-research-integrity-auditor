@@ -20,6 +20,11 @@ import benchmarks.bria_bench.hashing as hashing_module
 from benchmarks.bria_bench import ContractError, __version__, validate_contract
 from benchmarks.bria_bench.contracts import SCHEMA_ROOT, load_schema
 from benchmarks.bria_bench.hashing import HashingError, hash_file, hash_tree
+from benchmarks.bria_bench.matching import (
+    Compatibility,
+    label_observation_compatible,
+    match_labels,
+)
 from benchmarks.bria_bench.normalize import normalize_audit_output
 from benchmarks.bria_bench.registry import (
     RegistryError,
@@ -2919,6 +2924,224 @@ class BriaBenchNormalizationTests(unittest.TestCase):
             normalize_audit_output("dev_001", self.output_dir / "missing")
         with self.assertRaises(ValueError):
             normalize_audit_output("dev_001", self.output_dir, staging_roots=(" ",))
+
+
+class BriaBenchMatchingTests(unittest.TestCase):
+    @staticmethod
+    def label(
+        label_id: str,
+        location: object,
+        *,
+        family: str = "image_local_reuse",
+        role: str = "recall_label",
+        risk_range: tuple[str, str] = ("R1", "R3"),
+        compatible: list[str] | None = None,
+    ) -> dict[str, object]:
+        result: dict[str, object] = {
+            "observation_id": label_id,
+            "role": role,
+            "issue_family": family,
+            "location": location,
+            "risk_range": list(risk_range),
+        }
+        if compatible is not None:
+            result["compatible_issue_families"] = compatible
+        return result
+
+    @staticmethod
+    def observation(
+        observation_id: str,
+        location: object,
+        *,
+        family: str = "image_local_reuse",
+        risk: str = "R2",
+    ) -> dict[str, object]:
+        return {
+            "observation_id": observation_id,
+            "issue_family": family,
+            "location": location,
+            "risk_level": risk,
+        }
+
+    def test_exact_figure_match_and_audit_components(self) -> None:
+        compatibility = label_observation_compatible(
+            self.label("L1", "Figure 1A"),
+            self.observation("O1", "Fig. 1A"),
+        )
+
+        self.assertIsInstance(compatibility, Compatibility)
+        self.assertTrue(compatibility.compatible)
+        self.assertTrue(compatibility.issue_compatible)
+        self.assertTrue(compatibility.location_compatible)
+        self.assertTrue(compatibility.risk_compatible)
+        self.assertEqual(compatibility.score[2], 1)
+        self.assertTrue(compatibility.components["figure_panel_exact"])
+        self.assertTrue(compatibility.reasons)
+
+    def test_wrong_panel_figure_number_and_supplement_reject(self) -> None:
+        for observed in ("Figure 1B", "Figure 11A", "Supplemental Figure 8A"):
+            with self.subTest(observed=observed):
+                result = label_observation_compatible(
+                    self.label("L1", "Figure 1A"),
+                    self.observation("O1", observed),
+                )
+                self.assertFalse(result.compatible)
+                self.assertFalse(result.location_compatible)
+
+    def test_parent_figure_is_asymmetric_and_bare_figure_is_not_positive(self) -> None:
+        parent = label_observation_compatible(
+            self.label("L1", "Figure 1"),
+            self.observation("O1", "Figure 1A"),
+        )
+        reverse = label_observation_compatible(
+            self.label("L1", "Figure 1A"),
+            self.observation("O1", "Figure 1"),
+        )
+        bare = label_observation_compatible(
+            self.label("L1", "Figure"),
+            self.observation("O1", "Figure"),
+        )
+        self.assertTrue(parent.compatible)
+        self.assertTrue(parent.components["parent_figure"])
+        self.assertFalse(reverse.compatible)
+        self.assertFalse(bare.compatible)
+
+    def test_sheet_columns_and_timepoint_aliases_are_token_exact(self) -> None:
+        sheet = self.label("L1", "Sheet1, column B")
+        matching = self.observation("O1", "Sheet 1, Column B")
+        wrong_sheet = self.observation("O2", "Sheet10, Column B")
+        wrong_column = self.observation("O3", "Sheet1, Column C")
+        self.assertTrue(label_observation_compatible(sheet, matching).compatible)
+        self.assertFalse(label_observation_compatible(sheet, wrong_sheet).compatible)
+        self.assertFalse(label_observation_compatible(sheet, wrong_column).compatible)
+
+        day = self.label("L2", "Day 7")
+        self.assertTrue(label_observation_compatible(day, self.observation("O4", "7 days")).compatible)
+        self.assertTrue(label_observation_compatible(day, self.observation("O5", "D7")).compatible)
+        for observed in ("Day 14", "D14", "CD4"):
+            with self.subTest(observed=observed):
+                self.assertFalse(
+                    label_observation_compatible(day, self.observation("O6", observed)).compatible
+                )
+
+    def test_structured_textual_figure_forms_and_multi_locations(self) -> None:
+        label = self.label("L1", "Figure_3c_3d")
+        self.assertTrue(
+            label_observation_compatible(label, self.observation("O1", "Fig. 3 panel 3B")).compatible
+            is False
+        )
+        self.assertTrue(
+            label_observation_compatible(label, self.observation("O2", "Figure 3C")).compatible
+        )
+        self.assertTrue(
+            label_observation_compatible(
+                self.label("L2", "Figure 3D"),
+                self.observation("O3", "Figure 1A and Figure_3d"),
+            ).compatible
+        )
+
+    def test_regions_require_same_space_and_thresholded_overlap(self) -> None:
+        base = {"figure": "2", "region": {"x": 0.0, "y": 0.0, "width": 0.5, "height": 0.5, "coordinate_space": "normalized_0_1"}}
+        overlap = {"figure": "2", "region": {"x": 0.25, "y": 0.25, "width": 0.5, "height": 0.5, "coordinate_space": "normalized_0_1"}}
+        disjoint = {"figure": "2", "region": {"x": 0.6, "y": 0.6, "width": 0.2, "height": 0.2, "coordinate_space": "normalized_0_1"}}
+        pixels = {"figure": "2", "region": {"x": 0, "y": 0, "width": 100, "height": 100, "coordinate_space": "pixels"}}
+        label = self.label("L1", base)
+        self.assertTrue(label_observation_compatible(label, self.observation("O1", overlap)).compatible)
+        self.assertFalse(label_observation_compatible(label, self.observation("O2", disjoint)).compatible)
+        self.assertFalse(label_observation_compatible(label, self.observation("O3", pixels)).compatible)
+
+    def test_issue_family_compatibility_is_explicit_and_risk_is_separate(self) -> None:
+        label = self.label("L1", "Figure 4A", family="image_local_reuse", compatible=["image_copy_move"])
+        allowed = label_observation_compatible(label, self.observation("O1", "Figure 4A", family="image_copy_move", risk="R4"))
+        unrelated = label_observation_compatible(label, self.observation("O2", "Figure 4A", family="statistics_or_numeric"))
+        self.assertTrue(allowed.compatible)
+        self.assertTrue(allowed.issue_compatible)
+        self.assertFalse(allowed.risk_compatible)
+        self.assertFalse(unrelated.compatible)
+        self.assertFalse(unrelated.issue_compatible)
+
+    def test_assignment_is_one_to_one_and_role_filtered(self) -> None:
+        labels = [
+            self.label("L1", "Figure 1A"),
+            self.label("L2", "Figure 1A", role="coverage_gap"),
+        ]
+        result = match_labels(labels, [self.observation("O1", "Figure 1A")])
+        self.assertEqual([(m.label_id, m.observation_id) for m in result.matches], [("L1", "O1")])
+        self.assertEqual(result.unmatched_label_ids, ())
+        self.assertEqual(result.unmatched_observation_ids, ())
+        expanded = match_labels(labels, [self.observation("O1", "Figure 1A")], roles=("coverage_gap",))
+        self.assertEqual([(m.label_id, m.observation_id) for m in expanded.matches], [("L2", "O1")])
+
+    def test_assignment_maximizes_semantic_score_before_tie_breaking(self) -> None:
+        labels = [
+            self.label("L1", "Figure 1"),
+            self.label("L2", "Figure 1A"),
+        ]
+        observations = [
+            self.observation("O1", "Figure 1A"),
+            self.observation("O2", "Figure 1"),
+        ]
+        result = match_labels(labels, observations)
+        self.assertEqual({(m.label_id, m.observation_id) for m in result.matches}, {("L1", "O2"), ("L2", "O1")})
+
+    def test_weighted_assignment_beats_locally_best_edge(self) -> None:
+        expected_region = {"x": 0.0, "y": 0.0, "width": 0.5, "height": 0.5, "coordinate_space": "normalized_0_1"}
+        strong_region = {"x": 0.0, "y": 0.0, "width": 0.5, "height": 0.5, "coordinate_space": "normalized_0_1"}
+        weak_region = {"x": 0.4, "y": 0.0, "width": 0.5, "height": 0.5, "coordinate_space": "normalized_0_1"}
+        labels = [
+            self.label("L1", "Figure 1"),
+            self.label("L2", {"figure": "1", "region": expected_region}),
+        ]
+        observations = [
+            self.observation("O1", {"figure": "1A", "region": strong_region}),
+            self.observation("O2", {"figure": "1", "region": weak_region}),
+        ]
+        result = match_labels(labels, observations)
+        self.assertEqual({(m.label_id, m.observation_id) for m in result.matches}, {("L1", "O2"), ("L2", "O1")})
+
+    def test_multi_location_observation_can_satisfy_only_one_label(self) -> None:
+        result = match_labels(
+            [self.label("L1", "Figure 1A"), self.label("L2", "Figure 2B")],
+            [self.observation("O1", "Figure 1A and Figure 2B")],
+        )
+        self.assertEqual([(item.label_id, item.observation_id) for item in result.matches], [("L1", "O1")])
+        self.assertEqual(result.unmatched_label_ids, ("L2",))
+
+    def test_equal_optima_are_stable_and_report_ambiguity(self) -> None:
+        labels = [self.label("L2", "Figure 5A"), self.label("L1", "Figure 5A")]
+        observations = [self.observation("O2", "Figure 5A"), self.observation("O1", "Figure 5A")]
+        first = match_labels(labels, observations)
+        second = match_labels(list(reversed(labels)), list(reversed(observations)))
+        expected = [("L1", "O1"), ("L2", "O2")]
+        self.assertEqual([(m.label_id, m.observation_id) for m in first.matches], expected)
+        self.assertEqual([(m.label_id, m.observation_id) for m in second.matches], expected)
+        self.assertTrue(first.assignment_ambiguous)
+
+    def test_duplicate_invalid_and_source_mutation_fail_safely(self) -> None:
+        labels = [self.label("L1", "Figure 1A")]
+        observations = [self.observation("O1", "Figure 1A")]
+        before = json.loads(json.dumps([labels, observations]))
+        self.assertTrue(match_labels(labels, observations).matches)
+        self.assertEqual([labels, observations], before)
+        with self.assertRaises(ValueError):
+            match_labels([self.label("L1", "Figure 1A"), self.label("L1", "Figure 1B")], observations)
+        with self.assertRaises(ValueError):
+            match_labels(labels, [self.observation("O1", "Figure 1A", risk="R9")])
+        with self.assertRaises(ValueError):
+            match_labels([self.label("L1", "Figure 1A", risk_range=("R3", "R1"))], observations)
+        with self.assertRaises(ValueError):
+            match_labels(labels, [self.observation("O1", {"region": {"x": float("nan"), "y": 0, "width": 1, "height": 1, "coordinate_space": "pixels"}})])
+
+    def test_result_and_edges_are_json_safe_and_observation_is_used_once(self) -> None:
+        result = match_labels(
+            [self.label("L1", "Figure 6A"), self.label("L2", "Figure 6A")],
+            [self.observation("O1", "Figure 6A")],
+        )
+        payload = result.to_dict()
+        json.dumps(payload)
+        self.assertEqual(len(result.matches), 1)
+        self.assertEqual(len(result.candidate_edges), 2)
+        self.assertIn("components", payload["candidate_edges"][0])
 
 
 if __name__ == "__main__":
