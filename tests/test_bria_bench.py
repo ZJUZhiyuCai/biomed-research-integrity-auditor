@@ -17,6 +17,7 @@ from jsonschema import Draft202012Validator
 import tomllib
 
 import benchmarks.bria_bench.hashing as hashing_module
+import benchmarks.bria_bench.matching as matching_module
 from benchmarks.bria_bench import ContractError, __version__, validate_contract
 from benchmarks.bria_bench.contracts import SCHEMA_ROOT, load_schema
 from benchmarks.bria_bench.hashing import HashingError, hash_file, hash_tree
@@ -3055,6 +3056,30 @@ class BriaBenchMatchingTests(unittest.TestCase):
             ).compatible
         )
 
+    def test_figure_chain_has_no_arbitrary_spacing_cutoff(self) -> None:
+        long_chain = "Figure 1A and 2B" + (" " * 31) + "and 3C"
+        label = self.label("L1", long_chain)
+        self.assertTrue(
+            label_observation_compatible(
+                label,
+                self.observation("O1", "Figure 1A and Figure 2B and Figure 3C"),
+            ).compatible
+        )
+        self.assertFalse(
+            label_observation_compatible(
+                label,
+                self.observation("O2", "Figure 1A and Figure 2B"),
+            ).compatible
+        )
+
+        following_figure = "Figure 1A and 2B and Figure 4C and 3D"
+        self.assertTrue(
+            label_observation_compatible(
+                self.label("L2", following_figure),
+                self.observation("O3", "Figure 1A and Figure 2B and Figure 4C and Figure 3D"),
+            ).compatible
+        )
+
     def test_structured_terms_do_not_create_redundant_literal_requirements(self) -> None:
         self.assertTrue(
             label_observation_compatible(
@@ -3337,6 +3362,14 @@ class BriaBenchMatchingTests(unittest.TestCase):
         ]
         result = match_labels(labels, observations)
         self.assertEqual({(m.label_id, m.observation_id) for m in result.matches}, {("L1", "O2"), ("L2", "O1")})
+
+    def test_dense_assignment_uses_constant_number_of_flow_solves(self) -> None:
+        labels = [self.label(f"L{index:02d}", "Figure 1A") for index in range(12)]
+        observations = [self.observation(f"O{index:02d}", "Figure 1A") for index in range(12)]
+        with patch.object(matching_module, "_flow_solution", wraps=matching_module._flow_solution) as flow_solver:
+            result = match_labels(labels, observations)
+        self.assertEqual(len(result.matches), 12)
+        self.assertEqual(flow_solver.call_count, 3)
 
     def test_multi_location_observation_can_satisfy_only_one_label(self) -> None:
         result = match_labels(

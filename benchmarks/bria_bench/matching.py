@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import heapq
 import math
 import re
 import unicodedata
@@ -31,7 +32,7 @@ _FILE_SUFFIX_RE = re.compile(r"\.(?:pdf|png|jpe?g|tiff?|xlsx?|csv|docx?)$", re.I
 _FILE_CUE_RE = re.compile(r"^(?:see|open|file|path)\s*[:=]?\s+(.+)$", re.IGNORECASE)
 _CELL_TEXT_RE = re.compile(r"\b(?:cells?|cell\s+range|range)\s*[:#-]?\s*([a-z]{1,3}\d+(?::[a-z]{1,3}\d+)?)\b", re.IGNORECASE)
 _NAMED_SHEET_RE = re.compile(r"\bsheet\s+([a-z][a-z0-9 _-]*?)(?=\s*(?:,|;|\bcell|\brange|$))", re.IGNORECASE)
-_FIGURE_CHAIN_RE = re.compile(r"(?:\band\s+|[_/,;&]+)\d+\s*[a-z]\b", re.IGNORECASE)
+_FIGURE_CHAIN_RE = re.compile(r"(?:\band\s+|[_/,;&]+)(\d+)\s*([a-z])\b", re.IGNORECASE)
 _GENERIC_LOCATION_TOKENS = frozenset({
     "cell",
     "cells",
@@ -293,7 +294,7 @@ def _cell_range(location: _Location, value: object) -> None:
 
 def _add_figures(location: _Location, text: str) -> None:
     figure_matches = list(_FIGURE_RE.finditer(text))
-    for match in figure_matches:
+    for index, match in enumerate(figure_matches):
         supplement = bool(match.group(1))
         number = int(match.group(2))
         if number < 1:
@@ -302,8 +303,9 @@ def _add_figures(location: _Location, text: str) -> None:
         location.figures.add(_Figure(supplement, number, panel))
         if panel:
             location.panels.add(panel)
-        tail = text[match.end() : match.end() + 32]
-        for chained in re.finditer(r"(?:[_/,;&]+|\band\s+)(\d+)\s*([a-z])\b", tail, re.IGNORECASE):
+        segment_end = figure_matches[index + 1].start() if index + 1 < len(figure_matches) else len(text)
+        segment = text[match.end() : segment_end]
+        for chained in _FIGURE_CHAIN_RE.finditer(segment):
             chained_number = int(chained.group(1))
             if chained_number < 1:
                 raise ValueError("figure numbers must be positive")
@@ -847,7 +849,23 @@ def _add_flow_edge(graph: list[list[_FlowEdge]], source: int, target: int, capac
     return forward
 
 
-def _flow_solution(labels: Sequence[str], observations: Sequence[str], edges: Mapping[tuple[str, str], Match], target: int, forbidden: set[tuple[str, str]], *, score_base: int | None = None,) -> tuple[int, int, set[tuple[str, str]]]:
+def _encode_score(score: tuple[int, ...], base: int) -> int:
+    result = 0
+    for item in score:
+        result = result * base + item
+    return result
+
+
+def _flow_solution(
+    labels: Sequence[str],
+    observations: Sequence[str],
+    edges: Mapping[tuple[str, str], Match],
+    target: int,
+    forbidden: set[tuple[str, str]] | None = None,
+    *,
+    score_base: int | None = None,
+    edge_weights: Mapping[tuple[str, str], int] | None = None,
+) -> tuple[int, int, set[tuple[str, str]]]:
     if target < 0:
         return 0, 0, set()
     label_nodes = {item: index + 1 for index, item in enumerate(labels)}
@@ -862,50 +880,70 @@ def _flow_solution(labels: Sequence[str], observations: Sequence[str], edges: Ma
     if score_base is None:
         score_base = max((max(item.compatibility.score, default=0) for item in edges.values()), default=0) * max(len(labels), 1) + 2
         score_base = max(score_base, len(labels) + 2)
-    def encoded(score: tuple[int, ...]) -> int:
-        result = 0
-        for item in score:
-            result = result * score_base + item
-        return result
+    forbidden = forbidden or set()
     originals: list[tuple[str, str, _FlowEdge]] = []
     for (label_id, observation_id), match in sorted(edges.items()):
         if label_id not in label_nodes or observation_id not in observation_nodes or (label_id, observation_id) in forbidden:
             continue
-        edge = _add_flow_edge(graph, label_nodes[label_id], observation_nodes[observation_id], 1, -encoded(match.compatibility.score), label_id=label_id, observation_id=observation_id)
+        weight = edge_weights.get((label_id, observation_id)) if edge_weights is not None else _encode_score(match.compatibility.score, score_base)
+        assert weight is not None
+        edge = _add_flow_edge(graph, label_nodes[label_id], observation_nodes[observation_id], 1, -weight, label_id=label_id, observation_id=observation_id)
         originals.append((label_id, observation_id, edge))
+
+    potentials: list[int | None] = [None] * len(graph)
+    potentials[0] = 0
+    for _ in range(len(graph)):
+        changed = False
+        for node, distance in enumerate(potentials):
+            if distance is None:
+                continue
+            for edge in graph[node]:
+                if edge.capacity <= 0:
+                    continue
+                candidate = distance + edge.cost
+                if potentials[edge.target] is None or candidate < potentials[edge.target]:
+                    potentials[edge.target] = candidate
+                    changed = True
+        if not changed:
+            break
+    potential_values = [value if value is not None else 0 for value in potentials]
     flow = 0
     total_cost = 0
     while flow < target:
         distances: list[int | None] = [None] * len(graph)
         previous: list[tuple[int, int] | None] = [None] * len(graph)
         distances[0] = 0
-        for _ in range(len(graph)):
-            changed = False
-            for node, distance in enumerate(distances):
-                if distance is None:
+        queue: list[tuple[int, int]] = [(0, 0)]
+        while queue:
+            distance, node = heapq.heappop(queue)
+            if distances[node] != distance:
+                continue
+            for edge_index, edge in enumerate(graph[node]):
+                if edge.capacity <= 0:
                     continue
-                for edge_index, edge in enumerate(graph[node]):
-                    if edge.capacity <= 0:
-                        continue
-                    candidate = distance + edge.cost
-                    if distances[edge.target] is None or candidate < distances[edge.target]:
-                        distances[edge.target] = candidate
-                        previous[edge.target] = (node, edge_index)
-                        changed = True
-            if not changed:
-                break
+                reduced_cost = edge.cost + potential_values[node] - potential_values[edge.target]
+                candidate = distance + reduced_cost
+                if distances[edge.target] is None or candidate < distances[edge.target]:
+                    distances[edge.target] = candidate
+                    previous[edge.target] = (node, edge_index)
+                    heapq.heappush(queue, (candidate, edge.target))
         if distances[sink] is None:
             break
+        for node, distance in enumerate(distances):
+            if distance is not None:
+                potential_values[node] += distance
         node = sink
+        path_cost = 0
         while node:
             previous_item = previous[node]
             assert previous_item is not None
             parent, edge_index = previous_item
             edge = graph[parent][edge_index]
+            path_cost += edge.cost
             edge.capacity -= 1
             graph[node][edge.reverse].capacity += 1
             node = parent
-        total_cost += distances[sink]
+        total_cost += path_cost
         flow += 1
     used = {(label_id, observation_id) for label_id, observation_id, edge in originals if edge.capacity == 0 and graph[edge.target][edge.reverse].capacity == 1}
     return flow, -total_cost, used
@@ -972,51 +1010,63 @@ def match_labels(labels: Sequence[Mapping[str, Any]], observations: Sequence[Map
     cardinality = _maximum_cardinality(eligible_labels, observation_ids, candidate_edges)
     score_base = max((max(item.compatibility.score, default=0) for item in candidate_edges.values()), default=0) * max(len(eligible_labels), 1) + 2
     score_base = max(score_base, len(eligible_labels) + 2)
-    flow, best_score, _ = _flow_solution(eligible_labels, observation_ids, candidate_edges, cardinality, set(), score_base=score_base)
+    semantic_weights = {
+        pair: _encode_score(match.compatibility.score, score_base)
+        for pair, match in candidate_edges.items()
+    }
+    flow, best_semantic_score, _ = _flow_solution(
+        eligible_labels,
+        observation_ids,
+        candidate_edges,
+        cardinality,
+        score_base=score_base,
+        edge_weights=semantic_weights,
+    )
     if flow != cardinality:
         raise ValueError("assignment solver could not satisfy maximum cardinality")
 
-    fixed: set[tuple[str, str]] = set()
-    used_observations: set[str] = set()
-    remaining_labels = list(eligible_labels)
-    fixed_score = 0
-    base = score_base
-    def encoded(score: tuple[int, ...]) -> int:
-        result = 0
-        for item in score:
-            result = result * base + item
-        return result
-    for label_id in eligible_labels:
-        remaining_labels.remove(label_id)
-        options = sorted(observation_id for left, observation_id in candidate_edges if left == label_id and observation_id not in used_observations)
-        options.append("")
-        choice_found = False
-        for option in options:
-            candidate_score = 0
-            remaining_observations = [item for item in observation_ids if item not in used_observations and item != option]
-            target = cardinality - len(fixed) - (1 if option else 0)
-            if target < 0:
-                continue
-            if option:
-                candidate = candidate_edges[(label_id, option)]
-                candidate_score = encoded(candidate.compatibility.score)
-            possible_flow, possible_score, _ = _flow_solution(remaining_labels, remaining_observations, candidate_edges, target, set(), score_base=score_base)
-            if possible_flow == target and fixed_score + candidate_score + possible_score == best_score:
-                choice_found = True
-                if option:
-                    fixed.add((label_id, option))
-                    used_observations.add(option)
-                    fixed_score += candidate_score
-                break
-        if not choice_found:
-            raise ValueError("assignment tie-break could not preserve the optimum")
-    selected_matches = tuple(candidate_edges[pair] for pair in sorted(fixed))
-    ambiguous = False
-    for pair in fixed:
-        alternative_flow, alternative_score, _ = _flow_solution(eligible_labels, observation_ids, candidate_edges, cardinality, {pair}, score_base=score_base)
-        if alternative_flow == cardinality and alternative_score == best_score:
-            ambiguous = True
-            break
+    label_count = len(eligible_labels)
+    observation_count = len(observation_ids)
+    radix = observation_count + 1
+    tie_scale = radix**label_count
+    observation_ranks = {observation_id: rank for rank, observation_id in enumerate(observation_ids)}
+    deterministic_weights = {
+        pair: semantic_weights[pair] * tie_scale
+        + (observation_count - observation_ranks[pair[1]]) * radix ** (label_count - index - 1)
+        for index, label_id in enumerate(eligible_labels)
+        for pair in candidate_edges
+        if pair[0] == label_id
+    }
+    deterministic_flow, deterministic_total, selected_pairs = _flow_solution(
+        eligible_labels,
+        observation_ids,
+        candidate_edges,
+        cardinality,
+        score_base=score_base,
+        edge_weights=deterministic_weights,
+    )
+    if deterministic_flow != cardinality or deterministic_total // tie_scale != best_semantic_score:
+        raise ValueError("deterministic assignment could not preserve the optimum")
+
+    ambiguity_factor = cardinality + 1
+    ambiguity_weights = {
+        pair: semantic_weights[pair] * ambiguity_factor + int(pair not in selected_pairs)
+        for pair in candidate_edges
+    }
+    ambiguity_flow, ambiguity_total, _ = _flow_solution(
+        eligible_labels,
+        observation_ids,
+        candidate_edges,
+        cardinality,
+        score_base=score_base,
+        edge_weights=ambiguity_weights,
+    )
+    ambiguous = (
+        ambiguity_flow == cardinality
+        and ambiguity_total // ambiguity_factor == best_semantic_score
+        and ambiguity_total % ambiguity_factor > 0
+    )
+    selected_matches = tuple(candidate_edges[pair] for pair in sorted(selected_pairs))
     matched_labels = {item.label_id for item in selected_matches}
     matched_observations = {item.observation_id for item in selected_matches}
     return MatchResult(
