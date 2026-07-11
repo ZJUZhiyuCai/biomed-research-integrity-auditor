@@ -2104,6 +2104,79 @@ class BriaBenchNormalizationTests(unittest.TestCase):
         for finding_id in ("F-COVERAGE", "F-LITERATURE", "F-SOURCE-ONLY", "F-RAW", "F-UNREADABLE"):
             self.assertEqual(families[finding_id], "material_or_coverage_gap")
 
+    def test_current_detector_candidate_types_route_by_producer_family(self) -> None:
+        candidate_families = {
+            "audit_coverage_gap": "material_or_coverage_gap",
+            "image_reuse_cluster": "image_global_similarity",
+            "image_similarity_candidate": "image_global_similarity",
+            "keypoint_geometric_match": "image_keypoint_geometry",
+            "local_patch_reuse": "image_local_reuse",
+            "same_image_copy_move": "image_copy_move",
+            "splice_forensics_triage_signal": "image_splice_forensics_triage",
+            "channel_metadata_verification_gap": "image_channel_metadata_gap",
+            "pseudoreplication_candidate": "statistics_or_numeric",
+            "weak_statistical_signal": "statistics_or_numeric",
+            "statistical_consistency_candidate": "statistics_or_numeric",
+            "text_overlap_candidate": "text_overlap",
+            "methods_boilerplate_overlap": "text_overlap",
+            "self_overlap_candidate": "text_overlap",
+            "external_text_match_candidate": "text_overlap",
+            "external_literature_search_gap": "material_or_coverage_gap",
+        }
+        findings = [
+            {
+                "finding_id": f"TYPE-{index:02d}",
+                "detector": (
+                    "text.text_overlap_screen"
+                    if "text" in candidate_type or "overlap" in candidate_type
+                    else "producer.detector"
+                ),
+                "candidate_type": candidate_type,
+                "finding_type": candidate_type,
+                "location": {"text": f"producer record {index + 1}"},
+                "risk_level": "R1",
+                "evidence_type": "candidate",
+            }
+            for index, candidate_type in enumerate(candidate_families)
+        ]
+        findings.extend(
+            [
+                {
+                    "finding_id": "TYPE-TECHNICAL",
+                    "detector": "image.local_patch",
+                    "candidate_type": "detector_execution_failure",
+                    "finding_type": "detector_execution_failure",
+                    "location": "image.local_patch",
+                    "risk_level": "R1",
+                    "evidence_type": "technical_failure",
+                },
+                {
+                    "finding_id": "TYPE-TRACEABILITY",
+                    "detector": "contextual_joiner",
+                    "candidate_type": "expected_traceability",
+                    "finding_type": "expected_traceability",
+                    "location": "Figure 1A",
+                    "risk_level": "R1",
+                    "evidence_type": "positive_provenance",
+                },
+            ]
+        )
+        self.write_fixture(findings=findings)
+
+        normalized = normalize_audit_output("dev_001", self.output_dir)
+
+        actual = {
+            item["source_finding_id"]: item["issue_family"]
+            for item in normalized["observations"]
+        }
+        for index, (candidate_type, expected_family) in enumerate(candidate_families.items()):
+            self.assertEqual(actual[f"TYPE-{index:02d}"], expected_family)
+        self.assertNotIn("TYPE-TECHNICAL", actual)
+        self.assertNotIn("TYPE-TRACEABILITY", actual)
+        self.assertTrue(
+            any(item["module"] == "image.local_patch" for item in normalized["technical_failures"])
+        )
+
     def test_explicit_domain_route_beats_risk_cap_prose(self) -> None:
         self.write_fixture(
             findings=[

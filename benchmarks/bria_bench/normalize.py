@@ -28,7 +28,14 @@ _DOMAIN_ROUTE_KEYS = (
 )
 _CONTROLLED_RISK_ROUTE_KEYS = ("risk_cap_tags",)
 _PRIMARY_FAMILY_VALUES = {
+    "audit_coverage_gap": "material_or_coverage_gap",
+    "source_data_extraction_gap": "material_or_coverage_gap",
+    "external_literature_search_gap": "material_or_coverage_gap",
+    "unresolved_fig_raw_similarity": "material_or_coverage_gap",
+    "unreadable_image_file": "material_or_coverage_gap",
+    "unsupported_relevant_file": "material_or_coverage_gap",
     "image_reuse_cluster": "image_global_similarity",
+    "image_similarity_candidate": "image_global_similarity",
     "global_image_similarity": "image_global_similarity",
     "image_global_similarity": "image_global_similarity",
     "global_near_duplicate": "image_global_similarity",
@@ -45,9 +52,16 @@ _PRIMARY_FAMILY_VALUES = {
     "image_channel_metadata_gap": "image_channel_metadata_gap",
     "stats_consistency_candidate": "statistics_or_numeric",
     "numeric_consistency_candidate": "statistics_or_numeric",
+    "statistical_consistency_candidate": "statistics_or_numeric",
+    "weak_statistical_signal": "statistics_or_numeric",
     "pseudoreplication": "statistics_or_numeric",
+    "pseudoreplication_candidate": "statistics_or_numeric",
     "text_overlap": "text_overlap",
+    "text_overlap_candidate": "text_overlap",
     "package_internal_text_overlap": "text_overlap",
+    "methods_boilerplate_overlap": "text_overlap",
+    "self_overlap_candidate": "text_overlap",
+    "external_text_match_candidate": "text_overlap",
     "methodology_or_reporting": "methodology_or_reporting",
     "methodology_readiness": "methodology_or_reporting",
 }
@@ -427,6 +441,11 @@ def _normalize_finding(
     contract_errors: list[dict[str, str]],
     technical_entries: list[tuple[dict[str, Any], bool]],
 ) -> dict[str, Any] | None:
+    if any(
+        str(finding.get(key, "")).strip().lower() == "expected_traceability"
+        for key in ("candidate_type", "contextual_tag", "finding_type", "evidence_type")
+    ):
+        return None
     if _is_technical_finding(finding):
         module = str(finding.get("module", finding.get("detector", "producer")))
         failure_type = str(finding.get("finding_type", "producer failure"))
