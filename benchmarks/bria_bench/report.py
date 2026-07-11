@@ -95,8 +95,8 @@ _SECRET_TOKEN = re.compile(
     re.IGNORECASE,
 )
 _CREDENTIAL_ASSIGNMENT = re.compile(
-    r"(?:^|[^a-z0-9])(?:token|[a-z0-9_-]+[_-]token|api[_-]?key|"
-    r"password|passwd|private[_-]?key|secret)\s*[:=]",
+    r"(?:^|[^a-z0-9])(?:token|[a-z0-9_-]+[._\s-]token|api[._\s-]?key|"
+    r"password|passwd|private[._\s-]?key|secret)\s*[:=]",
     re.IGNORECASE,
 )
 _PROHIBITED_REPORT_LANGUAGE = re.compile(
@@ -430,18 +430,16 @@ def _validate_reliability_case_rows(
             sum(case["boundary_violation_count"] > 0 for case in case_results),
             denominator,
         )
-    if all(
-        "technical_failure_count" in case and "reported_failure_count" in case
+    certainly_silent = sum(
+        case["reported_failure_count"] < case["technical_failure_count"]
         for case in case_results
-    ):
-        _validate_fraction_counts(
-            reliability,
-            "silent_failure_rate",
-            sum(
-                case["reported_failure_count"] < case["technical_failure_count"]
-                for case in case_results
-            ),
-            denominator,
+        if "technical_failure_count" in case and "reported_failure_count" in case
+    )
+    silent_failure = reliability.get("silent_failure_rate")
+    if silent_failure is not None and silent_failure["numerator"] < certainly_silent:
+        raise _contract_error(
+            "reliability.silent_failure_rate",
+            "is below the lower bound derivable from case_results counts",
         )
 
 
@@ -487,14 +485,17 @@ def _validate_cross_fields(metrics: Mapping[str, Any]) -> None:
     tracks = metrics.get("tracks")
     if tracks is not None:
         for key, summary in tracks.items():
-            if (
-                summary["headline_detection_eligible"]
-                and key not in _HEADLINE_ELIGIBLE_TRACKS
-            ):
-                raise _contract_error(
-                    f"tracks.{key}.headline_detection_eligible",
-                    "may be true only for blinded_challenge or public_realism",
-                )
+            if summary["headline_detection_eligible"]:
+                if key not in _HEADLINE_ELIGIBLE_TRACKS:
+                    raise _contract_error(
+                        f"tracks.{key}.headline_detection_eligible",
+                        "may be true only for blinded_challenge or public_realism",
+                    )
+                if summary["case_count"] == 0:
+                    raise _contract_error(
+                        f"tracks.{key}.headline_detection_eligible",
+                        "requires a positive case_count",
+                    )
         if run_count is not None:
             for key, summary in tracks.items():
                 if summary["case_count"] > run_count:

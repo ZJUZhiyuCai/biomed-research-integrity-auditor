@@ -4882,6 +4882,21 @@ class BriaBenchReportTests(unittest.TestCase):
             ):
                 render_metrics_report(payload)
 
+    def test_zero_case_track_cannot_be_headline_eligible(self) -> None:
+        for track in ("blinded_challenge", "public_realism"):
+            with self.subTest(track=track):
+                metrics = minimal_metrics()
+                metrics["tracks"] = {
+                    track: {
+                        "case_count": 0,
+                        "headline_detection_eligible": True,
+                    }
+                }
+                with self.assertRaisesRegex(
+                    ContractError, rf"tracks\.{track}\.headline_detection_eligible"
+                ):
+                    render_metrics_report(metrics)
+
     def test_reliability_fractions_reconcile_with_case_appendix(self) -> None:
         contradictions = {
             "run_completion_rate": (3, 3),
@@ -4927,6 +4942,41 @@ class BriaBenchReportTests(unittest.TestCase):
         }
         with self.assertRaisesRegex(ContractError, "run_completion_rate"):
             render_metrics_report(row_denominator)
+
+        partial_counts = self.metrics_fixture()
+        del partial_counts["case_results"][0]["technical_failure_count"]
+        del partial_counts["case_results"][0]["reported_failure_count"]
+        partial_counts["reliability"]["silent_failure_rate"] = {
+            "numerator": 0,
+            "denominator": 3,
+            "value": 0.0,
+        }
+        with self.assertRaisesRegex(ContractError, "silent_failure_rate"):
+            render_metrics_report(partial_counts)
+
+    def test_equal_failure_counts_can_still_represent_a_silent_failure(self) -> None:
+        case = metric_bundle("identity_mismatch", matched=True)
+        normalized = case["run_result"]["normalized_observation"]
+        normalized["technical_failures"] = [
+            {"module": "images", "failure_type": "timeout"}
+        ]
+        normalized["reported_technical_failures"] = [
+            {"module": "images", "failure_type": "decode"}
+        ]
+        metrics = aggregate_metrics(
+            cases=[case],
+            benchmark_id="bria-bench-dev",
+            benchmark_version="0.1.0",
+        )
+
+        self.assertEqual(
+            metrics["reliability"]["silent_failure_rate"],
+            {"numerator": 1, "denominator": 1, "value": 1.0},
+        )
+        self.assertEqual(metrics["case_results"][0]["technical_failure_count"], 1)
+        self.assertEqual(metrics["case_results"][0]["reported_failure_count"], 1)
+        report = render_metrics_report(metrics)
+        self.assertIn("| Silent failure rate | 1 / 1 (100%) |", report)
 
     def test_core_distributions_reconcile_with_appendix_without_case_values(
         self,
@@ -5007,6 +5057,9 @@ class BriaBenchReportTests(unittest.TestCase):
             ("fullwidth path", "／Users／alice／private", "adapter"),
             ("prohibited language", "PASS overall score", "adapter"),
             ("line separator", "case_safe\u2028# heading", "case_id"),
+            ("dotted api key", "api.key=verylongcredentialvalue", "adapter"),
+            ("dotted private key", "private.key=verylongcredentialvalue", "adapter"),
+            ("dotted access token", "access.token=verylongcredentialvalue", "adapter"),
         )
         for name, value, field in attacks:
             with self.subTest(name=name):
