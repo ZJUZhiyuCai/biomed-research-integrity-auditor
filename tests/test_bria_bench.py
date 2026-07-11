@@ -25,6 +25,11 @@ import benchmarks.bria_bench.matching as matching_module
 from benchmarks.bria_bench import ContractError, __version__, validate_contract
 from benchmarks.bria_bench.contracts import SCHEMA_ROOT, load_schema
 from benchmarks.bria_bench.hashing import HashingError, hash_file, hash_tree
+from benchmarks.bria_bench.legacy_regression import (
+    LegacyRegressionError,
+    evaluate_legacy_contract,
+    expand_legacy_regression,
+)
 from benchmarks.bria_bench.matching import (
     Compatibility,
     Match,
@@ -62,6 +67,10 @@ SCHEMA_NAMES = (
     "run_result.schema.json",
     "metrics.schema.json",
 )
+
+REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+BRIA_BENCH_ROOT = REPOSITORY_ROOT / "benchmarks" / "bria_bench"
+LEGACY_EVAL_ROOT = REPOSITORY_ROOT / "evals"
 
 
 def minimal_manifest() -> dict[str, object]:
@@ -252,6 +261,419 @@ def metric_bundle(
         "run_result": run_result,
         "match_result": canonical_match,
     }
+
+
+class BriaBenchLegacyRegressionTests(unittest.TestCase):
+    CASE_IDS = tuple(f"case_{index:03d}" for index in range(1, 31))
+    NEGATIVE_CONTROLS = {
+        "case_001",
+        "case_005",
+        "case_012",
+        "case_021",
+        "case_022",
+        "case_023",
+        "case_029",
+        "case_030",
+    }
+
+    def copy_evals(self, destination: Path) -> Path:
+        copied = destination / "evals"
+        shutil.copytree(LEGACY_EVAL_ROOT, copied)
+        return copied
+
+    def annotation(self, root: Path, case_id: str) -> dict[str, Any]:
+        return json.loads(
+            (root / "annotations" / "regression" / f"{case_id}.json").read_text(
+                encoding="utf-8"
+            )
+        )
+
+    def test_committed_collection_is_exact_portable_and_regression_only(self) -> None:
+        source = load_manifest(BRIA_BENCH_ROOT / "benchmark_manifest.source.json")
+        frozen = load_manifest(
+            BRIA_BENCH_ROOT / "benchmark_manifest.json", require_frozen=True
+        )
+        self.assertEqual([case["case_id"] for case in source["cases"]], list(self.CASE_IDS))
+        self.assertEqual([case["case_id"] for case in frozen["cases"]], list(self.CASE_IDS))
+
+        package_files: list[Path] = []
+        package_hashes: list[str] = []
+        negative_controls: set[str] = set()
+        observation_count = 0
+        zero_observation_count = 0
+        family_by_case: dict[str, list[str]] = {}
+        expected_family_by_case = {
+            **{
+                case_id: ["image_global_similarity"]
+                for case_id in ("case_003", "case_004", "case_006")
+            },
+            **{
+                case_id: ["statistics_or_numeric"]
+                for case_id in (
+                    "case_007",
+                    "case_008",
+                    "case_010",
+                    "case_013",
+                    "case_014",
+                    "case_015",
+                    "case_016",
+                    "case_017",
+                    "case_018",
+                    "case_019",
+                )
+            },
+            **{
+                case_id: ["image_local_reuse"]
+                for case_id in ("case_020", "case_024")
+            },
+            **{
+                case_id: ["text_overlap"]
+                for case_id in ("case_025", "case_026", "case_027", "case_028")
+            },
+        }
+        for case in frozen["cases"]:
+            case_id = case["case_id"]
+            self.assertEqual(case["track"], "regression")
+            self.assertEqual(case["split"], "reference")
+            self.assertIs(case["headline_eligible"], False)
+            self.assertEqual(case["scan_profile"], "standard")
+            self.assertIs(case["redistributable"], True)
+            self.assertEqual(case["license"], "MIT")
+            self.assertIn("repository-authored procedural synthetic fixtures", case["notes"])
+            self.assertEqual(
+                case["mode"],
+                "external_public_material" if case_id == "case_009" else "internal_presubmission",
+            )
+            self.assertEqual(case["package_path"], f"cases/regression/{case_id}")
+            self.assertEqual(
+                case["annotation_path"], f"annotations/regression/{case_id}.json"
+            )
+            package, annotation_path = resolve_case_paths(BRIA_BENCH_ROOT, case)
+            package_files.extend(path for path in package.rglob("*") if path.is_file())
+            package_hashes.append(verify_frozen_case(BRIA_BENCH_ROOT, case))
+            annotation = json.loads(annotation_path.read_text(encoding="utf-8"))
+            validate_contract("annotation.schema.json", annotation)
+            self.assertEqual(annotation["case_id"], case_id)
+            if annotation["negative_control"]:
+                negative_controls.add(case_id)
+            observations = annotation["expected_observations"]
+            observation_count += len(observations)
+            zero_observation_count += not observations
+            family_by_case[case_id] = [item["issue_family"] for item in observations]
+            contract = annotation["legacy_regression_contract"]
+            source_label = f"evals/ground_truth/{case_id}.expected.yaml"
+            self.assertEqual(contract["source_label_path"], source_label)
+            source_label_path = REPOSITORY_ROOT / source_label
+            self.assertEqual(
+                contract["source_label_sha256"], hash_file(source_label_path)
+            )
+            self.assertEqual(contract["case_id"], case_id)
+            sealed_label = {
+                key: value
+                for key, value in contract.items()
+                if key not in {"source_label_path", "source_label_sha256"}
+            }
+            self.assertEqual(
+                sealed_label, json.loads(source_label_path.read_text(encoding="utf-8"))
+            )
+            for index, observation in enumerate(observations, start=1):
+                self.assertEqual(
+                    observation["observation_id"], f"legacy_{case_id}_{index:03d}"
+                )
+                self.assertEqual(observation["role"], "recall_label")
+                self.assertEqual(observation["evaluation_scope"], "regression_only")
+                self.assertEqual(observation["presence"], "present")
+                self.assertEqual(observation["source_label_path"], source_label)
+
+        self.assertEqual(len(package_files), 148)
+        self.assertEqual(len(package_hashes), len(set(package_hashes)))
+        self.assertEqual(observation_count, 19)
+        self.assertEqual(zero_observation_count, 11)
+        self.assertEqual(negative_controls, self.NEGATIVE_CONTROLS)
+        self.assertEqual(
+            {case_id: families for case_id, families in family_by_case.items() if families},
+            expected_family_by_case,
+        )
+        self.assertEqual(
+            {family for families in family_by_case.values() for family in families},
+            {
+                "image_global_similarity",
+                "image_local_reuse",
+                "statistics_or_numeric",
+                "text_overlap",
+            },
+        )
+        for case_id in ("case_002", "case_009", "case_011"):
+            self.assertEqual(family_by_case[case_id], [])
+            self.assertNotIn(case_id, negative_controls)
+        case_entries = list((BRIA_BENCH_ROOT / "cases" / "regression").iterdir())
+        self.assertEqual(
+            {path.name for path in case_entries if path.is_dir()}, set(self.CASE_IDS)
+        )
+        self.assertEqual(
+            {path.name for path in case_entries if path.is_file()}, {"README.md"}
+        )
+        self.assertTrue((BRIA_BENCH_ROOT / "annotations" / "dev" / ".gitkeep").is_file())
+        self.assertTrue((BRIA_BENCH_ROOT / "results" / ".gitkeep").is_file())
+        note = (BRIA_BENCH_ROOT / "cases" / "regression" / "README.md").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("ASCII procedural fixtures", note)
+        self.assertIn("not real-PDF/manuscript accuracy", note)
+
+        owned_paths = (
+            BRIA_BENCH_ROOT / "cases" / "regression",
+            BRIA_BENCH_ROOT / "annotations" / "regression",
+        )
+        self.assertFalse(
+            any(path.is_symlink() for root in owned_paths for path in (root, *root.rglob("*")))
+        )
+
+    def test_materialization_is_byte_identical_and_canonical_in_two_roots(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            temporary_root = Path(temporary)
+            left = temporary_root / "left"
+            right = temporary_root / "right"
+            left_cases = expand_legacy_regression(LEGACY_EVAL_ROOT, left)
+            right_cases = expand_legacy_regression(LEGACY_EVAL_ROOT, right)
+            self.assertEqual(left_cases, right_cases)
+            left_files = {
+                path.relative_to(left).as_posix(): path.read_bytes()
+                for path in left.rglob("*")
+                if path.is_file()
+            }
+            right_files = {
+                path.relative_to(right).as_posix(): path.read_bytes()
+                for path in right.rglob("*")
+                if path.is_file()
+            }
+            self.assertEqual(left_files, right_files)
+            for relative, content in left_files.items():
+                if not relative.endswith(".json"):
+                    continue
+                payload = json.loads(content)
+                canonical = (
+                    json.dumps(
+                        payload,
+                        ensure_ascii=False,
+                        indent=2,
+                        sort_keys=True,
+                        allow_nan=False,
+                    )
+                    + "\n"
+                ).encode("utf-8")
+                self.assertEqual(content, canonical, relative)
+
+    def test_strict_import_rejects_duplicate_unknown_malformed_and_identity_errors(
+        self,
+    ) -> None:
+        def duplicate_key(root: Path) -> None:
+            path = root / "ground_truth" / "case_001.expected.yaml"
+            path.write_text(
+                path.read_text(encoding="utf-8").replace(
+                    '{\n  "case_id": "case_001",',
+                    '{\n  "case_id": "case_001",\n  "case_id": "case_001",',
+                    1,
+                ),
+                encoding="utf-8",
+            )
+
+        def unknown_top_level(root: Path) -> None:
+            path = root / "ground_truth" / "case_001.expected.yaml"
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            payload["unknown"] = True
+            path.write_text(json.dumps(payload), encoding="utf-8")
+
+        def unknown_finding_field(root: Path) -> None:
+            path = root / "ground_truth" / "case_003.expected.yaml"
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            payload["required_findings"][0]["unknown"] = True
+            path.write_text(json.dumps(payload), encoding="utf-8")
+
+        def malformed_list(root: Path) -> None:
+            path = root / "ground_truth" / "case_003.expected.yaml"
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            payload["required_findings"][0]["locations_should_include"] = "Figure"
+            path.write_text(json.dumps(payload), encoding="utf-8")
+
+        def unknown_finding_type(root: Path) -> None:
+            path = root / "ground_truth" / "case_003.expected.yaml"
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            payload["required_findings"][0]["finding_type"] = "not_registered"
+            path.write_text(json.dumps(payload), encoding="utf-8")
+
+        def id_mismatch(root: Path) -> None:
+            path = root / "ground_truth" / "case_001.expected.yaml"
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            payload["case_id"] = "case_002"
+            path.write_text(json.dumps(payload), encoding="utf-8")
+
+        def extra_case(root: Path) -> None:
+            (root / "cases" / "case_031").mkdir()
+
+        def missing_label(root: Path) -> None:
+            (root / "ground_truth" / "case_030.expected.yaml").unlink()
+
+        for name, mutate in (
+            ("duplicate", duplicate_key),
+            ("unknown-top", unknown_top_level),
+            ("unknown-finding-field", unknown_finding_field),
+            ("malformed-list", malformed_list),
+            ("unknown-type", unknown_finding_type),
+            ("id-mismatch", id_mismatch),
+            ("extra-case", extra_case),
+            ("missing-label", missing_label),
+        ):
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                evals = self.copy_evals(root)
+                mutate(evals)
+                with self.assertRaises(LegacyRegressionError):
+                    expand_legacy_regression(evals, root / "output")
+
+    def test_frozen_case_detects_package_and_annotation_mutations(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / "benchmark"
+            expand_legacy_regression(LEGACY_EVAL_ROOT, output)
+            manifest = load_manifest(output / "benchmark_manifest.json", require_frozen=True)
+            case = manifest["cases"][0]
+            verify_frozen_case(output, case)
+            payload = output / case["package_path"] / "manuscript.pdf"
+            original = payload.read_bytes()
+            payload.write_bytes(original + b"mutation")
+            with self.assertRaises(RegistryError):
+                verify_frozen_case(output, case)
+            payload.write_bytes(original)
+            added = payload.parent / "added.txt"
+            added.write_text("added", encoding="utf-8")
+            with self.assertRaises(RegistryError):
+                verify_frozen_case(output, case)
+            added.unlink()
+            renamed = payload.with_name("renamed.pdf")
+            payload.rename(renamed)
+            with self.assertRaises(RegistryError):
+                verify_frozen_case(output, case)
+            renamed.rename(payload)
+            payload.unlink()
+            with self.assertRaises(RegistryError):
+                verify_frozen_case(output, case)
+            payload.write_bytes(original)
+            annotation_path = output / case["annotation_path"]
+            annotation_path.write_bytes(annotation_path.read_bytes() + b" ")
+            with self.assertRaises(RegistryError):
+                verify_frozen_case(output, case)
+
+    def test_sealed_contract_does_not_reread_legacy_source(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            evals = self.copy_evals(root)
+            output = root / "benchmark"
+            expand_legacy_regression(evals, output)
+            annotation = self.annotation(output, "case_009")
+            contract = annotation["legacy_regression_contract"]
+            summary = {
+                "overall_risk": "R1",
+                "misconduct_verdict_present": False,
+                "findings": [],
+            }
+            report = "\n".join(contract["required_report_terms"])
+            before = evaluate_legacy_contract(contract, summary, report)
+            (evals / "ground_truth" / "case_009.expected.yaml").write_text(
+                "not JSON anymore\n", encoding="utf-8"
+            )
+            after = evaluate_legacy_contract(contract, summary, report)
+            self.assertTrue(before)
+            self.assertEqual(after, before)
+
+    def test_annotation_contract_seals_identity_and_converted_requirement_fields(
+        self,
+    ) -> None:
+        annotation = self.annotation(BRIA_BENCH_ROOT, "case_003")
+        mutations = (
+            ("contract-case", ("legacy_regression_contract", "case_id"), "case_004"),
+            ("source-path", ("source_annotation_path",), "evals/ground_truth/case_004.expected.yaml"),
+            ("observation-id", ("expected_observations", 0, "observation_id"), "changed"),
+            ("risk-range", ("expected_observations", 0, "risk_range"), ["R0", "R1"]),
+            ("location", ("expected_observations", 0, "location"), {"terms": ["other"]}),
+        )
+        for name, path, value in mutations:
+            with self.subTest(name=name):
+                candidate = copy.deepcopy(annotation)
+                target: Any = candidate
+                for component in path[:-1]:
+                    target = target[component]
+                target[path[-1]] = value
+                with self.assertRaises(ContractError):
+                    validate_contract("annotation.schema.json", candidate)
+
+    def test_pure_legacy_evaluator_preserves_report_evidence_and_boundary_semantics(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / "benchmark"
+            expand_legacy_regression(LEGACY_EVAL_ROOT, output)
+            image_contract = self.annotation(output, "case_003")[
+                "legacy_regression_contract"
+            ]
+            image_summary = {
+                "overall_risk": "R3",
+                "misconduct_verdict_present": False,
+                "findings": [
+                    {
+                        "finding_id": "F-1",
+                        "finding_type": "image_reuse_cluster",
+                        "evidence_type": "cross_context_reuse_candidate best_hamming_distance",
+                        "location": "Figure 2B",
+                        "risk_level": "R3",
+                        "benign_explanations_considered": ["same field"],
+                        "required_materials_to_resolve": ["original image"],
+                        "recommended_action": "Review the assembly history.",
+                    }
+                ],
+            }
+            self.assertTrue(evaluate_legacy_contract(image_contract, image_summary, ""))
+            missing_evidence = copy.deepcopy(image_summary)
+            missing_evidence["findings"][0]["evidence_type"] = "cross_context_reuse_candidate"
+            self.assertFalse(evaluate_legacy_contract(image_contract, missing_evidence, ""))
+            missing_ledger = copy.deepcopy(image_summary)
+            missing_ledger["findings"][0]["recommended_action"] = ""
+            self.assertFalse(evaluate_legacy_contract(image_contract, missing_ledger, ""))
+            self.assertFalse(
+                evaluate_legacy_contract(
+                    image_contract, image_summary, "The audit says fraud confirmed."
+                )
+            )
+
+            public_contract = self.annotation(output, "case_009")[
+                "legacy_regression_contract"
+            ]
+            public_summary = {
+                "overall_risk": "R1",
+                "misconduct_verdict_present": False,
+                "findings": [],
+            }
+            public_report = "\n".join(public_contract["required_report_terms"])
+            self.assertTrue(
+                evaluate_legacy_contract(public_contract, public_summary, public_report)
+            )
+            self.assertFalse(
+                evaluate_legacy_contract(
+                    public_contract,
+                    public_summary,
+                    public_report.replace("external_literature_search (europepmc)", "provider none"),
+                )
+            )
+
+            weak_contract = copy.deepcopy(
+                self.annotation(output, "case_008")["legacy_regression_contract"]
+            )
+            weak_contract["expected_behavior"]["max_overall_risk"] = "R4"
+            weak_summary = {
+                "overall_risk": "R3",
+                "misconduct_verdict_present": False,
+                "findings": [],
+            }
+            self.assertFalse(evaluate_legacy_contract(weak_contract, weak_summary, ""))
 
 
 class BriaBenchContractTests(unittest.TestCase):
@@ -2633,6 +3055,23 @@ class BriaBenchNormalizationTests(unittest.TestCase):
         self.assertEqual(
             [item["failure_type"] for item in normalized["reported_technical_failures"]],
             ["timeout"],
+        )
+
+    def test_pipeline_workstreams_artifact_path_is_not_a_failure_list(self) -> None:
+        self.write_fixture(
+            pipeline={
+                "package": str(self.package_dir),
+                "workstreams": str(self.output_dir / "workstreams.json"),
+            }
+        )
+
+        normalized = normalize_audit_output("dev_001", self.output_dir)
+
+        self.assertFalse(
+            any(
+                item.get("path") == "pipeline_summary.json.workstreams"
+                for item in normalized["contract_errors"]
+            )
         )
 
     def test_malformed_failure_entries_are_indexed_and_disclosed(self) -> None:
@@ -5255,6 +5694,125 @@ class BriaBenchCliTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.temporary.cleanup()
 
+    def configure_legacy_regression_case(
+        self, *, required_report_terms: list[str] | None = None
+    ) -> None:
+        annotation = json.loads(self.annotation.read_text(encoding="utf-8"))
+        annotation["expected_observations"] = []
+        annotation["source_annotation_path"] = (
+            "evals/ground_truth/case_001.expected.yaml"
+        )
+        annotation["legacy_regression_contract"] = {
+            "source_label_path": "evals/ground_truth/case_001.expected.yaml",
+            "source_label_sha256": "a" * 64,
+            "case_id": "case_001",
+            "case_type_hidden": "clean_control",
+            "audit_mode": "internal_presubmission",
+            "expected_behavior": {
+                "misconduct_verdict_allowed": False,
+                "min_overall_risk": "R0",
+                "max_overall_risk": "R3",
+            },
+            "required_findings": [],
+            "required_report_terms": required_report_terms or [],
+            "forbidden_outputs": ["misconduct confirmed"],
+            "risk_caps": {
+                "weak_statistics_only_max": "R2",
+                "public_pdf_only_max": "R3",
+            },
+        }
+        self.annotation.write_text(json.dumps(annotation), encoding="utf-8")
+        source = json.loads(self.source.read_text(encoding="utf-8"))
+        source["cases"][0].update(
+            {"track": "regression", "split": "reference", "headline_eligible": False}
+        )
+        self.source.write_text(json.dumps(source), encoding="utf-8")
+        freeze_manifest(self.source, self.manifest, "2026-07-11T00:00:00Z")
+
+    def test_default_legacy_provider_keeps_one_assertion_and_zero_headline_denominators(
+        self,
+    ) -> None:
+        self.configure_legacy_regression_case()
+        run_benchmark(
+            self.manifest,
+            self.runs,
+            adapter_name="fake",
+            adapters={"fake": self.adapter},
+        )
+        metrics = evaluate_benchmark(
+            self.manifest,
+            self.runs,
+            self.root / "legacy-metrics.json",
+            adapters={"fake": self.adapter},
+        )
+
+        self.assertEqual(
+            metrics["detection"]["regression_assertions"],
+            {"met": 1, "not_met": 0, "total": 1},
+        )
+        for name in (
+            "expected_finding_recall",
+            "negative_package_false_alert_rate",
+            "location_match_rate",
+            "risk_band_agreement",
+            "coverage_gap_recall",
+            "public_concern_location_coverage",
+        ):
+            self.assertEqual(metrics["detection"][name]["denominator"], 0, name)
+        self.assertFalse(metrics["case_results"][0]["headline_detection_eligible"])
+
+    def test_default_legacy_provider_marks_formal_failure_false_and_explicit_override_wins(
+        self,
+    ) -> None:
+        self.configure_legacy_regression_case(required_report_terms=["sealed missing term"])
+        missing = CommandAdapter("missing", "1", (sys.executable, "-c", "pass"))
+        failed_runs = self.root / "failed-legacy-runs"
+        run_benchmark(
+            self.manifest,
+            failed_runs,
+            adapter_name="missing",
+            adapters={"missing": missing},
+        )
+        failed = evaluate_benchmark(
+            self.manifest,
+            failed_runs,
+            self.root / "failed-legacy-metrics.json",
+            adapters={"missing": missing},
+        )
+        self.assertEqual(
+            failed["detection"]["regression_assertions"],
+            {"met": 0, "not_met": 1, "total": 1},
+        )
+
+        successful_runs = self.root / "override-legacy-runs"
+        run_benchmark(
+            self.manifest,
+            successful_runs,
+            adapter_name="fake",
+            adapters={"fake": self.adapter},
+        )
+        default = evaluate_benchmark(
+            self.manifest,
+            successful_runs,
+            self.root / "default-legacy-metrics.json",
+            adapters={"fake": self.adapter},
+        )
+        overridden = evaluate_benchmark(
+            self.manifest,
+            successful_runs,
+            self.root / "override-legacy-metrics.json",
+            adapters={"fake": self.adapter},
+            assertion_providers={"fake": lambda case, annotation, run: [True]},
+        )
+        self.assertEqual(
+            default["detection"]["regression_assertions"],
+            {"met": 0, "not_met": 1, "total": 1},
+        )
+        self.assertEqual(
+            overridden["detection"]["regression_assertions"],
+            {"met": 1, "not_met": 0, "total": 1},
+        )
+
     def test_module_help_and_entry_point_metadata(self) -> None:
         self.assertEqual(bria_bench_main(["--help"]), 0)
         project = tomllib.loads((Path(__file__).parents[1] / "pyproject.toml").read_text())
@@ -5922,13 +6480,18 @@ class BriaBenchCliTests(unittest.TestCase):
             text=True,
         )
         code = (
-            "import pathlib,sys; sys.path.insert(0, sys.argv[1]); "
+            "import json,pathlib,sys; sys.path.insert(0, sys.argv[1]); "
             "from benchmarks.bria_bench import cli; "
             "a=cli._full_adapter(); "
             "case={'case_id':'x','mode':'internal_presubmission','scan_profile':'quick'}; "
             "cmd=a.build_command(package='pkg',case=case,output='out'); "
             "assert pathlib.Path(cmd[1]).is_file(); "
             "assert cli._hash_files(cli._runner_inputs(a,cmd)); "
+            "root=pathlib.Path(sys.argv[1])/'benchmarks'/'bria_bench'; "
+            "manifest=json.loads((root/'benchmark_manifest.json').read_text()); "
+            "assert len(manifest['cases']) == 30; "
+            "assert sum(1 for c in manifest['cases'] for p in (root/c['package_path']).rglob('*') if p.is_file()) == 148; "
+            "assert sum((root/c['annotation_path']).is_file() for c in manifest['cases']) == 30; "
             "assert cli.main(['--help']) == 0"
         )
         completed = subprocess.run(

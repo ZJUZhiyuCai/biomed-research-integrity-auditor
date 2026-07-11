@@ -65,11 +65,173 @@
       "type": "string",
       "minLength": 1
     },
+    "legacy_regression_contract": {
+      "$ref": "#/$defs/legacyRegressionContract"
+    },
     "notes": {
       "type": "string"
     }
   },
   "$defs": {
+    "legacyRegressionContract": {
+      "type": "object",
+      "required": [
+        "source_label_path",
+        "source_label_sha256",
+        "case_id",
+        "case_type_hidden",
+        "audit_mode",
+        "expected_behavior",
+        "required_findings",
+        "forbidden_outputs",
+        "risk_caps"
+      ],
+      "properties": {
+        "source_label_path": {
+          "type": "string",
+          "pattern": "^evals/ground_truth/case_[0-9]{3}\\.expected\\.yaml$"
+        },
+        "source_label_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "case_id": {
+          "type": "string",
+          "pattern": "^case_[0-9]{3}$"
+        },
+        "case_type_hidden": {
+          "type": "string",
+          "minLength": 1
+        },
+        "audit_mode": {
+          "enum": [
+            "internal_presubmission",
+            "external_literature_triage"
+          ]
+        },
+        "expected_behavior": {
+          "$ref": "#/$defs/legacyExpectedBehavior"
+        },
+        "required_findings": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/legacyRequiredFinding"
+          }
+        },
+        "required_report_terms": {
+          "$ref": "#/$defs/stringList"
+        },
+        "forbidden_outputs": {
+          "$ref": "#/$defs/stringList",
+          "minItems": 1
+        },
+        "risk_caps": {
+          "$ref": "#/$defs/legacyRiskCaps"
+        }
+      },
+      "additionalProperties": false
+    },
+    "legacyExpectedBehavior": {
+      "type": "object",
+      "required": [
+        "misconduct_verdict_allowed",
+        "min_overall_risk",
+        "max_overall_risk"
+      ],
+      "properties": {
+        "misconduct_verdict_allowed": {
+          "type": "boolean"
+        },
+        "min_overall_risk": {
+          "$ref": "#/$defs/riskLevel"
+        },
+        "max_overall_risk": {
+          "$ref": "#/$defs/riskLevel"
+        }
+      },
+      "additionalProperties": false
+    },
+    "legacyRequiredFinding": {
+      "type": "object",
+      "required": [
+        "finding_type",
+        "expected_risk_range",
+        "locations_should_include",
+        "evidence_should_include",
+        "required_materials_should_include",
+        "benign_explanations_should_include_any"
+      ],
+      "properties": {
+        "finding_type": {
+          "enum": [
+            "image_reuse_cluster",
+            "local_patch_reuse",
+            "terminal_digit_anomaly",
+            "precision_mixing",
+            "cross_file_sequence_reuse",
+            "sd_sem_inconsistency",
+            "integer_count_inconsistency",
+            "linear_shift_pattern",
+            "affine_transform_pattern",
+            "rank_pattern_reuse",
+            "residual_pattern_reuse",
+            "methods_boilerplate_overlap",
+            "text_overlap_candidate",
+            "self_overlap_candidate",
+            "SD is not consistent",
+            "weak triage signal",
+            "pseudoreplication_candidate",
+            "whole-column",
+            "longitudinal",
+            "Time-stratified",
+            "precision",
+            "Identical numeric sequence",
+            "Integer-count"
+          ]
+        },
+        "expected_risk_range": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/riskLevel"
+          },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "locations_should_include": {
+          "$ref": "#/$defs/stringList",
+          "minItems": 1
+        },
+        "evidence_should_include": {
+          "$ref": "#/$defs/stringList",
+          "minItems": 1
+        },
+        "required_materials_should_include": {
+          "$ref": "#/$defs/stringList",
+          "minItems": 1
+        },
+        "benign_explanations_should_include_any": {
+          "$ref": "#/$defs/stringList",
+          "minItems": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "legacyRiskCaps": {
+      "type": "object",
+      "required": [
+        "weak_statistics_only_max",
+        "public_pdf_only_max"
+      ],
+      "properties": {
+        "weak_statistics_only_max": {
+          "$ref": "#/$defs/riskLevel"
+        },
+        "public_pdf_only_max": {
+          "$ref": "#/$defs/riskLevel"
+        }
+      },
+      "additionalProperties": false
+    },
     "expectedObservation": {
       "type": "object",
       "required": [

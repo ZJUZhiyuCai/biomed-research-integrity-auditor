@@ -1,0 +1,1 @@
+Animal-level table is supplied, but timestamped raw caliper records and interpolation/smoothing notes are not included.

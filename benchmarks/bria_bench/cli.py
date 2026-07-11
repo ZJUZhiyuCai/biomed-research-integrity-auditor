@@ -1244,6 +1244,47 @@ def _load_summary(runs: Path, manifest: Mapping[str, Any], manifest_sha: str) ->
     return summary
 
 
+def _default_legacy_assertions(
+    runs: Path,
+    case: Mapping[str, Any],
+    annotation: Mapping[str, Any],
+    run: Mapping[str, Any],
+) -> Sequence[bool]:
+    contract = annotation.get("legacy_regression_contract")
+    if contract is None:
+        return []
+    if run["status"] != "success":
+        return [False]
+
+    output_paths = run["output_paths"]
+    try:
+        summary_path = _inside_runs(runs, output_paths["audit_summary"])
+        report_path = _inside_runs(runs, output_paths["report"])
+    except KeyError as exc:
+        raise CliError(
+            f"Successful legacy run lacks {exc.args[0]} for case {case['case_id']!r}"
+        ) from exc
+    for label, path in (("audit summary", summary_path), ("report", report_path)):
+        if path.is_symlink() or not path.is_file():
+            raise CliError(f"Legacy {label} is unsafe for case {case['case_id']!r}")
+    summary = _strict_json(summary_path, label=f"legacy audit summary for {case['case_id']}")
+    if not isinstance(summary, dict):
+        raise CliError(f"Legacy audit summary must be an object for case {case['case_id']!r}")
+    try:
+        report_text = report_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as exc:
+        raise CliError(f"Could not read legacy report for case {case['case_id']!r}") from exc
+
+    from .legacy_regression import LegacyRegressionError, evaluate_legacy_contract
+
+    try:
+        return [evaluate_legacy_contract(contract, summary, report_text)]
+    except LegacyRegressionError as exc:
+        raise CliError(
+            f"Invalid sealed legacy contract for case {case['case_id']!r}: {exc}"
+        ) from exc
+
+
 def evaluate_benchmark(
     manifest_path: Path | str,
     runs_dir: Path | str,
@@ -1328,6 +1369,9 @@ def evaluate_benchmark(
         assertions: Sequence[bool] = ()
         if case["track"] == "regression" and adapter_name in providers:
             assertions = providers[adapter_name](case, annotation, run)
+        elif case["track"] == "regression" and "legacy_regression_contract" in annotation:
+            assertions = _default_legacy_assertions(runs, case, annotation, run)
+        if case["track"] == "regression":
             if any(not isinstance(value, bool) for value in assertions):
                 raise CliError("Regression assertion provider must return booleans")
         bundles.append(

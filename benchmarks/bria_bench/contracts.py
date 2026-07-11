@@ -244,6 +244,61 @@ def _validate_annotation(name: str, payload: dict[str, Any]) -> None:
         ("expected_observations",),
     )
     _validate_regions(name, payload)
+    legacy = payload.get("legacy_regression_contract")
+    if legacy is None:
+        return
+    if legacy["case_id"] != payload["case_id"]:
+        _raise_contract_error(
+            name,
+            ("legacy_regression_contract", "case_id"),
+            "must match outer case_id",
+        )
+    source_path = legacy["source_label_path"]
+    if payload.get("source_annotation_path") != source_path:
+        _raise_contract_error(
+            name,
+            ("source_annotation_path",),
+            "must match sealed legacy source_label_path",
+        )
+    findings = legacy["required_findings"]
+    observations = payload["expected_observations"]
+    if len(observations) != len(findings):
+        _raise_contract_error(
+            name,
+            ("expected_observations",),
+            "must contain exactly one converted observation per legacy required finding",
+        )
+    for index, (observation, finding) in enumerate(zip(observations, findings)):
+        observation_path = ("expected_observations", index)
+        expected_id = f"legacy_{payload['case_id']}_{index + 1:03d}"
+        expected_values = {
+            "observation_id": expected_id,
+            "role": "recall_label",
+            "risk_range": finding["expected_risk_range"],
+            "benign_explanations": finding[
+                "benign_explanations_should_include_any"
+            ],
+            "required_materials": finding["required_materials_should_include"],
+            "presence": "present",
+            "evaluation_scope": "regression_only",
+            "source_label_path": source_path,
+        }
+        for field, expected in expected_values.items():
+            if observation.get(field) != expected:
+                _raise_contract_error(
+                    name,
+                    observation_path + (field,),
+                    "must preserve the sealed legacy requirement",
+                )
+        location = observation.get("location")
+        if not isinstance(location, dict) or location.get("terms") != finding[
+            "locations_should_include"
+        ]:
+            _raise_contract_error(
+                name,
+                observation_path + ("location", "terms"),
+                "must preserve all sealed legacy location terms",
+            )
 
 
 def _validate_normalized_observation(

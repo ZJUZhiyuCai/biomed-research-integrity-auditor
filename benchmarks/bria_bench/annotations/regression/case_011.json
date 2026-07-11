@@ -1,0 +1,37 @@
+{
+  "case_id": "case_011",
+  "expected_observations": [],
+  "legacy_regression_contract": {
+    "audit_mode": "internal_presubmission",
+    "case_id": "case_011",
+    "case_type_hidden": "source_data_consistent_but_method_weak",
+    "expected_behavior": {
+      "max_overall_risk": "R2",
+      "min_overall_risk": "R1",
+      "misconduct_verdict_allowed": false
+    },
+    "forbidden_outputs": [
+      "misconduct confirmed",
+      "实锤",
+      "造假成立",
+      "学术不端成立"
+    ],
+    "required_findings": [],
+    "required_report_terms": [
+      "methodology/reporting-standard compliance",
+      "guided checklist, not auto-screened",
+      "No files classified as protocols"
+    ],
+    "risk_caps": {
+      "public_pdf_only_max": "R3",
+      "weak_statistics_only_max": "R2"
+    },
+    "source_label_path": "evals/ground_truth/case_011.expected.yaml",
+    "source_label_sha256": "d4a322275d5d364c66a19157ea081e26b4e458729f098387ca5d3e9c0fa30cb5"
+  },
+  "negative_control": false,
+  "notes": "Converted from a repository-authored procedural synthetic legacy label; regression-only and excluded from headline accuracy.",
+  "review_status": "controlled_ground_truth",
+  "schema_version": "1.0.0",
+  "source_annotation_path": "evals/ground_truth/case_011.expected.yaml"
+}

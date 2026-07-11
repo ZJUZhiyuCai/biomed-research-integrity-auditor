@@ -1,0 +1,4 @@
+Methods quality-control notes:
+- Animal experiments specify randomisation by block random number table, blinded outcome scoring, pre-specified exclusion criteria, and primary endpoint.
+- Cell experiments specify cell-line source, STR authentication date, mycoplasma testing, passage range, antibody catalog/RRID, and controls.
+- All quantitative plots have matching source data and analysis scripts.

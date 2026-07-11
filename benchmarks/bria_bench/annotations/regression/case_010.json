@@ -1,0 +1,81 @@
+{
+  "case_id": "case_010",
+  "expected_observations": [
+    {
+      "benign_explanations": [
+        "field",
+        "technical replicate",
+        "experimental unit"
+      ],
+      "evaluation_scope": "regression_only",
+      "issue_family": "statistics_or_numeric",
+      "location": {
+        "terms": [
+          "Figure_6"
+        ]
+      },
+      "observation_id": "legacy_case_010_001",
+      "presence": "present",
+      "required_materials": [
+        "biological"
+      ],
+      "risk_range": [
+        "R2",
+        "R3"
+      ],
+      "role": "recall_label",
+      "source_label_path": "evals/ground_truth/case_010.expected.yaml"
+    }
+  ],
+  "legacy_regression_contract": {
+    "audit_mode": "internal_presubmission",
+    "case_id": "case_010",
+    "case_type_hidden": "pseudo_replication",
+    "expected_behavior": {
+      "max_overall_risk": "R3",
+      "min_overall_risk": "R2",
+      "misconduct_verdict_allowed": false
+    },
+    "forbidden_outputs": [
+      "misconduct confirmed",
+      "实锤",
+      "造假成立",
+      "学术不端成立"
+    ],
+    "required_findings": [
+      {
+        "benign_explanations_should_include_any": [
+          "field",
+          "technical replicate",
+          "experimental unit"
+        ],
+        "evidence_should_include": [
+          "biological",
+          "technical"
+        ],
+        "expected_risk_range": [
+          "R2",
+          "R3"
+        ],
+        "finding_type": "pseudoreplication_candidate",
+        "locations_should_include": [
+          "Figure_6"
+        ],
+        "required_materials_should_include": [
+          "biological"
+        ]
+      }
+    ],
+    "risk_caps": {
+      "public_pdf_only_max": "R3",
+      "weak_statistics_only_max": "R2"
+    },
+    "source_label_path": "evals/ground_truth/case_010.expected.yaml",
+    "source_label_sha256": "fb9f60385683f79b38b250482ee168bd34f43deca89f3747d7a9029fdee86615"
+  },
+  "negative_control": false,
+  "notes": "Converted from a repository-authored procedural synthetic legacy label; regression-only and excluded from headline accuracy.",
+  "review_status": "controlled_ground_truth",
+  "schema_version": "1.0.0",
+  "source_annotation_path": "evals/ground_truth/case_010.expected.yaml"
+}
