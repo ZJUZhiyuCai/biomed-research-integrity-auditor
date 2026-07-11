@@ -223,6 +223,7 @@ def _publish_manifest(path: Path, manifest: dict[str, Any]) -> None:
     temporary = Path(temporary_name)
     backup: Path | None = None
     output_existed = False
+    preserve_backup = False
     try:
         with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
             descriptor = -1
@@ -243,8 +244,10 @@ def _publish_manifest(path: Path, manifest: dict[str, Any]) -> None:
                 elif not output_existed:
                     path.unlink(missing_ok=True)
             except OSError as restore_exc:
+                preserve_backup = True
                 raise RegistryError(
-                    f"Could not fsync manifest directory and restore previous output: {path}"
+                    f"Could not fsync manifest directory and restore previous output: {path}; "
+                    f"backup preserved at {backup}"
                 ) from restore_exc
             raise RegistryError(f"Could not fsync manifest directory: {parent}") from exc
     finally:
@@ -259,7 +262,7 @@ def _publish_manifest(path: Path, manifest: dict[str, Any]) -> None:
             pass
         except OSError:
             pass
-        if backup is not None:
+        if backup is not None and not preserve_backup:
             try:
                 backup.unlink()
             except FileNotFoundError:

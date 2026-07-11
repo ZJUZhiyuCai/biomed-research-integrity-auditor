@@ -434,11 +434,15 @@ def _hash_file_record(
 
 
 def _close_chain(descriptors: list[int], label: str) -> None:
+    first_error: OSError | None = None
     for descriptor in reversed(descriptors):
         try:
             os.close(descriptor)
         except OSError as exc:
-            raise HashingError(f"Could not close {label}") from exc
+            if first_error is None:
+                first_error = exc
+    if first_error is not None:
+        raise HashingError(f"Could not close {label}") from first_error
 
 
 def _open_file_path(path: Path) -> tuple[int, list[int], int, os.stat_result]:

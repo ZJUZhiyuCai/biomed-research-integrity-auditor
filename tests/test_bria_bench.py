@@ -1256,6 +1256,37 @@ class BriaBenchRegistryTests(unittest.TestCase):
         self.assertEqual(output.read_bytes(), before)
         self.assertEqual(list(self.root.glob(".frozen.json.*.bak")), [])
 
+    def test_directory_fsync_restore_failure_preserves_and_reports_backup(self) -> None:
+        self.require_secure_hashing()
+        source = self.write_manifest("source.json", self.manifest())
+        output = self.root / "frozen.json"
+        output.write_text('{"status":"old"}\n', encoding="utf-8")
+        real_replace = os.replace
+        replace_sources: list[Path] = []
+
+        def replace_then_fail_restore(source_path: str | os.PathLike[str], destination: str | os.PathLike[str]) -> None:
+            replace_sources.append(Path(source_path))
+            if len(replace_sources) == 1:
+                real_replace(source_path, destination)
+                return
+            raise OSError("restore failed")
+
+        with patch(
+            "benchmarks.bria_bench.registry._fsync_directory",
+            side_effect=OSError(5, "I/O error"),
+        ), patch.object(
+            os,
+            "replace",
+            side_effect=replace_then_fail_restore,
+        ):
+            with self.assertRaisesRegex(RegistryError, "restore previous output") as caught:
+                freeze_manifest(source, output, "2026-07-11T00:00:00Z")
+
+        backup = replace_sources[1]
+        self.assertTrue(backup.exists())
+        self.assertIn(str(backup), str(caught.exception))
+        backup.unlink()
+
     def test_failed_freeze_serialization_and_replace_preserve_previous_output(self) -> None:
         self.require_secure_hashing()
         source = self.write_manifest("source.json", self.manifest())
@@ -1277,6 +1308,19 @@ class BriaBenchRegistryTests(unittest.TestCase):
                 freeze_manifest(source, output, "2026-07-11T00:00:00Z")
         self.assertEqual(output.read_text(encoding="utf-8"), before)
         self.assertEqual(list(self.root.glob(".frozen.json.*.tmp")), [])
+
+    def test_close_chain_attempts_all_descriptors_after_close_failure(self) -> None:
+        attempted: list[int] = []
+
+        def close_with_one_failure(descriptor: int) -> None:
+            attempted.append(descriptor)
+            if descriptor == 3:
+                raise OSError("injected close failure")
+
+        with patch.object(hashing_module.os, "close", side_effect=close_with_one_failure):
+            with self.assertRaises(HashingError):
+                hashing_module._close_chain([1, 2, 3], "test descriptor chain")
+        self.assertEqual(attempted, [3, 2, 1])
 
     def test_load_frozen_checks_shape_only_and_verify_detects_stale_package(self) -> None:
         self.require_secure_hashing()
