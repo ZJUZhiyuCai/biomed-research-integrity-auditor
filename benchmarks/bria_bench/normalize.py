@@ -20,14 +20,13 @@ _REQUIRED_ARTIFACTS = (
     "pipeline_summary.json",
 )
 _RISK_LEVELS = {"R0", "R1", "R2", "R3", "R4"}
-_PRIMARY_ROUTE_KEYS = (
+_DOMAIN_ROUTE_KEYS = (
     "candidate_type",
     "contextual_tag",
-    "risk_cap_tags",
-    "risk_caps_applied",
     "finding_type",
     "evidence_type",
 )
+_CONTROLLED_RISK_ROUTE_KEYS = ("risk_cap_tags",)
 _PRIMARY_FAMILY_VALUES = {
     "image_reuse_cluster": "image_global_similarity",
     "global_image_similarity": "image_global_similarity",
@@ -111,6 +110,14 @@ _BOUNDARY_TERM_PATTERNS = (
     ),
     (
         "integrity conclusion",
+        re.compile(r"\bpass(?:ed)?\s+integrity\s+audit\b|\bfail(?:ed)?\s+integrity\s+audit\b", re.IGNORECASE),
+    ),
+    (
+        "integrity conclusion",
+        re.compile(r"\bintegrity\s+audit\s*[:=]\s*(?:pass(?:ed)?|fail(?:ed)?|clean|certified)\b", re.IGNORECASE),
+    ),
+    (
+        "integrity conclusion",
         re.compile(r"\b(?:certificate|certification)\s*[:=]\s*(?:pass(?:ed)?|fail(?:ed)?|clean|certified)\b", re.IGNORECASE),
     ),
     (
@@ -135,6 +142,9 @@ _BOUNDARY_NEGATIONS = (
     re.compile(r"\bnot\s+[^.!?\n]{0,80}\b(?:misconduct|fraud)\s+(?:verdict|finding|conclusion)\b", re.I),
     re.compile(r"\bnot\s+(?:a\s+)?(?:clean|certified)\s+(?:manuscript|integrity|result|conclusion)\b", re.I),
     re.compile(r"\bnot\s+certified\s+clean\b", re.I),
+    re.compile(r"\bnot\s+certified[- ]clean\b", re.I),
+    re.compile(r"\bintegrity(?:\s+audit)?\s+(?:check|audit)?\s+fail(?:ed)?\s+to\s+(?:run|execute|start|complete)\b", re.I),
+    re.compile(r"\bintegrity(?:\s+audit)?\s+(?:check|audit)?\s+fail(?:ed)?\s+(?:because|due|from)\b", re.I),
     re.compile(r"\b(?:do|does|did|should)\s+not\s+say\s+(?:fraud|fraudulent|misconduct)\b", re.I),
     re.compile(r"\bsay\s+this\s+paper\s+is\s+fraudulent\b", re.I),
     re.compile(r"\b(?:quoted|prompt[- ]?injection|manual\s+instruction|instruction)\b", re.I),
@@ -230,6 +240,7 @@ def _failure_from_value(
     *,
     default_module: str = "producer",
     default_type: str = "failure",
+    disclosed: bool = False,
 ) -> tuple[dict[str, Any], bool] | None:
     if isinstance(value, str):
         text = value.strip()
@@ -239,8 +250,8 @@ def _failure_from_value(
             module, detail = text.split(":", 1)
             module, detail = module.strip(), detail.strip()
             if module and detail:
-                return _failure_record(module, default_type if not detail else detail, text, source), True
-        return _failure_record(default_module, default_type, text, source), False
+                return _failure_record(module, default_type if not detail else detail, text, source), disclosed
+        return _failure_record(default_module, default_type, text, source), disclosed
     if not isinstance(value, dict):
         return None
     module_value = value.get("module", value.get("detector", value.get("name", default_module)))
@@ -255,7 +266,6 @@ def _failure_from_value(
     if not isinstance(returncode, int) or isinstance(returncode, bool):
         returncode = None
     timed_out = value.get("timed_out") if isinstance(value.get("timed_out"), bool) else None
-    explicit = bool(module and (type_value or message_value))
     return (
         _failure_record(
             module,
@@ -267,7 +277,7 @@ def _failure_from_value(
             returncode=returncode,
             timed_out=timed_out,
         ),
-        explicit,
+        disclosed,
     )
 
 
@@ -306,24 +316,36 @@ def _string_list(value: Any) -> list[str]:
 
 
 def _issue_family(finding: dict[str, Any]) -> str:
-    primary_values: list[str] = []
-    for key in _PRIMARY_ROUTE_KEYS:
-        value = finding.get(key)
-        if isinstance(value, str):
-            primary_values.append(value)
-        elif isinstance(value, list):
-            primary_values.extend(item for item in value if isinstance(item, str))
+    def values_for(keys: tuple[str, ...]) -> list[str]:
+        values: list[str] = []
+        for key in keys:
+            value = finding.get(key)
+            if isinstance(value, str):
+                values.append(value)
+            elif isinstance(value, list):
+                values.extend(item for item in value if isinstance(item, str))
+        return values
 
-    primary_text = " ".join(primary_values).lower().replace("-", "_")
-    if any(
-        marker in primary_text or marker.replace("_", " ") in primary_text
-        for marker in _MATERIAL_ROUTE_MARKERS
-    ):
-        return "material_or_coverage_gap"
-    for value in primary_values:
-        normalized = value.strip().lower().replace("-", "_").replace(" ", "_")
-        if normalized in _PRIMARY_FAMILY_VALUES:
-            return _PRIMARY_FAMILY_VALUES[normalized]
+    def exact_family(values: list[str]) -> str | None:
+        for value in values:
+            normalized = value.strip().lower().replace("-", "_").replace(" ", "_")
+            if normalized in _PRIMARY_FAMILY_VALUES:
+                return _PRIMARY_FAMILY_VALUES[normalized]
+            if any(
+                marker in normalized or marker.replace("_", " ") in value.lower()
+                for marker in _MATERIAL_ROUTE_MARKERS
+            ):
+                return "material_or_coverage_gap"
+        return None
+
+    domain_values = values_for(_DOMAIN_ROUTE_KEYS)
+    domain_family = exact_family(domain_values)
+    if domain_family is not None:
+        return domain_family
+    controlled_risk_values = values_for(_CONTROLLED_RISK_ROUTE_KEYS)
+    controlled_risk_family = exact_family(controlled_risk_values)
+    if controlled_risk_family is not None:
+        return controlled_risk_family
 
     text = " ".join(
         str(finding.get(key, ""))
@@ -333,7 +355,6 @@ def _issue_family(finding: dict[str, Any]) -> str:
             "candidate_type",
             "contextual_tag",
             "risk_cap_tags",
-            "risk_caps_applied",
             "finding_type",
             "evidence_type",
         )
@@ -389,7 +410,7 @@ def _is_technical_finding(finding: dict[str, Any]) -> bool:
             "finding_type",
             "evidence_type",
         )
-    ).lower()
+    ).lower().replace("_", " ")
     return bool(_TECHNICAL_WORDS.search(text))
 
 
@@ -692,14 +713,21 @@ def normalize_audit_output(
             if normalized is not None:
                 normalized_observations.append(normalized)
 
-    for artifact_name, artifact in (("coverage.json", coverage), ("pipeline_summary.json", pipeline)):
+    failure_artifacts: list[tuple[str, dict[str, Any] | None, bool]] = [
+        ("AUDIT_JSON_SUMMARY.json", summary, True),
+        ("coverage.json", coverage, False),
+        ("pipeline_summary.json", pipeline, False),
+    ]
+    if summary is not None and isinstance(summary.get("audit_coverage"), dict):
+        failure_artifacts.append(("AUDIT_JSON_SUMMARY.json", summary["audit_coverage"], True))
+    for artifact_name, artifact, artifact_disclosed in failure_artifacts:
         if artifact is None:
             continue
         for key in _FAILURE_KEYS:
             values = artifact.get(key, [])
             if isinstance(values, list):
                 for value in values:
-                    parsed = _failure_from_value(value, artifact_name)
+                    parsed = _failure_from_value(value, artifact_name, disclosed=artifact_disclosed)
                     if parsed is not None:
                         technical_entries.append(parsed)
             elif values not in (None, "", False):
@@ -708,12 +736,19 @@ def normalize_audit_output(
             values = artifact.get(key, [])
             if isinstance(values, list):
                 for value in values:
-                    parsed = _failure_from_value(value, artifact_name, default_type="audit_coverage_gap")
+                    parsed = _failure_from_value(
+                        value,
+                        artifact_name,
+                        default_type="audit_coverage_gap",
+                        disclosed=artifact_disclosed,
+                    )
                     if parsed is not None:
                         technical_entries.append(parsed)
         if artifact.get("audit_coverage_gap"):
             message = str(artifact.get("audit_coverage_gap_message", "Audit coverage gap disclosed by producer."))
-            technical_entries.append((_failure_record("audit.coverage", "audit_coverage_gap", message, artifact_name), False))
+            technical_entries.append(
+                (_failure_record("audit.coverage", "audit_coverage_gap", message, artifact_name), artifact_disclosed)
+            )
         workstreams = artifact.get("workstreams", [])
         if isinstance(workstreams, list):
             for workstream in workstreams:
@@ -726,11 +761,22 @@ def normalize_audit_output(
                 errors = workstream.get("errors", [])
                 if isinstance(errors, list) and errors:
                     for error in errors:
-                        parsed = _failure_from_value(error, artifact_name, default_module=name, default_type="workstream_failed")
+                        parsed = _failure_from_value(
+                            error,
+                            artifact_name,
+                            default_module=name,
+                            default_type="workstream_failed",
+                            disclosed=artifact_disclosed,
+                        )
                         if parsed is not None:
                             technical_entries.append(parsed)
                 else:
-                    technical_entries.append((_failure_record(name, "workstream_failed", f"Workstream status: {status}.", artifact_name, status=status), False))
+                    technical_entries.append(
+                        (
+                            _failure_record(name, "workstream_failed", f"Workstream status: {status}.", artifact_name, status=status),
+                            artifact_disclosed,
+                        )
+                    )
 
     observed_failures, disclosed_ids = _dedupe_failures(technical_entries)
     report_disclosed: set[tuple[Any, ...]] = set()

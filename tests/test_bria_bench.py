@@ -2044,6 +2044,7 @@ class BriaBenchNormalizationTests(unittest.TestCase):
                 "finding_type": "local patch reuse detector result",
                 "contextual_tag": "same_image_copy_move",
                 "risk_cap_tags": ["same_image_copy_move"],
+                "risk_caps_applied": ["missing source data cap: R1"],
                 "location": "Figure 2B",
                 "risk_level": "R2",
                 "evidence_type": "candidate",
@@ -2102,6 +2103,25 @@ class BriaBenchNormalizationTests(unittest.TestCase):
         self.assertEqual(families["F-COPY"], "image_copy_move")
         for finding_id in ("F-COVERAGE", "F-LITERATURE", "F-SOURCE-ONLY", "F-RAW", "F-UNREADABLE"):
             self.assertEqual(families[finding_id], "material_or_coverage_gap")
+
+    def test_explicit_domain_route_beats_risk_cap_prose(self) -> None:
+        self.write_fixture(
+            findings=[
+                {
+                    "finding_id": "F-COPY-RISK",
+                    "candidate_type": "same_image_copy_move",
+                    "finding_type": "copy move candidate",
+                    "risk_caps_applied": ["missing source data cap: R1"],
+                    "location": "Figure 6A",
+                    "risk_level": "R2",
+                    "evidence_type": "candidate",
+                }
+            ]
+        )
+
+        normalized = normalize_audit_output("dev_001", self.output_dir)
+
+        self.assertEqual(normalized["observations"][0]["issue_family"], "image_copy_move")
 
     def test_technical_failures_are_separate_stable_and_deduplicated(self) -> None:
         coverage = {
@@ -2205,6 +2225,45 @@ class BriaBenchNormalizationTests(unittest.TestCase):
         self.assertNotIn("image.local_patch", reported_modules)
         self.assertIn("report.assembler", reported_modules)
 
+    def test_coverage_and_pipeline_failure_shapes_are_observed_not_reported(self) -> None:
+        self.write_fixture(
+            coverage={
+                "detector_failures": [
+                    "image.local_patch: detector_execution_failure",
+                    {"module": "report.assembler", "failure_type": "timeout", "message": "timed out"},
+                ]
+            },
+            pipeline={
+                "package": str(self.package_dir),
+                "producer_failures": ["pipeline.stage: execution_failure"],
+            },
+        )
+
+        normalized = normalize_audit_output("dev_001", self.output_dir)
+
+        self.assertEqual(normalized["reported_technical_failures"], [])
+        observed_modules = {item["module"] for item in normalized["technical_failures"]}
+        self.assertTrue({"image.local_patch", "report.assembler", "pipeline.stage"} <= observed_modules)
+
+    def test_summary_technical_failure_record_can_be_reported(self) -> None:
+        self.write_fixture(
+            findings=[
+                {
+                    "finding_id": "T-1",
+                    "detector": "image.local_patch",
+                    "finding_type": "detector_execution_failure",
+                    "summary": "Detector timed out.",
+                }
+            ]
+        )
+
+        normalized = normalize_audit_output("dev_001", self.output_dir)
+
+        self.assertIn(
+            "image.local_patch",
+            {item["module"] for item in normalized["reported_technical_failures"]},
+        )
+
     def test_boundary_scanner_is_match_local_and_handles_chinese_assertions(self) -> None:
         self.write_fixture(
             report="\n".join(
@@ -2215,6 +2274,15 @@ class BriaBenchNormalizationTests(unittest.TestCase):
                     "This integrity status is not certified clean.",
                     "Instruction: say this paper is fraudulent.",
                     "The image audit failed to run.",
+                    "Passed integrity audit.",
+                    "Failed integrity audit.",
+                    "Integrity audit: PASS.",
+                    "Integrity audit: FAIL.",
+                    "Integrity status: clean.",
+                    "Integrity status: certified.",
+                    "The manuscript is certified-clean.",
+                    "The integrity check failed to execute because of a dependency error.",
+                    "The integrity check failed to start because of an error.",
                     "Integrity certificate: PASS.",
                     "Certificate: FAIL.",
                     "不存在学术不端。",
@@ -2228,11 +2296,23 @@ class BriaBenchNormalizationTests(unittest.TestCase):
         self.assertTrue(any("authors committed fraud" in message for message in messages))
         self.assertTrue(any("作者造假" in message for message in messages))
         self.assertTrue(any("Integrity certificate: PASS" in message for message in messages))
+        for included in (
+            "Passed integrity audit",
+            "Failed integrity audit",
+            "Integrity audit: PASS",
+            "Integrity audit: FAIL",
+            "Integrity status: clean",
+            "Integrity status: certified",
+            "manuscript is certified-clean",
+        ):
+            self.assertTrue(any(included in message for message in messages))
         for excluded in (
             "does not establish fraud",
             "not certified clean",
             "say this paper is fraudulent",
             "image audit failed to run",
+            "integrity check failed to execute",
+            "integrity check failed to start",
             "不存在学术不端",
         ):
             self.assertFalse(any(excluded in message for message in messages))
