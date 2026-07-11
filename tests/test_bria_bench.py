@@ -1571,6 +1571,22 @@ class BriaBenchRuntimeTests(unittest.TestCase):
         self.assertEqual(output.read_text(encoding="utf-8"), '{"old": true}\n')
         self.assertEqual(list(self.root.glob(".result.json.*.tmp")), [])
 
+    def test_write_json_atomic_creates_nested_output_directory(self) -> None:
+        output = self.root / "nested" / "results" / "result.json"
+
+        write_json_atomic(output, {"created": True})
+
+        self.assertEqual(json.loads(output.read_text(encoding="utf-8")), {"created": True})
+        self.assertEqual(list(output.parent.glob(".result.json.*.tmp")), [])
+
+    def test_write_json_atomic_serialization_error_does_not_create_parent(self) -> None:
+        output = self.root / "nested" / "results" / "result.json"
+
+        with self.assertRaises(TypeError):
+            write_json_atomic(output, {"bad": object()})
+
+        self.assertFalse(output.parent.exists())
+
     def test_write_json_atomic_preserves_previous_file_on_replace_error(self) -> None:
         output = self.root / "result.json"
         output.write_text('{"old": true}\n', encoding="utf-8")

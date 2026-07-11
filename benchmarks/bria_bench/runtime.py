@@ -463,6 +463,7 @@ def write_json_atomic(path: Path | str, payload: Any) -> None:
         allow_nan=False,
     ) + "\n"
 
+    output.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary_name = tempfile.mkstemp(
         prefix=f".{output.name}.",
         suffix=".tmp",
