@@ -5,6 +5,7 @@ import json
 import os
 import random
 import re
+import shutil
 import signal
 import subprocess
 import sys
@@ -4575,6 +4576,33 @@ class BriaBenchCliTests(unittest.TestCase):
             )
         self.assertEqual(environment["cases"][0]["cache_status"], "invalidated")
 
+    def test_timeout_policy_changes_cache_identity_and_shorter_timeout_runs(self) -> None:
+        self.producer.write_text(
+            "import time\n" + self.producer.read_text(encoding="utf-8").replace(
+                "output.mkdir(parents=True, exist_ok=True)",
+                "time.sleep(0.15); output.mkdir(parents=True, exist_ok=True)",
+            ),
+            encoding="utf-8",
+        )
+        first = run_benchmark(
+            self.manifest,
+            self.runs,
+            adapter_name="fake",
+            adapters={"fake": self.adapter},
+            timeout_seconds=2,
+        )
+        second = run_benchmark(
+            self.manifest,
+            self.runs,
+            adapter_name="fake",
+            adapters={"fake": self.adapter},
+            timeout_seconds=0.01,
+        )
+        self.assertEqual(first["cases"][0]["status"], "success")
+        self.assertEqual(second["cases"][0]["status"], "timeout")
+        self.assertEqual(second["cases"][0]["cache_status"], "invalidated")
+        self.assertNotEqual(first["cases"][0]["run_result"], second["cases"][0]["run_result"])
+
     def test_tampered_current_result_is_rejected_and_rerun(self) -> None:
         run_benchmark(self.manifest, self.runs, adapter_name="fake", adapters={"fake": self.adapter})
         current = self.runs / "cases/case_001/run_result.json"
@@ -4626,6 +4654,42 @@ class BriaBenchCliTests(unittest.TestCase):
         self.assertTrue((self.runs / "run_summary.json").is_file())
         failed = json.loads((self.runs / summary["cases"][0]["run_result"]).read_text())
         validate_contract("run_result.schema.json", failed)
+
+    def test_missing_first_package_is_formal_and_second_case_runs_and_evaluates(self) -> None:
+        self.make_two_case_manifest()
+        shutil.rmtree(self.package)
+
+        summary = run_benchmark(
+            self.manifest, self.runs, adapter_name="fake", adapters={"fake": self.adapter}
+        )
+        metrics = evaluate_benchmark(
+            self.manifest,
+            self.runs,
+            self.root / "missing-package-metrics.json",
+            adapters={"fake": self.adapter},
+        )
+
+        self.assertEqual([item["status"] for item in summary["cases"]], ["environment_failure", "success"])
+        self.assertEqual(metrics["reliability"]["run_completion_rate"]["value"], 0.5)
+        self.assertEqual(metrics["detection"]["expected_finding_recall"]["value"], 0.5)
+
+    def test_changed_first_package_is_formal_and_second_case_runs_and_evaluates(self) -> None:
+        self.make_two_case_manifest()
+        (self.package / "input.txt").write_text("changed after freeze\n", encoding="utf-8")
+
+        summary = run_benchmark(
+            self.manifest, self.runs, adapter_name="fake", adapters={"fake": self.adapter}
+        )
+        metrics = evaluate_benchmark(
+            self.manifest,
+            self.runs,
+            self.root / "changed-package-metrics.json",
+            adapters={"fake": self.adapter},
+        )
+
+        self.assertEqual([item["status"] for item in summary["cases"]], ["environment_failure", "success"])
+        self.assertEqual(metrics["reliability"]["run_completion_rate"]["value"], 0.5)
+        self.assertEqual(metrics["detection"]["expected_finding_recall"]["value"], 0.5)
 
     def test_cache_hit_current_publication_failure_continues_and_writes_summary(self) -> None:
         self.make_two_case_manifest()
@@ -4832,6 +4896,77 @@ class BriaBenchCliTests(unittest.TestCase):
             )
         self.assertEqual(changed_dependency["cases"][0]["cache_status"], "invalidated")
 
+    def test_pyyaml_version_is_fingerprinted_and_invalidates_cache(self) -> None:
+        baseline = cli_module._environment_payload()
+        self.assertIn("PyYAML", baseline)
+        run_benchmark(self.manifest, self.runs, adapter_name="fake", adapters={"fake": self.adapter})
+        real_version = cli_module.importlib.metadata.version
+
+        def changed_version(name: str) -> str:
+            return "999-test" if name == "PyYAML" else real_version(name)
+
+        with patch.object(cli_module.importlib.metadata, "version", side_effect=changed_version):
+            changed = run_benchmark(
+                self.manifest, self.runs, adapter_name="fake", adapters={"fake": self.adapter}
+            )
+        self.assertEqual(changed["cases"][0]["cache_status"], "invalidated")
+
+    def test_repeated_failed_runs_preserve_self_consistent_versioned_attempts(self) -> None:
+        adapter = CommandAdapter("missing", "1", (sys.executable, "-c", "pass"))
+        first = run_benchmark(
+            self.manifest, self.runs, adapter_name="missing", adapters={"missing": adapter}
+        )
+        second = run_benchmark(
+            self.manifest, self.runs, adapter_name="missing", adapters={"missing": adapter}
+        )
+        first_path = (self.runs / first["cases"][0]["run_result"]).resolve()
+        second_path = (self.runs / second["cases"][0]["run_result"]).resolve()
+        first_result = cli_module._validate_attempt(
+            first_path,
+            runs=self.runs.resolve(),
+            case_id="case_001",
+            package_root=self.package.resolve(),
+        )
+        second_result = cli_module._validate_attempt(
+            second_path,
+            runs=self.runs.resolve(),
+            case_id="case_001",
+            package_root=self.package.resolve(),
+        )
+        self.assertNotEqual(first_path, second_path)
+        self.assertTrue(first_path.is_file())
+        self.assertTrue(second_path.is_file())
+        first_output = (self.runs / first_result["output_paths"]["case_output"]).resolve()
+        second_output = (self.runs / second_result["output_paths"]["case_output"]).resolve()
+        self.assertTrue(first_output.is_relative_to(first_path.parent))
+        self.assertTrue(second_output.is_relative_to(second_path.parent))
+        self.assertFalse(first_output.is_relative_to(second_path.parent))
+
+    def test_repeated_process_failures_also_keep_both_attempts_valid(self) -> None:
+        runs = self.root / "repeated-process-runs"
+        adapter = CommandAdapter(
+            "process", "1", (sys.executable, "-c", "import sys; sys.exit(7)")
+        )
+        first = run_benchmark(
+            self.manifest, runs, adapter_name="process", adapters={"process": adapter}
+        )
+        second = run_benchmark(
+            self.manifest, runs, adapter_name="process", adapters={"process": adapter}
+        )
+        paths = [
+            (runs / summary["cases"][0]["run_result"]).resolve()
+            for summary in (first, second)
+        ]
+        self.assertNotEqual(*paths)
+        for path in paths:
+            result = cli_module._validate_attempt(
+                path,
+                runs=runs.resolve(),
+                case_id="case_001",
+                package_root=self.package.resolve(),
+            )
+            self.assertEqual(result["status"], "process_error")
+
     def test_missing_psutil_is_actionable_environment_failure(self) -> None:
         with patch.object(
             cli_module,
@@ -4897,6 +5032,20 @@ class BriaBenchCliTests(unittest.TestCase):
             with self.subTest(args=args):
                 with self.assertRaises(ValueError):
                     CommandAdapter(*args)
+
+    def test_command_adapter_requires_tuple_argv_container(self) -> None:
+        invalid = (
+            "python",
+            ["python"],
+            {"python"},
+            frozenset({"python"}),
+            {"command": "python"},
+            (item for item in ["python"]),
+        )
+        for argv in invalid:
+            with self.subTest(container=type(argv).__name__):
+                with self.assertRaisesRegex(ValueError, "tuple"):
+                    CommandAdapter("bad", "1", argv)  # type: ignore[arg-type]
 
     def test_timeout_and_missing_output_are_formal_failed_results(self) -> None:
         timeout = CommandAdapter(

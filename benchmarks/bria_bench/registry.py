@@ -148,8 +148,13 @@ def _validated_manifest(path: Path) -> dict[str, Any]:
     return payload
 
 
-def load_manifest(path: Path | str, *, require_frozen: bool = False) -> dict[str, Any]:
-    """Load, contract-validate, and path-check a manifest without reading annotations."""
+def load_manifest(
+    path: Path | str,
+    *,
+    require_frozen: bool = False,
+    resolve_paths: bool = True,
+) -> dict[str, Any]:
+    """Load a manifest, optionally deferring per-case filesystem resolution."""
 
     manifest_path = _as_path(path, label="manifest path")
     manifest = _validated_manifest(manifest_path)
@@ -158,13 +163,14 @@ def load_manifest(path: Path | str, *, require_frozen: bool = False) -> dict[str
         raise RegistryError("Frozen manifest requires frozen_at")
 
     for case in manifest["cases"]:
-        resolve_case_paths(root, case)
         if require_frozen:
             for field in ("expected_sha256", "annotation_sha256"):
                 if field not in case:
                     raise RegistryError(
                         f"Frozen case {case['case_id']!r} requires {field}"
                     )
+        if resolve_paths:
+            resolve_case_paths(root, case)
     return manifest
 
 

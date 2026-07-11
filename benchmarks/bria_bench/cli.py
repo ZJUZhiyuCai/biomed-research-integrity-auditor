@@ -7,6 +7,7 @@ import hashlib
 import importlib.metadata
 import importlib.util
 import json
+import math
 import os
 import platform
 import re
@@ -36,6 +37,11 @@ _DEPENDENCIES = {
     "Pillow": ("Pillow",),
     "OpenCV": ("opencv-python-headless", "opencv-python"),
     "PyMuPDF": ("PyMuPDF",),
+    "PyYAML": ("PyYAML",),
+    "openpyxl": ("openpyxl",),
+    "pypdf": ("pypdf",),
+    "requests": ("requests",),
+    "pytesseract": ("pytesseract",),
     "jsonschema": ("jsonschema",),
     "psutil": ("psutil",),
 }
@@ -82,6 +88,8 @@ class CommandAdapter:
             raise ValueError("adapter name must be a safe non-empty identifier")
         if not isinstance(self.version, str) or _ADAPTER_VERSION.fullmatch(self.version) is None:
             raise ValueError("adapter version must be a safe non-empty identifier")
+        if not isinstance(self.argv_template, tuple):
+            raise ValueError("adapter argv_template must be an actual tuple of strings")
         if not self.argv_template or any(not isinstance(arg, str) or not arg for arg in self.argv_template):
             raise ValueError("adapter argv_template must be a non-empty string array")
         placeholder = re.compile(r"^\{([^{}]+)\}$")
@@ -336,14 +344,41 @@ def _logical_command(adapter: AdapterProtocol, case: Mapping[str, Any]) -> list[
     return logical
 
 
+def _normalized_timeout(value: float) -> float:
+    if isinstance(value, bool):
+        raise CliError("timeout_seconds must be finite and positive")
+    try:
+        timeout = float(value)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise CliError("timeout_seconds must be finite and positive") from exc
+    if not math.isfinite(timeout) or timeout <= 0:
+        raise CliError("timeout_seconds must be finite and positive")
+    return timeout
+
+
+def _policy_marker(timeout_seconds: float) -> str:
+    return f"bria-bench-policy:timeout_seconds={format(timeout_seconds, '.17g')}"
+
+
+def _timeout_from_command(command: object) -> float:
+    if not isinstance(command, list) or any(not isinstance(item, str) for item in command):
+        raise CliError("run result command must be a string array")
+    markers = [item for item in command if item.startswith("bria-bench-policy:timeout_seconds=")]
+    if len(markers) != 1 or command[-1] != markers[0]:
+        raise CliError("run result lacks one canonical timeout execution policy")
+    return _normalized_timeout(markers[0].split("=", 1)[1])
+
+
 def _cache_material(
     manifest: Mapping[str, Any],
     case: Mapping[str, Any],
     adapter: AdapterProtocol,
     actual_command: Sequence[str],
     manifest_sha256: str,
+    timeout_seconds: float,
 ) -> tuple[str, dict[str, str], list[str]]:
-    logical = _logical_command(adapter, case)
+    timeout = _normalized_timeout(timeout_seconds)
+    logical = _logical_command(adapter, case) + [_policy_marker(timeout)]
     environment = _environment_payload()
     runner_sha = _hash_files(_runner_inputs(adapter, actual_command))
     hashes = {
@@ -364,6 +399,7 @@ def _cache_material(
             "logical_command": logical,
             "environment": environment,
             "runner_sha256": runner_sha,
+            "execution_policy": {"timeout_seconds": timeout},
         }
     )
     return key, hashes, logical
@@ -617,16 +653,9 @@ def _validate_attempt(
     expected_adapter: AdapterProtocol | None = None,
     package_root: Path | None = None,
 ) -> dict[str, Any]:
-    from .contracts import validate_contract
     from .normalize import normalize_audit_output
 
-    if path.is_symlink() or not path.is_file():
-        raise CliError(f"Attempt result is unsafe or missing for case {case_id!r}")
-    relative = path.relative_to(runs).as_posix()
-    payload = _strict_json(path, label=f"attempt result for {case_id}")
-    validate_contract("run_result.schema.json", payload)
-    if payload["case_id"] != case_id or payload["output_paths"].get("run_result") != relative:
-        raise CliError(f"Attempt identity mismatch for case {case_id!r}")
+    payload = _load_attempt_contract(path, runs=runs, case_id=case_id)
     if expected_key is not None and payload["cache_key"] != expected_key:
         raise CliError(f"Attempt cache key mismatch for case {case_id!r}")
     if expected_hashes is not None and payload["hashes"] != dict(expected_hashes):
@@ -673,6 +702,42 @@ def _validate_attempt(
     if renormalized != payload["normalized_observation"]:
         raise CliError(f"Producer artifacts do not match normalized result for case {case_id!r}")
     return payload
+
+
+def _load_attempt_contract(path: Path, *, runs: Path, case_id: str) -> dict[str, Any]:
+    from .contracts import validate_contract
+
+    if path.is_symlink() or not path.is_file():
+        raise CliError(f"Attempt result is unsafe or missing for case {case_id!r}")
+    relative = path.relative_to(runs).as_posix()
+    payload = _strict_json(path, label=f"attempt result for {case_id}")
+    validate_contract("run_result.schema.json", payload)
+    if payload["case_id"] != case_id or payload["output_paths"].get("run_result") != relative:
+        raise CliError(f"Attempt identity mismatch for case {case_id!r}")
+    return payload
+
+
+def _verified_annotation(manifest_file: Path, case: Mapping[str, Any]) -> tuple[Path, dict[str, Any]]:
+    from .contracts import validate_contract
+    from .hashing import HashingError, hash_file
+    from .registry import RegistryError, resolve_inside
+
+    case_id = str(case["case_id"])
+    try:
+        path = resolve_inside(manifest_file.parent, str(case["annotation_path"]))
+        metadata = path.lstat()
+        if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
+            raise CliError(f"Annotation must be an actual file for case {case_id!r}")
+        actual = hash_file(path)
+    except (HashingError, OSError, RegistryError) as exc:
+        raise CliError(f"Could not verify sealed annotation for case {case_id!r}: {exc}") from exc
+    if actual != case["annotation_sha256"]:
+        raise CliError(f"Sealed annotation hash mismatch for case {case_id!r}")
+    annotation = _strict_json(path, label=f"annotation for {case_id}")
+    validate_contract("annotation.schema.json", annotation)
+    if annotation["case_id"] != case_id:
+        raise CliError(f"Annotation case_id mismatch for case {case_id!r}")
+    return path, annotation
 
 
 def _valid_prior_current(
@@ -735,9 +800,30 @@ def _publish_attempt(prepared: Path, destination: Path) -> None:
     os.replace(prepared, destination)
 
 
-def _attempt_paths(case_id: str, cache_key: str) -> tuple[Path, Path]:
-    attempt = Path("cases") / case_id / "attempts" / cache_key
+def _attempt_directory_name(cache_key: str, version: int) -> str:
+    if version < 1:
+        raise CliError("attempt version must be positive")
+    return cache_key if version == 1 else f"{cache_key}.attempt-{version:04d}"
+
+
+def _attempt_paths(case_id: str, cache_key: str, version: int = 1) -> tuple[Path, Path]:
+    attempt = Path("cases") / case_id / "attempts" / _attempt_directory_name(
+        cache_key, version
+    )
     return attempt, attempt / "run_result.json"
+
+
+def _attempt_candidates(attempts_dir: Path, cache_key: str) -> list[tuple[int, Path]]:
+    pattern = re.compile(rf"^{re.escape(cache_key)}(?:\.attempt-([0-9]{{4}}))?$")
+    candidates: list[tuple[int, Path]] = []
+    with os.scandir(attempts_dir) as entries:
+        for entry in entries:
+            match = pattern.fullmatch(entry.name)
+            if match is None:
+                continue
+            version = 1 if match.group(1) is None else int(match.group(1))
+            candidates.append((version, Path(entry.path)))
+    return sorted(candidates)
 
 
 def _formal_failure(
@@ -786,20 +872,30 @@ def _formal_failure(
 
 
 def _fallback_material(
-    manifest: Mapping[str, Any], case: Mapping[str, Any], adapter: AdapterProtocol, manifest_sha: str
+    manifest: Mapping[str, Any],
+    case: Mapping[str, Any],
+    adapter: AdapterProtocol,
+    manifest_sha: str,
+    timeout_seconds: float,
 ) -> tuple[str, dict[str, str], list[str]]:
     zero = "0" * 64
+    timeout = _normalized_timeout(timeout_seconds)
+    logical = ["<unavailable>", _policy_marker(timeout)]
     hashes = {
         "package_sha256": str(case.get("expected_sha256", zero)),
         "annotation_sha256": str(case.get("annotation_sha256", zero)),
         "runner_sha256": zero,
-        "command_sha256": zero,
+        "command_sha256": _canonical_sha(logical),
         "environment_sha256": zero,
         "manifest_sha256": manifest_sha,
     }
-    logical = ["<unavailable>"]
     key = _canonical_sha(
-        {"benchmark": manifest.get("benchmark_id"), "case": case.get("case_id"), "failure": hashes}
+        {
+            "benchmark": manifest.get("benchmark_id"),
+            "case": case.get("case_id"),
+            "failure": hashes,
+            "execution_policy": {"timeout_seconds": timeout},
+        }
     )
     return key, hashes, logical
 
@@ -820,8 +916,9 @@ def run_benchmark(
     from .registry import load_manifest, resolve_case_paths, verify_frozen_case
 
     manifest_file = Path(manifest_path)
-    manifest = load_manifest(manifest_file, require_frozen=True)
+    manifest = load_manifest(manifest_file, require_frozen=True, resolve_paths=False)
     selected = _select_cases(manifest, case_ids)
+    timeout = _normalized_timeout(timeout_seconds)
     registry = _adapter_registry(adapters)
     if adapter_name not in registry:
         raise CliError(f"Unknown adapter {adapter_name!r}; available: {sorted(registry)!r}")
@@ -833,7 +930,9 @@ def run_benchmark(
 
     for case in selected:
         case_id = str(case["case_id"])
-        cache_key, hashes, logical = _fallback_material(manifest, case, adapter, manifest_sha)
+        cache_key, hashes, logical = _fallback_material(
+            manifest, case, adapter, manifest_sha, timeout
+        )
         cache_status = "fresh"
         staging: Path | None = None
         latest_path: str | None = None
@@ -843,7 +942,7 @@ def run_benchmark(
             package, _ = resolve_case_paths(manifest_file.parent, dict(case))
             probe = adapter.build_command(package=package, case=case, output="{staging_output}")
             cache_key, hashes, logical = _cache_material(
-                manifest, case, adapter, probe, manifest_sha
+                manifest, case, adapter, probe, manifest_sha, timeout
             )
 
             case_dir = _ensure_real_directory(runs, Path("cases") / case_id)
@@ -854,16 +953,15 @@ def run_benchmark(
             prior_success = _valid_prior_current(
                 current, runs=runs, case_id=case_id, package_root=package
             )
-            cache_status = "invalidated" if current.exists() else "fresh"
-            attempt_rel, result_rel = _attempt_paths(case_id, cache_key)
-            attempt_dir = attempts_dir / cache_key
-
-            if attempt_dir.is_symlink():
-                raise CliError(f"Immutable attempt path is a symlink for case {case_id!r}")
-            if attempt_dir.exists():
+            candidates = _attempt_candidates(attempts_dir, cache_key)
+            cache_status = "invalidated" if current.exists() or candidates else "fresh"
+            valid_successes: list[tuple[int, Path, dict[str, Any]]] = []
+            for version, candidate in candidates:
+                if candidate.is_symlink():
+                    raise CliError(f"Immutable attempt path is a symlink for case {case_id!r}")
                 try:
                     cached = _validate_attempt(
-                        attempt_dir / "run_result.json",
+                        candidate / "run_result.json",
                         runs=runs,
                         case_id=case_id,
                         expected_key=cache_key,
@@ -872,32 +970,38 @@ def run_benchmark(
                         package_root=package,
                     )
                 except Exception:
-                    _archive_attempt(attempt_dir, kind="quarantine")
+                    _archive_attempt(candidate, kind="quarantine")
                     cache_status = "invalidated"
                 else:
                     if cached["status"] == "success":
-                        repaired = dict(cached)
-                        repaired["cache_status"] = "reused"
-                        _write_json_atomic(current, repaired)
-                        latest_path = result_rel.as_posix()
-                        latest_status = "success"
-                        cache_status = "reused"
-                        summary_cases.append(
-                            {
-                                "case_id": case_id,
-                                "cache_status": cache_status,
-                                "status": latest_status,
-                                "run_result": latest_path,
-                            }
-                        )
-                        continue
-                    _archive_attempt(attempt_dir, kind="history")
-                    cache_status = "invalidated"
+                        valid_successes.append((version, candidate, cached))
+
+            if valid_successes:
+                _, successful_dir, cached = max(valid_successes, key=lambda item: item[0])
+                repaired = dict(cached)
+                repaired["cache_status"] = "reused"
+                _write_json_atomic(current, repaired)
+                latest_path = (successful_dir / "run_result.json").relative_to(runs).as_posix()
+                latest_status = "success"
+                cache_status = "reused"
+                summary_cases.append(
+                    {
+                        "case_id": case_id,
+                        "cache_status": cache_status,
+                        "status": latest_status,
+                        "run_result": latest_path,
+                    }
+                )
+                continue
+
+            next_version = max((version for version, _ in candidates), default=0) + 1
+            attempt_rel, result_rel = _attempt_paths(case_id, cache_key, next_version)
+            attempt_dir = runs / attempt_rel
 
             run_monitored = _load_run_monitored()
             staging = Path(tempfile.mkdtemp(prefix=f".staging-{case_id}-", dir=runs))
             command = adapter.build_command(package=package, case=case, output=staging)
-            runtime = run_monitored(command, _execution_cwd(adapter), timeout_seconds)
+            runtime = run_monitored(command, _execution_cwd(adapter), timeout)
 
             normalized = _empty_normalized(case_id)
             staging_error: Exception | None = None
@@ -1140,13 +1244,12 @@ def evaluate_benchmark(
 ) -> dict[str, Any]:
     """Evaluate the latest requested attempts referenced by run_summary.json."""
 
-    from .contracts import validate_contract
     from .matching import match_labels
     from .metrics import aggregate_metrics, select_evaluation_labels
     from .registry import load_manifest, resolve_case_paths, verify_frozen_case
 
     manifest_file = Path(manifest_path)
-    manifest = load_manifest(manifest_file, require_frozen=True)
+    manifest = load_manifest(manifest_file, require_frozen=True, resolve_paths=False)
     selected = _select_cases(manifest, case_ids)
     registry = _adapter_registry(adapters)
     providers = dict(assertion_providers or {})
@@ -1161,40 +1264,49 @@ def evaluate_benchmark(
     bundles: list[dict[str, Any]] = []
     for case in selected:
         case_id = str(case["case_id"])
-        verify_frozen_case(manifest_file.parent, dict(case))
-        package, annotation_path = resolve_case_paths(manifest_file.parent, dict(case))
+        _, annotation = _verified_annotation(manifest_file, case)
         summary_case = summary_by_id[case_id]
         result_path = _inside_runs(runs, summary_case["run_result"])
-        run = _validate_attempt(
-            result_path, runs=runs, case_id=case_id, package_root=package
-        )
-        if run["status"] != summary_case["status"]:
-            raise CliError(f"Run summary status mismatch for case {case_id!r}")
-        adapter_name = run["adapter"]
+        raw_run = _load_attempt_contract(result_path, runs=runs, case_id=case_id)
+        adapter_name = raw_run["adapter"]
         if adapter_name not in registry:
             raise CliError(f"No registered adapter can verify run {case_id!r}: {adapter_name!r}")
         adapter = registry[adapter_name]
         fallback_key, fallback_hashes, fallback_logical = _fallback_material(
-            manifest, case, adapter, manifest_sha
+            manifest,
+            case,
+            adapter,
+            manifest_sha,
+            _timeout_from_command(raw_run["command"]),
         )
         is_preflight_failure = (
-            run["status"] == "environment_failure"
-            and run["cache_key"] == fallback_key
-            and run["hashes"] == fallback_hashes
-            and run.get("command") == fallback_logical
+            raw_run["status"] == "environment_failure"
+            and raw_run["cache_key"] == fallback_key
+            and raw_run["hashes"] == fallback_hashes
+            and raw_run.get("command") == fallback_logical
         )
-        if not is_preflight_failure:
+        if is_preflight_failure:
+            run = _validate_attempt(result_path, runs=runs, case_id=case_id)
+        else:
+            verify_frozen_case(manifest_file.parent, dict(case))
+            package, _ = resolve_case_paths(manifest_file.parent, dict(case))
+            run = _validate_attempt(
+                result_path, runs=runs, case_id=case_id, package_root=package
+            )
             probe = adapter.build_command(package=package, case=case, output="{staging_output}")
             expected_key, expected_hashes, _ = _cache_material(
-                manifest, case, adapter, probe, manifest_sha
+                manifest,
+                case,
+                adapter,
+                probe,
+                manifest_sha,
+                _timeout_from_command(run["command"]),
             )
             if run["cache_key"] != expected_key or run["hashes"] != expected_hashes:
                 raise CliError(f"Run result cache/hash mismatch for case {case_id!r}; rerun the case")
 
-        annotation = _strict_json(annotation_path, label=f"annotation for {case_id}")
-        validate_contract("annotation.schema.json", annotation)
-        if annotation["case_id"] != case_id:
-            raise CliError(f"Annotation case_id mismatch for case {case_id!r}")
+        if run["status"] != summary_case["status"]:
+            raise CliError(f"Run summary status mismatch for case {case_id!r}")
         labels = select_evaluation_labels(case, annotation)
         match = match_labels(
             labels,
