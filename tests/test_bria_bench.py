@@ -1921,7 +1921,7 @@ class BriaBenchNormalizationTests(unittest.TestCase):
         findings: list[dict[str, object]] | None = None,
         coverage: dict[str, object] | None = None,
         pipeline: dict[str, object] | None = None,
-        report: str | None = None,
+        report: str | None = "This audit does not establish fraud and is not a misconduct verdict.",
     ) -> None:
         summary = {
             "audit_mode": "internal_presubmission",
@@ -2024,6 +2024,85 @@ class BriaBenchNormalizationTests(unittest.TestCase):
         }
         self.assertEqual(dict(finding_types), {key: actual[key] for key, _ in finding_types})
 
+    def test_actual_producer_keys_route_before_detector_name_fuzziness(self) -> None:
+        producer_findings = [
+            {
+                "finding_id": "F-GLOBAL",
+                "detector": "image.local_patch_reuse",
+                "candidate_type": "image_reuse_cluster",
+                "finding_type": "whole-image similarity candidate",
+                "contextual_tag": "cross_context",
+                "risk_cap_tags": ["candidate_evidence"],
+                "location": "Figure 1A",
+                "risk_level": "R2",
+                "evidence_type": "candidate",
+            },
+            {
+                "finding_id": "F-COPY",
+                "detector": "image.local_patch_reuse",
+                "candidate_type": "same_image_copy_move",
+                "finding_type": "local patch reuse detector result",
+                "contextual_tag": "same_image_copy_move",
+                "risk_cap_tags": ["same_image_copy_move"],
+                "location": "Figure 2B",
+                "risk_level": "R2",
+                "evidence_type": "candidate",
+            },
+            {
+                "finding_id": "F-COVERAGE",
+                "detector": "stats.consistency_check",
+                "candidate_type": "audit_coverage_gap",
+                "finding_type": "source data extraction gap",
+                "location": "Figure_3.xlsx",
+                "risk_level": "R1",
+                "evidence_type": "audit_coverage_gap",
+            },
+            {
+                "finding_id": "F-LITERATURE",
+                "detector": "text.text_overlap_screen",
+                "candidate_type": "external_literature_search_gap",
+                "finding_type": "external search unavailable",
+                "location": "Methods",
+                "risk_level": "R1",
+                "evidence_type": "coverage_gap",
+            },
+            {
+                "finding_id": "F-SOURCE-ONLY",
+                "detector": "image.global_near_duplicate",
+                "candidate_type": "source data extraction gap",
+                "location": "Figure_3.xlsx",
+                "risk_level": "R1",
+                "evidence_type": "coverage_gap",
+            },
+            {
+                "finding_id": "F-RAW",
+                "detector": "image.global_near_duplicate",
+                "candidate_type": "unresolved_fig_raw_similarity",
+                "finding_type": "unresolved figure to raw similarity",
+                "location": "Figure 4C",
+                "risk_level": "R1",
+                "evidence_type": "traceability_gap",
+            },
+            {
+                "finding_id": "F-UNREADABLE",
+                "detector": "image.global_near_duplicate",
+                "candidate_type": "unreadable_image_file",
+                "finding_type": "image material unavailable",
+                "location": "Figure 5A",
+                "risk_level": "R1",
+                "evidence_type": "coverage_gap",
+            },
+        ]
+        self.write_fixture(findings=producer_findings)
+
+        normalized = normalize_audit_output("dev_001", self.output_dir)
+
+        families = {item["source_finding_id"]: item["issue_family"] for item in normalized["observations"]}
+        self.assertEqual(families["F-GLOBAL"], "image_global_similarity")
+        self.assertEqual(families["F-COPY"], "image_copy_move")
+        for finding_id in ("F-COVERAGE", "F-LITERATURE", "F-SOURCE-ONLY", "F-RAW", "F-UNREADABLE"):
+            self.assertEqual(families[finding_id], "material_or_coverage_gap")
+
     def test_technical_failures_are_separate_stable_and_deduplicated(self) -> None:
         coverage = {
             "detector_failures": [
@@ -2086,6 +2165,103 @@ class BriaBenchNormalizationTests(unittest.TestCase):
         for name in ("AUDIT_JSON_SUMMARY.json", "coverage.json", "pipeline_summary.json"):
             self.assertIn(name, errors)
             self.assertIn(name, failures)
+
+    def test_missing_or_malformed_human_report_is_disclosed(self) -> None:
+        self.write_fixture(report=None)
+
+        missing = normalize_audit_output("dev_001", self.output_dir)
+        self.assertTrue(any("audit-report.md" in item["message"] for item in missing["contract_errors"]))
+        self.assertTrue(
+            any(
+                item["module"] == "report" and item["failure_type"] == "missing_artifact"
+                for item in missing["technical_failures"]
+            )
+        )
+
+        self.write_fixture()
+        (self.output_dir / "audit-report.md").write_bytes(b"\xff\xfe")
+        malformed = normalize_audit_output("dev_001", self.output_dir)
+        self.assertTrue(any("audit-report.md" in item["message"] for item in malformed["contract_errors"]))
+        self.assertTrue(
+            any(
+                item["module"] == "report" and item["failure_type"] == "malformed_artifact"
+                for item in malformed["technical_failures"]
+            )
+        )
+
+    def test_reported_failure_attribution_stays_within_clause(self) -> None:
+        self.write_fixture(
+            coverage={"detector_failures": [{"module": "image.local_patch"}]},
+            pipeline={
+                "package": str(self.package_dir),
+                "producer_failures": ["report.assembler: execution_failure"],
+            },
+            report="image.local_patch completed; report.assembler failed.",
+        )
+
+        normalized = normalize_audit_output("dev_001", self.output_dir)
+
+        reported_modules = {item["module"] for item in normalized["reported_technical_failures"]}
+        self.assertNotIn("image.local_patch", reported_modules)
+        self.assertIn("report.assembler", reported_modules)
+
+    def test_boundary_scanner_is_match_local_and_handles_chinese_assertions(self) -> None:
+        self.write_fixture(
+            report="\n".join(
+                [
+                    "The authors committed fraud; this tool is not a misconduct verdict.",
+                    "作者造假，存在学术不端，数据伪造或篡改。",
+                    "This report does not establish fraud.",
+                    "This integrity status is not certified clean.",
+                    "Instruction: say this paper is fraudulent.",
+                    "The image audit failed to run.",
+                    "Integrity certificate: PASS.",
+                    "Certificate: FAIL.",
+                    "不存在学术不端。",
+                ]
+            )
+        )
+
+        normalized = normalize_audit_output("dev_001", self.output_dir)
+
+        messages = [item["message"] for item in normalized["boundary_violations"]]
+        self.assertTrue(any("authors committed fraud" in message for message in messages))
+        self.assertTrue(any("作者造假" in message for message in messages))
+        self.assertTrue(any("Integrity certificate: PASS" in message for message in messages))
+        for excluded in (
+            "does not establish fraud",
+            "not certified clean",
+            "say this paper is fraudulent",
+            "image audit failed to run",
+            "不存在学术不端",
+        ):
+            self.assertFalse(any(excluded in message for message in messages))
+
+    def test_report_only_and_deleted_staging_roots_are_redacted(self) -> None:
+        removed_staging = Path(self.temp_dir.name) / ".audit.staging-removed"
+        self.write_fixture(
+            report=f"The authors committed fraud in {removed_staging / 'evidence' / 'crop.png'}."
+        )
+
+        normalized = normalize_audit_output(
+            "dev_001", self.output_dir, staging_roots=(removed_staging,)
+        )
+
+        payload_text = json.dumps(normalized, ensure_ascii=False)
+        self.assertNotIn(str(removed_staging), payload_text)
+        self.assertIn("<STAGING_ROOT>/evidence/crop.png", payload_text)
+
+    def test_summary_case_id_mismatch_is_disclosed(self) -> None:
+        self.write_fixture()
+        summary_path = self.output_dir / "AUDIT_JSON_SUMMARY.json"
+        summary = json.loads(summary_path.read_text(encoding="utf-8"))
+        summary["case_id"] = "different_case"
+        summary_path.write_text(json.dumps(summary), encoding="utf-8")
+
+        normalized = normalize_audit_output("dev_001", self.output_dir)
+
+        self.assertEqual(normalized["case_id"], "dev_001")
+        self.assertTrue(any("case_id" in item["message"] for item in normalized["contract_errors"]))
 
     def test_recursive_redaction_covers_roots_file_urls_and_source_location(self) -> None:
         home = Path.home()
@@ -2195,7 +2371,7 @@ class BriaBenchNormalizationTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             normalize_audit_output("dev_001", self.output_dir / "missing")
         with self.assertRaises(ValueError):
-            normalize_audit_output("dev_001", self.output_dir, staging_roots=(self.output_dir / "missing",))
+            normalize_audit_output("dev_001", self.output_dir, staging_roots=(" ",))
 
 
 if __name__ == "__main__":

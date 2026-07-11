@@ -20,6 +20,52 @@ _REQUIRED_ARTIFACTS = (
     "pipeline_summary.json",
 )
 _RISK_LEVELS = {"R0", "R1", "R2", "R3", "R4"}
+_PRIMARY_ROUTE_KEYS = (
+    "candidate_type",
+    "contextual_tag",
+    "risk_cap_tags",
+    "risk_caps_applied",
+    "finding_type",
+    "evidence_type",
+)
+_PRIMARY_FAMILY_VALUES = {
+    "image_reuse_cluster": "image_global_similarity",
+    "global_image_similarity": "image_global_similarity",
+    "image_global_similarity": "image_global_similarity",
+    "global_near_duplicate": "image_global_similarity",
+    "image_global_near_duplicate": "image_global_similarity",
+    "local_patch_reuse": "image_local_reuse",
+    "image_local_reuse": "image_local_reuse",
+    "same_image_copy_move": "image_copy_move",
+    "image_copy_move": "image_copy_move",
+    "keypoint_geometric_match": "image_keypoint_geometry",
+    "image_keypoint_geometry": "image_keypoint_geometry",
+    "splice_forensics_triage_signal": "image_splice_forensics_triage",
+    "image_splice_forensics_triage": "image_splice_forensics_triage",
+    "channel_metadata_verification_gap": "image_channel_metadata_gap",
+    "image_channel_metadata_gap": "image_channel_metadata_gap",
+    "stats_consistency_candidate": "statistics_or_numeric",
+    "numeric_consistency_candidate": "statistics_or_numeric",
+    "pseudoreplication": "statistics_or_numeric",
+    "text_overlap": "text_overlap",
+    "package_internal_text_overlap": "text_overlap",
+    "methodology_or_reporting": "methodology_or_reporting",
+    "methodology_readiness": "methodology_or_reporting",
+}
+_MATERIAL_ROUTE_MARKERS = (
+    "audit_coverage_gap",
+    "coverage_gap",
+    "source_data_extraction_gap",
+    "external_literature_search_gap",
+    "unresolved_fig_raw_similarity",
+    "unreadable",
+    "unsupported",
+    "missing_material",
+    "missing material",
+    "missing",
+    "completeness",
+    "material gap",
+)
 _LOCATION_FIELDS = {
     "text",
     "terms",
@@ -56,19 +102,39 @@ _BOUNDARY_TERM_PATTERNS = (
     ("author guilt", re.compile(r"\bauthor(?:s)?\s+(?:guilt|guilty)\b", re.IGNORECASE)),
     (
         "integrity conclusion",
-        re.compile(r"\b(?:pass(?:ed)?|fail(?:ed)?|clean|certified)\b", re.IGNORECASE),
+        re.compile(
+            r"\b(?:integrity|certificate|certification)\b"
+            r".{0,40}\b(?:status|check|conclusion|result|certificate|certification)\b"
+            r".{0,20}\b(?:pass(?:ed)?|fail(?:ed)?|clean|certified)\b",
+            re.IGNORECASE,
+        ),
     ),
+    (
+        "integrity conclusion",
+        re.compile(r"\b(?:certificate|certification)\s*[:=]\s*(?:pass(?:ed)?|fail(?:ed)?|clean|certified)\b", re.IGNORECASE),
+    ),
+    (
+        "integrity conclusion",
+        re.compile(r"\bmanuscript\b.{0,30}\b(?:is|status|conclusion|result)\b.{0,20}\b(?:pass(?:ed)?|fail(?:ed)?|clean|certified)\b", re.IGNORECASE),
+    ),
+    ("author misconduct", re.compile(r"作者(?:涉嫌|存在|实施|进行了)?(?:学术不端|造假|伪造|篡改|欺诈)")),
+    ("research misconduct", re.compile(r"存在学术不端")),
+    ("data falsification", re.compile(r"数据(?:造假|伪造|篡改)")),
 )
 _BOUNDARY_NEGATIONS = (
     re.compile(r"\bnot\s+(?:a\s+)?misconduct(?:\s+or\s+[a-z-]+)?\s+(?:verdict|finding|conclusion)\b", re.I),
     re.compile(r"\bnot\s+(?:evidence|proof)\s+of\s+(?:misconduct|fraud|falsification|fabrication)\b", re.I),
     re.compile(r"\bnot\s+a\s+verdict\s+of\s+(?:misconduct|fraud)\b", re.I),
     re.compile(r"\bdoes\s+not\s+(?:determine|establish|prove)\s+misconduct\b", re.I),
+    re.compile(r"\bdoes\s+not\s+(?:determine|establish|prove)\s+(?:fraud|falsification|fabrication)\b", re.I),
+    re.compile(r"\b(?:does|do|did|cannot|could not)\s+(?:find|establish|determine|prove|constitute|represent)\s+(?:misconduct|fraud|falsification|fabrication)\b", re.I),
+    re.compile(r"\b(?:(?:does|do|did)\s+not|cannot|could not)\s+(?:find|establish|determine|prove)\s+[^.!?\n]{0,60}\bauthor(?:s)?\s+(?:guilt|guilty)\b", re.I),
     re.compile(r"\bcannot\s+(?:determine|establish|prove)\s+misconduct\b", re.I),
     re.compile(r"\bno\s+findings?\s+(?:is|are)\s+not\s+a\s+clean[- ]manuscript\s+verdict\b", re.I),
     re.compile(r"\bnot\s+a\s+clean[- ]manuscript\s+verdict\b", re.I),
     re.compile(r"\bnot\s+[^.!?\n]{0,80}\b(?:misconduct|fraud)\s+(?:verdict|finding|conclusion)\b", re.I),
     re.compile(r"\bnot\s+(?:a\s+)?(?:clean|certified)\s+(?:manuscript|integrity|result|conclusion)\b", re.I),
+    re.compile(r"\bnot\s+certified\s+clean\b", re.I),
     re.compile(r"\b(?:do|does|did|should)\s+not\s+say\s+(?:fraud|fraudulent|misconduct)\b", re.I),
     re.compile(r"\bsay\s+this\s+paper\s+is\s+fraudulent\b", re.I),
     re.compile(r"\b(?:quoted|prompt[- ]?injection|manual\s+instruction|instruction)\b", re.I),
@@ -76,6 +142,8 @@ _BOUNDARY_NEGATIONS = (
     re.compile(r"(?:不能|无法|不应|不得|不要).{0,12}(?:判定|认定|说).{0,12}(?:学术不端|欺诈|造假)", re.I),
     re.compile(r"(?:没有发现|无发现).{0,12}(?:不等于|并不表示).{0,12}(?:论文)?(?:清白|无问题)", re.I),
     re.compile(r"(?:不代表|不证明|不能证明).{0,12}(?:学术不端|欺诈|造假)", re.I),
+    re.compile(r"(?:未|不曾|没有).{0,8}(?:认定|判定|证明).{0,8}(?:学术不端|欺诈|造假)", re.I),
+    re.compile(r"(?:不|未)存在学术不端", re.I),
 )
 
 
@@ -171,7 +239,7 @@ def _failure_from_value(
             module, detail = text.split(":", 1)
             module, detail = module.strip(), detail.strip()
             if module and detail:
-                return _failure_record(module, default_type if not detail else detail, text, source), False
+                return _failure_record(module, default_type if not detail else detail, text, source), True
         return _failure_record(default_module, default_type, text, source), False
     if not isinstance(value, dict):
         return None
@@ -238,9 +306,37 @@ def _string_list(value: Any) -> list[str]:
 
 
 def _issue_family(finding: dict[str, Any]) -> str:
+    primary_values: list[str] = []
+    for key in _PRIMARY_ROUTE_KEYS:
+        value = finding.get(key)
+        if isinstance(value, str):
+            primary_values.append(value)
+        elif isinstance(value, list):
+            primary_values.extend(item for item in value if isinstance(item, str))
+
+    primary_text = " ".join(primary_values).lower().replace("-", "_")
+    if any(
+        marker in primary_text or marker.replace("_", " ") in primary_text
+        for marker in _MATERIAL_ROUTE_MARKERS
+    ):
+        return "material_or_coverage_gap"
+    for value in primary_values:
+        normalized = value.strip().lower().replace("-", "_").replace(" ", "_")
+        if normalized in _PRIMARY_FAMILY_VALUES:
+            return _PRIMARY_FAMILY_VALUES[normalized]
+
     text = " ".join(
         str(finding.get(key, ""))
-        for key in ("detector", "module", "finding_type", "evidence_type")
+        for key in (
+            "detector",
+            "module",
+            "candidate_type",
+            "contextual_tag",
+            "risk_cap_tags",
+            "risk_caps_applied",
+            "finding_type",
+            "evidence_type",
+        )
     ).lower()
     if (
         "image_reuse_cluster" in text
@@ -283,7 +379,17 @@ def _issue_family(finding: dict[str, Any]) -> str:
 
 
 def _is_technical_finding(finding: dict[str, Any]) -> bool:
-    text = " ".join(str(finding.get(key, "")) for key in ("detector", "module", "finding_type", "evidence_type")).lower()
+    text = " ".join(
+        str(finding.get(key, ""))
+        for key in (
+            "detector",
+            "module",
+            "candidate_type",
+            "contextual_tag",
+            "finding_type",
+            "evidence_type",
+        )
+    ).lower()
     return bool(_TECHNICAL_WORDS.search(text))
 
 
@@ -382,25 +488,19 @@ def _boundary_violations(
     if report is not None:
         for index, line in enumerate(report.splitlines(), 1):
             if line.strip():
-                units.append(("audit-report.md", str(index), line.strip()))
+                for clause in _boundary_text_units(line):
+                    units.append(("audit-report.md", str(index), clause))
     for artifact_name, value in sorted(artifacts.items()):
         for path, text in _walk_strings(value, artifact_name):
-            units.append((artifact_name, path, text))
+            for clause in _boundary_text_units(text):
+                units.append((artifact_name, path, clause))
 
     found: dict[tuple[str, str, str, str], dict[str, str]] = {}
     for source, location, text in units:
-        lowered = text.lower()
         for term, pattern in _BOUNDARY_TERM_PATTERNS:
-            matches = list(pattern.finditer(text))
-            if not matches:
-                continue
-            if term == "integrity conclusion" and not re.search(
-                r"\b(?:integrity|audit|manuscript|review|certificate|certified)\b", lowered
-            ):
-                continue
-            if any(negative.search(text) for negative in _BOUNDARY_NEGATIONS):
-                continue
-            for match in matches:
+            for match in pattern.finditer(text):
+                if _boundary_match_is_negated(text, match):
+                    continue
                 matched_term = match.group(0)
                 key = (source, location, term, text)
                 found[key] = {
@@ -410,6 +510,57 @@ def _boundary_violations(
                     "location": location,
                 }
     return [found[key] for key in sorted(found)]
+
+
+def _boundary_text_units(text: str) -> list[str]:
+    units: list[str] = []
+    for semicolon_clause in re.split(r";+", text):
+        for sentence in re.split(r"(?<=[.!?。！？])\s+", semicolon_clause):
+            if sentence.strip():
+                units.append(sentence.strip())
+    return units
+
+
+def _boundary_match_is_negated(text: str, match: re.Match[str]) -> bool:
+    for negative in _BOUNDARY_NEGATIONS:
+        for candidate in negative.finditer(text):
+            if candidate.start() <= match.end() and match.start() <= candidate.end():
+                return True
+    return False
+
+
+def _report_clauses(report: str) -> list[str]:
+    clauses: list[str] = []
+    for line in report.splitlines():
+        if not line.strip():
+            continue
+        for semicolon_clause in re.split(r";+", line):
+            for sentence in re.split(r"(?<=[.!?。！？])\s+", semicolon_clause):
+                if sentence.strip():
+                    clauses.append(sentence.strip())
+    return clauses
+
+
+def _failure_semantics_match(record: dict[str, Any], clause: str) -> bool:
+    lowered = clause.lower()
+    failure_type = str(record.get("failure_type", "failure")).lower().replace("_", " ").replace("-", " ")
+    if failure_type in {"failure", "workstream failed", "malformed artifact", "missing artifact"} or "gap" in failure_type:
+        return bool(re.search(r"\b(?:fail(?:ed|ure)?|error|timeout|timed out|unavailable|missing|malformed)\b", lowered))
+    if failure_type in lowered:
+        return True
+    tokens = [token for token in failure_type.split() if token not in {"execution", "producer", "detector"}]
+    if "failure" in tokens or "failed" in tokens:
+        return bool(re.search(r"\b(?:fail(?:ed|ure)?|error|timeout|timed out)\b", lowered))
+    return any(token in lowered for token in tokens if len(token) > 2)
+
+
+def _report_discloses_failure(record: dict[str, Any], report: str) -> bool:
+    module = str(record.get("module", "")).lower()
+    leaf = module.rsplit(".", 1)[-1]
+    return any(
+        (module in clause.lower() or leaf in clause.lower()) and _failure_semantics_match(record, clause)
+        for clause in _report_clauses(report)
+    )
 
 
 def _discover_staging_roots(value: Any) -> list[Path]:
@@ -448,6 +599,7 @@ def _redaction_roots(
     package_root: Path | None,
     staging_roots: tuple[Path, ...],
     artifacts: dict[str, dict[str, Any]],
+    report: str | None,
 ) -> list[tuple[str, str]]:
     roots: dict[str, str] = {}
 
@@ -463,6 +615,9 @@ def _redaction_roots(
         add_root(root, "<STAGING_ROOT>")
     for value in artifacts.values():
         for root in _discover_staging_roots(value):
+            add_root(root, "<STAGING_ROOT>")
+    if report is not None:
+        for root in _discover_staging_roots(report):
             add_root(root, "<STAGING_ROOT>")
     return list(roots.items())
 
@@ -482,7 +637,7 @@ def normalize_audit_output(
     if isinstance(staging_roots, (str, bytes)):
         raise ValueError("staging_roots must be an iterable of paths")
     try:
-        staging_paths = tuple(_path_value(root, "staging root") for root in staging_roots)
+        staging_paths = tuple(_path_value(root, "staging root", must_exist=False) for root in staging_roots)
     except TypeError as exc:
         raise ValueError("staging_roots must be an iterable of paths") from exc
 
@@ -495,20 +650,29 @@ def normalize_audit_output(
             artifacts[name] = value
     report: str | None = None
     report_path = output_path / "audit-report.md"
-    if report_path.exists():
-        if not report_path.is_file():
-            message = "Malformed optional producer artifact audit-report.md: expected a file."
+    if not report_path.exists():
+        message = "Missing required human producer artifact: audit-report.md."
+        _add_contract_error(contract_errors, message, "audit-report.md")
+        technical_entries.append((_failure_record("report", "missing_artifact", message, "audit-report.md"), False))
+    elif not report_path.is_file():
+        message = "Malformed human producer artifact audit-report.md: expected a file."
+        _add_contract_error(contract_errors, message, "audit-report.md")
+        technical_entries.append((_failure_record("report", "malformed_artifact", message, "audit-report.md"), False))
+    else:
+        try:
+            report = report_path.read_text(encoding="utf-8")
+        except (OSError, UnicodeError) as exc:
+            message = f"Malformed human producer artifact audit-report.md: {type(exc).__name__}."
             _add_contract_error(contract_errors, message, "audit-report.md")
             technical_entries.append((_failure_record("report", "malformed_artifact", message, "audit-report.md"), False))
-        else:
-            try:
-                report = report_path.read_text(encoding="utf-8")
-            except (OSError, UnicodeError) as exc:
-                message = f"Malformed optional producer artifact audit-report.md: {type(exc).__name__}."
-                _add_contract_error(contract_errors, message, "audit-report.md")
-                technical_entries.append((_failure_record("report", "malformed_artifact", message, "audit-report.md"), False))
 
     summary = artifacts.get("AUDIT_JSON_SUMMARY.json")
+    if summary is not None and summary.get("case_id") not in (None, "", case_id):
+        message = (
+            "Producer case_id does not match requested case_id: "
+            f"{summary.get('case_id')!r} != {case_id!r}."
+        )
+        _add_contract_error(contract_errors, message, "AUDIT_JSON_SUMMARY.json.case_id")
     if summary is not None and "findings" not in summary:
         message = "Malformed producer artifact AUDIT_JSON_SUMMARY.json: findings is required."
         _add_contract_error(contract_errors, message, "AUDIT_JSON_SUMMARY.json.findings")
@@ -571,13 +735,8 @@ def normalize_audit_output(
     observed_failures, disclosed_ids = _dedupe_failures(technical_entries)
     report_disclosed: set[tuple[Any, ...]] = set()
     if report:
-        report_lower = report.lower()
         for record in observed_failures:
-            module = str(record["module"]).lower()
-            failure_type = str(record.get("failure_type", "")).lower().replace("_", " ")
-            module_match = module in report_lower or module.rsplit(".", 1)[-1] in report_lower
-            failure_match = failure_type in report_lower or any(word in report_lower for word in ("failed", "failure", "error", "timeout", "timed out"))
-            if module_match and failure_match:
+            if _report_discloses_failure(record, report):
                 report_disclosed.add(_failure_identity(record))
     all_disclosed = disclosed_ids | report_disclosed
     reported_failures = [
@@ -594,7 +753,7 @@ def normalize_audit_output(
                 package_discovered = Path(candidate).absolute()
             except (OSError, RuntimeError, ValueError):
                 package_discovered = None
-    roots = _redaction_roots(output_path, package_discovered, staging_paths, artifacts)
+    roots = _redaction_roots(output_path, package_discovered, staging_paths, artifacts, report)
     payload: dict[str, Any] = {
         "case_id": case_id,
         "observations": sorted(normalized_observations, key=_canonical),
