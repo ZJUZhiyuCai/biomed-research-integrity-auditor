@@ -7,6 +7,7 @@ import random
 import re
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import tempfile
@@ -288,6 +289,21 @@ class BriaBenchLegacyRegressionTests(unittest.TestCase):
             )
         )
 
+    def tree_snapshot(self, root: Path) -> dict[str, tuple[str, bytes | str | None]]:
+        snapshot: dict[str, tuple[str, bytes | str | None]] = {}
+        for path in (root, *sorted(root.rglob("*"))):
+            relative = "." if path == root else path.relative_to(root).as_posix()
+            metadata = path.lstat()
+            if stat.S_ISLNK(metadata.st_mode):
+                snapshot[relative] = ("symlink", os.readlink(path))
+            elif stat.S_ISDIR(metadata.st_mode):
+                snapshot[relative] = ("directory", None)
+            elif stat.S_ISREG(metadata.st_mode):
+                snapshot[relative] = ("file", path.read_bytes())
+            else:
+                snapshot[relative] = ("other", None)
+        return snapshot
+
     def test_committed_collection_is_exact_portable_and_regression_only(self) -> None:
         source = load_manifest(BRIA_BENCH_ROOT / "benchmark_manifest.source.json")
         frozen = load_manifest(
@@ -463,6 +479,74 @@ class BriaBenchLegacyRegressionTests(unittest.TestCase):
                     + "\n"
                 ).encode("utf-8")
                 self.assertEqual(content, canonical, relative)
+
+    def test_materialization_rejects_symlinked_cases_ancestor_without_touching_victim(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            output = root / "output"
+            victim = root / "outside-victim"
+            output.mkdir()
+            (victim / "regression").mkdir(parents=True)
+            sentinel = victim / "regression" / "sentinel.bin"
+            sentinel.write_bytes(b"leave this byte-for-byte untouched\x00\xff")
+            try:
+                (output / "cases").symlink_to(victim, target_is_directory=True)
+            except (NotImplementedError, OSError) as exc:
+                self.skipTest(f"symlink creation unavailable: {exc}")
+            before = self.tree_snapshot(root)
+
+            with self.assertRaises(LegacyRegressionError):
+                expand_legacy_regression(LEGACY_EVAL_ROOT, output)
+
+            self.assertEqual(self.tree_snapshot(root), before)
+            self.assertEqual(sentinel.read_bytes(), b"leave this byte-for-byte untouched\x00\xff")
+
+    def test_all_owned_output_paths_are_preflighted_before_any_mutation(self) -> None:
+        variants = (
+            ("cases/regression", "directory_symlink"),
+            ("cases/regression/README.md", "file_symlink"),
+            ("annotations", "regular_file"),
+            ("annotations/regression", "directory_symlink"),
+            ("annotations/dev", "directory_symlink"),
+            ("annotations/dev/.gitkeep", "file_symlink"),
+            ("results", "directory_symlink"),
+            ("results/.gitkeep", "file_symlink"),
+            ("benchmark_manifest.source.json", "file_symlink"),
+            ("benchmark_manifest.json", "file_symlink"),
+        )
+        for relative, kind in variants:
+            with self.subTest(path=relative, kind=kind), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                output = root / "output"
+                victim = root / "outside-victim"
+                output.mkdir()
+                victim.mkdir()
+                victim_file = victim / "sentinel.bin"
+                victim_file.write_bytes(b"outside sentinel")
+                target = output / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                if not relative.startswith("cases/"):
+                    (output / "cases" / "regression").mkdir(parents=True)
+                    (output / "cases" / "regression" / "preserve.txt").write_bytes(
+                        b"must survive late preflight failure"
+                    )
+                try:
+                    if kind == "directory_symlink":
+                        target.symlink_to(victim, target_is_directory=True)
+                    elif kind == "file_symlink":
+                        target.symlink_to(victim_file)
+                    else:
+                        target.write_bytes(b"not a directory")
+                except (NotImplementedError, OSError) as exc:
+                    self.skipTest(f"unsafe fixture creation unavailable: {exc}")
+                before = self.tree_snapshot(root)
+
+                with self.assertRaises(LegacyRegressionError):
+                    expand_legacy_regression(LEGACY_EVAL_ROOT, output)
+
+                self.assertEqual(self.tree_snapshot(root), before)
 
     def test_strict_import_rejects_duplicate_unknown_malformed_and_identity_errors(
         self,
@@ -5812,6 +5896,124 @@ class BriaBenchCliTests(unittest.TestCase):
             overridden["detection"]["regression_assertions"],
             {"met": 1, "not_met": 0, "total": 1},
         )
+
+    def test_case_004_cannot_redirect_legacy_summary_and_report_to_turn_assertion_met(
+        self,
+    ) -> None:
+        runs = self.root / "case-004-reviewer-repro"
+        summary = run_benchmark(
+            BRIA_BENCH_ROOT / "benchmark_manifest.json",
+            runs,
+            case_ids=["case_004"],
+            adapter_name="full",
+            timeout_seconds=300,
+        )
+        self.assertEqual(summary["cases"][0]["status"], "success")
+        initial = evaluate_benchmark(
+            BRIA_BENCH_ROOT / "benchmark_manifest.json",
+            runs,
+            self.root / "case-004-initial.json",
+            case_ids=["case_004"],
+        )
+        self.assertEqual(
+            initial["detection"]["regression_assertions"],
+            {"met": 0, "not_met": 1, "total": 1},
+        )
+
+        annotation = self.annotation_payload(BRIA_BENCH_ROOT, "case_004")
+        side_summary = {
+            "case_id": "case_004",
+            "overall_risk": "R3",
+            "misconduct_verdict_present": False,
+            "findings": [
+                {
+                    "finding_id": "SIDE-1",
+                    "finding_type": "image_reuse_cluster",
+                    "risk_level": "R3",
+                    "location": "Figure 2B / Figure 4D",
+                    "evidence_type": "flip_h cross_context_reuse_candidate",
+                    "benign_explanations_considered": ["same field"],
+                    "required_materials_to_resolve": ["figure assembly"],
+                    "recommended_action": "Review the source assembly.",
+                }
+            ],
+        }
+        side_report = "Review the source assembly."
+        self.assertTrue(
+            evaluate_legacy_contract(
+                annotation["legacy_regression_contract"], side_summary, side_report
+            )
+        )
+        side = runs / "side-files"
+        side.mkdir()
+        side_summary_path = side / "AUDIT_JSON_SUMMARY.json"
+        side_report_path = side / "audit-report.md"
+        side_summary_path.write_text(json.dumps(side_summary), encoding="utf-8")
+        side_report_path.write_text(side_report, encoding="utf-8")
+
+        result_path = runs / summary["cases"][0]["run_result"]
+        tampered = json.loads(result_path.read_text(encoding="utf-8"))
+        tampered["output_paths"]["audit_summary"] = side_summary_path.relative_to(
+            runs
+        ).as_posix()
+        tampered["output_paths"]["report"] = side_report_path.relative_to(
+            runs
+        ).as_posix()
+        result_path.write_text(json.dumps(tampered), encoding="utf-8")
+
+        with self.assertRaisesRegex(CliError, "canonical|case_output"):
+            evaluate_benchmark(
+                BRIA_BENCH_ROOT / "benchmark_manifest.json",
+                runs,
+                self.root / "case-004-tampered.json",
+                case_ids=["case_004"],
+            )
+
+    def annotation_payload(self, root: Path, case_id: str) -> dict[str, Any]:
+        return json.loads(
+            (root / "annotations" / "regression" / f"{case_id}.json").read_text(
+                encoding="utf-8"
+            )
+        )
+
+    def test_nonlegacy_attempt_cannot_redirect_any_case_output_artifact(self) -> None:
+        summary = run_benchmark(
+            self.manifest,
+            self.runs,
+            adapter_name="fake",
+            adapters={"fake": self.adapter},
+        )
+        result_path = self.runs / summary["cases"][0]["run_result"]
+        original = json.loads(result_path.read_text(encoding="utf-8"))
+        side = self.runs / "side-files"
+        side.mkdir()
+        artifact_keys = (
+            "audit_summary",
+            "coverage",
+            "pipeline_summary",
+            "report",
+            "normalized_observation",
+            "stdout_log",
+            "stderr_log",
+        )
+        for key in artifact_keys:
+            with self.subTest(key=key):
+                source = self.runs / original["output_paths"][key]
+                redirected = side / key
+                redirected.write_bytes(source.read_bytes())
+                tampered = copy.deepcopy(original)
+                tampered["output_paths"][key] = redirected.relative_to(
+                    self.runs
+                ).as_posix()
+                result_path.write_text(json.dumps(tampered), encoding="utf-8")
+                with self.assertRaisesRegex(CliError, "canonical|case_output"):
+                    evaluate_benchmark(
+                        self.manifest,
+                        self.runs,
+                        self.root / f"redirected-{key}.json",
+                        adapters={"fake": self.adapter},
+                    )
+                result_path.write_text(json.dumps(original), encoding="utf-8")
 
     def test_module_help_and_entry_point_metadata(self) -> None:
         self.assertEqual(bria_bench_main(["--help"]), 0)

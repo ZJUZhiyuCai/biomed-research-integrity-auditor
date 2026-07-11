@@ -31,6 +31,15 @@ _REQUIRED_PRODUCER_FILES = (
     "audit-report.md",
 )
 _HARNESS_ARTIFACTS = frozenset({"normalized_observation.json", "stdout.log", "stderr.log"})
+_CASE_OUTPUT_ARTIFACTS = {
+    "audit_summary": "AUDIT_JSON_SUMMARY.json",
+    "coverage": "coverage.json",
+    "pipeline_summary": "pipeline_summary.json",
+    "report": "audit-report.md",
+    "normalized_observation": "normalized_observation.json",
+    "stdout_log": "stdout.log",
+    "stderr_log": "stderr.log",
+}
 _RUNNER_SUFFIXES = frozenset({".json", ".md", ".py", ".toml", ".yaml", ".yml"})
 _DEPENDENCIES = {
     "numpy": ("numpy",),
@@ -676,24 +685,47 @@ def _validate_attempt(
     paths = payload["output_paths"]
     for value in paths.values():
         _inside_runs(runs, value, require_exists=False)
-    normalized_path_value = paths.get("normalized_observation")
-    if normalized_path_value is None:
+    output_value = paths.get("case_output")
+    if output_value is None:
         if payload["status"] == "success":
-            raise CliError(f"Successful attempt lacks normalized artifact for case {case_id!r}")
+            raise CliError(f"Successful attempt lacks producer output for case {case_id!r}")
+        if set(paths) != {"run_result"}:
+            raise CliError(
+                f"Artifact-free attempt has noncanonical output paths for case {case_id!r}"
+            )
         return payload
-    normalized_path = _inside_runs(runs, normalized_path_value)
+
+    output_relative = _safe_relative(output_value)
+    attempt_relative = path.relative_to(runs)
+    expected_paths = {
+        "case_output": output_relative.as_posix(),
+        "run_result": attempt_relative.as_posix(),
+        **{
+            key: (output_relative / filename).as_posix()
+            for key, filename in _CASE_OUTPUT_ARTIFACTS.items()
+        },
+    }
+    if output_relative.parent != attempt_relative.parent:
+        raise CliError(
+            f"case_output is not in the canonical attempt directory for case {case_id!r}"
+        )
+    if set(paths) != set(expected_paths):
+        raise CliError(f"Attempt has noncanonical artifact path keys for case {case_id!r}")
+    for key, expected in expected_paths.items():
+        if paths[key] != expected:
+            raise CliError(
+                f"Attempt artifact {key!r} is not the canonical child of case_output "
+                f"for case {case_id!r}"
+            )
+
+    output = _inside_runs(runs, output_relative)
+    normalized_path = _inside_runs(runs, paths["normalized_observation"])
     if normalized_path.is_symlink() or not normalized_path.is_file():
         raise CliError(f"Normalized artifact is unsafe for case {case_id!r}")
     normalized = _strict_json(normalized_path, label=f"normalized observation for {case_id}")
     if normalized != payload["normalized_observation"]:
         raise CliError(f"Normalized artifact differs from run result for case {case_id!r}")
 
-    output_value = paths.get("case_output")
-    if output_value is None:
-        if payload["status"] == "success":
-            raise CliError(f"Successful attempt lacks producer output for case {case_id!r}")
-        return payload
-    output = _inside_runs(runs, output_value)
     _reject_symlink_tree(output, label="published producer output")
     digest_match = re.fullmatch(r"output-([a-f0-9]{64})", output.name)
     if digest_match is None or _producer_artifact_digest(output) != digest_match.group(1):

@@ -5,8 +5,10 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import os
 import shutil
 import stat
+import tempfile
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -477,23 +479,218 @@ def _canonical_json_bytes(payload: Any) -> bytes:
     ).encode("utf-8")
 
 
+def _write_bytes_atomic(path: Path, data: bytes) -> None:
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            descriptor = -1
+            stream.write(data)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    finally:
+        if descriptor != -1:
+            os.close(descriptor)
+        temporary.unlink(missing_ok=True)
+
+
 def _write_canonical_json(path: Path, payload: Any) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(_canonical_json_bytes(payload))
+    _write_bytes_atomic(path, _canonical_json_bytes(payload))
 
 
-def _replace_generated_directory(path: Path) -> None:
-    if path.is_symlink():
-        raise LegacyRegressionError(f"generated path must not be a symlink: {path}")
-    if path.exists():
-        if not path.is_dir():
-            raise LegacyRegressionError(f"generated path must be a directory: {path}")
+def _inspect_expected_output_path(
+    destination: Path, relative: Path, *, directory: bool
+) -> None:
+    current = destination
+    for index, component in enumerate(relative.parts):
+        current /= component
+        try:
+            metadata = current.lstat()
+        except FileNotFoundError:
+            return
+        except OSError as exc:
+            raise LegacyRegressionError(
+                f"could not inspect generated output path: {current}"
+            ) from exc
+        if stat.S_ISLNK(metadata.st_mode):
+            raise LegacyRegressionError(
+                f"generated output path must not contain a symlink: {current}"
+            )
+        expected_directory = index < len(relative.parts) - 1 or directory
+        if expected_directory and not stat.S_ISDIR(metadata.st_mode):
+            raise LegacyRegressionError(
+                f"generated output path component must be a directory: {current}"
+            )
+        if not expected_directory and not stat.S_ISREG(metadata.st_mode):
+            raise LegacyRegressionError(
+                f"generated output path must be a regular file: {current}"
+            )
+
+
+def _inspect_replaced_tree(path: Path) -> None:
+    try:
+        metadata = path.lstat()
+    except FileNotFoundError:
+        return
+    except OSError as exc:
+        raise LegacyRegressionError(
+            f"could not inspect generated tree: {path}"
+        ) from exc
+    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
+        raise LegacyRegressionError(
+            f"generated tree must be an actual directory: {path}"
+        )
+    stack = [path]
+    while stack:
+        directory = stack.pop()
+        try:
+            with os.scandir(directory) as entries:
+                children = list(entries)
+        except OSError as exc:
+            raise LegacyRegressionError(
+                f"could not inspect generated tree: {directory}"
+            ) from exc
+        for entry in children:
+            child = Path(entry.path)
+            try:
+                child_metadata = entry.stat(follow_symlinks=False)
+            except OSError as exc:
+                raise LegacyRegressionError(
+                    f"could not inspect generated tree entry: {child}"
+                ) from exc
+            if stat.S_ISLNK(child_metadata.st_mode):
+                raise LegacyRegressionError(
+                    f"generated tree must not contain a symlink: {child}"
+                )
+            if stat.S_ISDIR(child_metadata.st_mode):
+                stack.append(child)
+            elif not stat.S_ISREG(child_metadata.st_mode):
+                raise LegacyRegressionError(
+                    f"generated tree contains an unsupported entry: {child}"
+                )
+
+
+def _preflight_output(destination: Path, source: Path) -> None:
+    directory_paths = {
+        Path("cases"),
+        Path("cases/regression"),
+        Path("annotations"),
+        Path("annotations/regression"),
+        Path("annotations/dev"),
+        Path("results"),
+    }
+    file_paths = {
+        Path("cases/regression/README.md"),
+        Path("annotations/dev/.gitkeep"),
+        Path("results/.gitkeep"),
+        Path("benchmark_manifest.source.json"),
+        Path("benchmark_manifest.json"),
+    }
+    for case_id in CASE_IDS:
+        source_package = source / "cases" / case_id
+        destination_package = Path("cases/regression") / case_id
+        directory_paths.add(destination_package)
+        for entry in source_package.rglob("*"):
+            relative = destination_package / entry.relative_to(source_package)
+            metadata = entry.lstat()
+            if stat.S_ISDIR(metadata.st_mode):
+                directory_paths.add(relative)
+            elif stat.S_ISREG(metadata.st_mode):
+                file_paths.add(relative)
+        file_paths.add(Path("annotations/regression") / f"{case_id}.json")
+
+    for relative in sorted(
+        directory_paths, key=lambda item: (len(item.parts), item.as_posix())
+    ):
+        _inspect_expected_output_path(destination, relative, directory=True)
+    for relative in sorted(
+        file_paths, key=lambda item: (len(item.parts), item.as_posix())
+    ):
+        _inspect_expected_output_path(destination, relative, directory=False)
+    _inspect_replaced_tree(destination / "cases" / "regression")
+    _inspect_replaced_tree(destination / "annotations" / "regression")
+
+
+def _ensure_output_directory(destination: Path, relative: Path) -> Path:
+    current = destination
+    for component in relative.parts:
+        current /= component
+        try:
+            metadata = current.lstat()
+        except FileNotFoundError:
+            try:
+                current.mkdir()
+                metadata = current.lstat()
+            except OSError as exc:
+                raise LegacyRegressionError(
+                    f"could not create generated output directory: {current}"
+                ) from exc
+        except OSError as exc:
+            raise LegacyRegressionError(
+                f"could not inspect generated output directory: {current}"
+            ) from exc
+        if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
+            raise LegacyRegressionError(
+                f"generated output directory must be an actual directory: {current}"
+            )
+    return current
+
+
+def _owned_output_file(destination: Path, relative: Path) -> Path:
+    parent = _ensure_output_directory(destination, relative.parent)
+    path = parent / relative.name
+    try:
+        metadata = path.lstat()
+    except FileNotFoundError:
+        return path
+    except OSError as exc:
+        raise LegacyRegressionError(
+            f"could not inspect generated output file: {path}"
+        ) from exc
+    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
+        raise LegacyRegressionError(
+            f"generated output file must be an actual regular file: {path}"
+        )
+    return path
+
+
+def _replace_generated_directory(destination: Path, relative: Path) -> Path:
+    parent = _ensure_output_directory(destination, relative.parent)
+    path = parent / relative.name
+    try:
+        metadata = path.lstat()
+    except FileNotFoundError:
+        metadata = None
+    except OSError as exc:
+        raise LegacyRegressionError(
+            f"could not inspect generated directory: {path}"
+        ) from exc
+    if metadata is not None:
+        if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
+            raise LegacyRegressionError(
+                f"generated path must be an actual directory: {path}"
+            )
+        _inspect_replaced_tree(path)
         shutil.rmtree(path)
-    path.mkdir(parents=True)
+    try:
+        path.mkdir()
+        metadata = path.lstat()
+    except OSError as exc:
+        raise LegacyRegressionError(
+            f"could not create generated directory: {path}"
+        ) from exc
+    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
+        raise LegacyRegressionError(
+            f"generated path must be an actual directory: {path}"
+        )
+    return path
 
 
 def _copy_package(source: Path, destination: Path, *, expected_sha256: str) -> None:
-    destination.mkdir(parents=True)
+    destination.mkdir()
     entries = sorted(
         source.rglob("*"), key=lambda path: (len(path.parts), path.as_posix())
     )
@@ -504,9 +701,8 @@ def _copy_package(source: Path, destination: Path, *, expected_sha256: str) -> N
         if stat.S_ISLNK(metadata.st_mode):
             raise LegacyRegressionError(f"legacy package contains a symlink: {entry}")
         if stat.S_ISDIR(metadata.st_mode):
-            target.mkdir(exist_ok=True)
+            target.mkdir()
         elif stat.S_ISREG(metadata.st_mode):
-            target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(entry.read_bytes())
         else:
             raise LegacyRegressionError(
@@ -525,9 +721,15 @@ def _copy_package(source: Path, destination: Path, *, expected_sha256: str) -> N
 def _validated_root(value: Path | str, *, label: str, create: bool = False) -> Path:
     try:
         path = Path(value)
-        if create:
-            path.mkdir(parents=True, exist_ok=True)
-        metadata = path.lstat()
+        try:
+            metadata = path.lstat()
+        except FileNotFoundError:
+            if not create:
+                raise
+            parent = _validated_root(path.parent, label=f"{label} parent", create=True)
+            path = parent / path.name
+            path.mkdir()
+            metadata = path.lstat()
         if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
             raise LegacyRegressionError(f"{label} must be an actual directory: {path}")
         return path.resolve(strict=True)
@@ -556,10 +758,11 @@ def expand_legacy_regression(
     _validate_source_inventory(source)
 
     loaded = {case_id: _load_label(source, case_id) for case_id in CASE_IDS}
-    cases_root = destination / "cases" / "regression"
-    annotations_root = destination / "annotations" / "regression"
-    _replace_generated_directory(cases_root)
-    _replace_generated_directory(annotations_root)
+    _preflight_output(destination, source)
+    cases_root = _replace_generated_directory(destination, Path("cases/regression"))
+    annotations_root = _replace_generated_directory(
+        destination, Path("annotations/regression")
+    )
 
     manifest_cases = []
     for case_id in CASE_IDS:
@@ -579,11 +782,14 @@ def expand_legacy_regression(
         _write_canonical_json(annotations_root / f"{case_id}.json", annotation)
         manifest_cases.append(_manifest_case(case_id))
 
-    (cases_root / "README.md").write_bytes(_FIXTURE_README.encode("utf-8"))
-    (destination / "annotations" / "dev").mkdir(parents=True, exist_ok=True)
-    (destination / "annotations" / "dev" / ".gitkeep").write_bytes(b"")
-    (destination / "results").mkdir(parents=True, exist_ok=True)
-    (destination / "results" / ".gitkeep").write_bytes(b"")
+    _write_bytes_atomic(
+        _owned_output_file(destination, Path("cases/regression/README.md")),
+        _FIXTURE_README.encode("utf-8"),
+    )
+    _write_bytes_atomic(
+        _owned_output_file(destination, Path("annotations/dev/.gitkeep")), b""
+    )
+    _write_bytes_atomic(_owned_output_file(destination, Path("results/.gitkeep")), b"")
 
     source_manifest = {
         "schema_version": "1.0.0",
@@ -591,8 +797,10 @@ def expand_legacy_regression(
         "benchmark_version": "0.1.0",
         "cases": manifest_cases,
     }
-    source_path = destination / "benchmark_manifest.source.json"
-    frozen_path = destination / "benchmark_manifest.json"
+    source_path = _owned_output_file(
+        destination, Path("benchmark_manifest.source.json")
+    )
+    frozen_path = _owned_output_file(destination, Path("benchmark_manifest.json"))
     _write_canonical_json(source_path, source_manifest)
     try:
         freeze_manifest(source_path, frozen_path, FROZEN_AT)
