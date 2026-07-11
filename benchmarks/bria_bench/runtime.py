@@ -478,14 +478,23 @@ def run_monitored(
         reader.start()
 
     tracked: dict[Identity, _TrackedProcess] = {}
-    try:
-        root_process = psutil.Process(process.pid)
-    except (psutil.Error, OSError, TypeError, ValueError):
-        root_process = None
-    root_identity = _identity(root_process) if root_process is not None else None
-    if root_identity is not None and root_process is not None:
-        tracked[root_identity] = _TrackedProcess(root_process)
-    process_group_id = root_identity[0] if root_identity is not None and os.name == "posix" else None
+    root_process: psutil.Process | None = None
+    root_identity: Identity | None = None
+
+    def refresh_root_identity() -> None:
+        nonlocal root_process, root_identity
+        try:
+            candidate = psutil.Process(process.pid)
+        except (psutil.Error, OSError, TypeError, ValueError):
+            return
+        candidate_identity = _identity(candidate)
+        if candidate_identity is not None:
+            root_process = candidate
+            root_identity = candidate_identity
+            tracked.setdefault(candidate_identity, _TrackedProcess(candidate))
+
+    refresh_root_identity()
+    process_group_id = process.pid if os.name == "posix" else None
 
     peak_rss = _discover_and_sample(tracked, 0)
     root_returncode: int | None = None
@@ -493,6 +502,8 @@ def run_monitored(
     cleanup_errors: list[str] = []
     deadline = started + timeout
     while True:
+        if root_returncode is None and root_identity is None:
+            refresh_root_identity()
         if root_returncode is None:
             polled = process.poll()
             if polled is not None:

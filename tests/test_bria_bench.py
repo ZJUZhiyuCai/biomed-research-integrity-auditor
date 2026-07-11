@@ -1581,6 +1581,61 @@ class BriaBenchRuntimeTests(unittest.TestCase):
         self.assert_identity_gone(int(pid_text), float(create_time_text))
 
     @unittest.skipUnless(os.name == "posix", "process group tests require POSIX")
+    def test_startup_identity_race_still_tracks_and_cleans_child(self) -> None:
+        child_code = "import signal, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(30)"
+        source = (
+            "import subprocess, sys\n"
+            f"child = subprocess.Popen([sys.executable, '-c', {child_code!r}])\n"
+            "print('child|' + str(child.pid) + '|' + str(__import__('psutil').Process(child.pid).create_time()), flush=True)\n"
+            "raise SystemExit(0)\n"
+        )
+        original_identity = runtime_module._identity
+        identity_calls = 0
+
+        def fail_initial_identity(process: object) -> tuple[int, float] | None:
+            nonlocal identity_calls
+            identity_calls += 1
+            if identity_calls == 1:
+                return None
+            return original_identity(process)  # type: ignore[arg-type]
+
+        result: RuntimeResult | None = None
+        forced_identity: tuple[int, float] | None = None
+        try:
+            with patch.object(runtime_module, "_identity", side_effect=fail_initial_identity):
+                result = self.run_python(source, timeout_seconds=0.3, tail_bytes=512)
+
+            self.assertGreaterEqual(identity_calls, 2)
+            self.assertEqual(result.status, "timeout")
+            self.assertTrue(result.timed_out)
+            self.assertTrue(result.cleanup_complete)
+            self.assertEqual(result.cleanup_errors, ())
+            child_line = next(line for line in result.stdout_tail.splitlines() if line.startswith("child|"))
+            _, pid_text, create_time_text = child_line.split("|", 2)
+            forced_identity = (int(pid_text), float(create_time_text))
+            self.assert_identity_gone(*forced_identity)
+        finally:
+            if result is not None and forced_identity is None:
+                for line in result.stdout_tail.splitlines():
+                    parts = line.split("|")
+                    if len(parts) != 3 or parts[0] != "child":
+                        continue
+                    try:
+                        forced_identity = (int(parts[1]), float(parts[2]))
+                    except ValueError:
+                        continue
+                    break
+            if forced_identity is not None:
+                pid, create_time = forced_identity
+                try:
+                    process = runtime_module.psutil.Process(pid)
+                    if process.create_time() == create_time:
+                        os.kill(pid, signal.SIGKILL)
+                except (OSError, runtime_module.psutil.Error):
+                    pass
+                self.assert_identity_gone(pid, create_time)
+
+    @unittest.skipUnless(os.name == "posix", "process group tests require POSIX")
     def test_root_exit_waits_for_finite_descendant(self) -> None:
         child_code = "import time; time.sleep(0.35)"
         source = (
