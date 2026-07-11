@@ -1,4 +1,13 @@
-"""Descriptor-relative deterministic hashing for BRIA-Bench frozen identity.
+"""Secure deterministic hashing for BRIA-Bench frozen identity.
+
+The hash is a point-in-time consistent snapshot attempt, not a filesystem
+lock. Traversal and a complete final verification pass detect mutations and
+entry changes observed during the attempt. A change after :func:`hash_tree`
+returns is outside that snapshot and must be caught by verification before use.
+
+Secure freezing currently requires POSIX ``dir_fd`` support, descriptor-relative
+``stat``/``open``, ``O_DIRECTORY``, ``O_NOFOLLOW``, and fd directory listing.
+Unsupported platforms fail closed with :class:`HashingError`.
 
 Package filenames must be NFC-normalized and casefold-unique within each
 directory so frozen packages have one portable filename interpretation.
@@ -30,30 +39,28 @@ _SECURE_HASHING_SUPPORTED = bool(
 
 
 class HashingError(ValueError):
-    """Raised when a package cannot be safely and completely hashed."""
+    """Raised when secure snapshot hashing cannot complete safely."""
 
 
 @dataclass
-class _OpenDirectory:
-    fd: int
-    name: str | None
-    parent_fd: int | None
+class _DirectoryRecord:
     relative: str
+    components: tuple[str, ...]
+    name: str | None
     initial_stat: os.stat_result
     initial_names: tuple[str, ...]
 
 
-@dataclass
-class _OpenFile:
-    fd: int
-    name: str
-    parent_fd: int
+@dataclass(frozen=True)
+class _FileRecord:
     relative: str
+    components: tuple[str, ...]
+    name: str
     initial_stat: os.stat_result
 
 
 def secure_hashing_supported() -> bool:
-    """Return whether this platform exposes the primitives secure hashing needs."""
+    """Return whether this platform exposes secure descriptor primitives."""
 
     return _SECURE_HASHING_SUPPORTED
 
@@ -61,8 +68,8 @@ def secure_hashing_supported() -> bool:
 def _require_secure_hashing() -> None:
     if not secure_hashing_supported():
         raise HashingError(
-            "Secure frozen hashing requires POSIX descriptor-relative openat, "
-            "lstat, O_DIRECTORY, O_NOFOLLOW, and fd directory enumeration support"
+            "Secure frozen hashing requires POSIX dir_fd/openat, lstat, "
+            "O_DIRECTORY, O_NOFOLLOW, and fd directory-enumeration support"
         )
 
 
@@ -73,18 +80,18 @@ def _path(value: Path | str) -> Path:
         raise HashingError(f"Invalid hashing path: {value!r}") from exc
 
 
-def _lstat(path: Path) -> os.stat_result:
-    try:
-        return path.lstat()
-    except (OSError, ValueError) as exc:
-        raise HashingError(f"Could not inspect package path: {path}") from exc
+def _path_components(path: Path) -> tuple[str, ...]:
+    components = path.parts[1:] if path.is_absolute() else path.parts
+    if any(component == ".." for component in components):
+        raise HashingError(f"Lexical '..' is not allowed in secure hashing path: {path}")
+    return tuple(component for component in components if component not in ("", "."))
 
 
-def _fstat(descriptor: int, path: str, stage: str) -> os.stat_result:
+def _stat_path(path: Path) -> os.stat_result:
     try:
-        return os.fstat(descriptor)
+        return os.stat(path, follow_symlinks=False)
     except (OSError, ValueError) as exc:
-        raise HashingError(f"Could not inspect package file {stage}: {path}") from exc
+        raise HashingError(f"Could not inspect hashing path: {path}") from exc
 
 
 def _stat_at(parent_fd: int, name: str, relative: str) -> os.stat_result:
@@ -92,6 +99,13 @@ def _stat_at(parent_fd: int, name: str, relative: str) -> os.stat_result:
         return os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
     except (OSError, ValueError) as exc:
         raise HashingError(f"Could not inspect package entry: {relative}") from exc
+
+
+def _fstat(descriptor: int, relative: str, stage: str) -> os.stat_result:
+    try:
+        return os.fstat(descriptor)
+    except (OSError, ValueError) as exc:
+        raise HashingError(f"Could not inspect package entry {stage}: {relative}") from exc
 
 
 def _stable_metadata(value: os.stat_result) -> tuple[object, ...]:
@@ -108,16 +122,6 @@ def _same_identity(left: os.stat_result, right: os.stat_result) -> bool:
     return left.st_dev == right.st_dev and left.st_ino == right.st_ino
 
 
-def _ensure_regular(value: os.stat_result, relative: str, stage: str) -> None:
-    if stat.S_ISLNK(value.st_mode) or not stat.S_ISREG(value.st_mode):
-        raise HashingError(f"Package file changed {stage}: {relative}")
-
-
-def _ensure_directory(value: os.stat_result, relative: str, stage: str) -> None:
-    if stat.S_ISLNK(value.st_mode) or not stat.S_ISDIR(value.st_mode):
-        raise HashingError(f"Package directory changed {stage}: {relative}")
-
-
 def _ensure_stable(
     before: os.stat_result,
     after: os.stat_result,
@@ -128,65 +132,84 @@ def _ensure_stable(
         raise HashingError(f"Package entry changed {stage}: {relative}")
 
 
-def _list_names(directory: _OpenDirectory) -> tuple[str, ...]:
+def _ensure_regular(value: os.stat_result, relative: str, stage: str) -> None:
+    if stat.S_ISLNK(value.st_mode) or not stat.S_ISREG(value.st_mode):
+        raise HashingError(f"Package file changed {stage}: {relative}")
+
+
+def _ensure_directory(value: os.stat_result, relative: str, stage: str) -> None:
+    if stat.S_ISLNK(value.st_mode) or not stat.S_ISDIR(value.st_mode):
+        raise HashingError(f"Package directory changed {stage}: {relative}")
+
+
+def _directory_flags() -> int:
+    return os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+
+
+def _close_fd(descriptor: int, label: str) -> None:
     try:
-        names = os.listdir(directory.fd)
+        os.close(descriptor)
+    except OSError as exc:
+        raise HashingError(f"Could not close {label}") from exc
+
+
+def _list_names(fd: int, relative: str) -> tuple[str, ...]:
+    try:
+        names = os.listdir(fd)
     except (OSError, ValueError) as exc:
         raise HashingError(
-            f"Could not enumerate directory {directory.relative or '.'} from its open fd"
+            f"Could not enumerate directory {relative or '.'} from its open fd"
         ) from exc
     if any(not isinstance(name, str) for name in names):
-        raise HashingError(f"Package filenames must be text: {directory.relative or '.'}")
+        raise HashingError(f"Package filenames must be text: {relative or '.'}")
 
     folded: dict[str, str] = {}
     for name in names:
         normalized = unicodedata.normalize("NFC", name)
         if normalized != name:
-            raise HashingError(
-                f"Package filename is not NFC-normalized: "
-                f"{directory.relative + '/' if directory.relative else ''}{name}"
-            )
+            prefix = f"{relative}/" if relative else ""
+            raise HashingError(f"Package filename is not NFC-normalized: {prefix}{name}")
         previous = folded.get(name.casefold())
         if previous is not None and previous != name:
             raise HashingError(
-                f"Package filenames casefold-collide in {directory.relative or '.'}: "
+                f"Package filenames casefold-collide in {relative or '.'}: "
                 f"{previous!r} and {name!r}"
             )
         folded[name.casefold()] = name
     return tuple(sorted(names))
 
 
-def _open_root(root: Path) -> tuple[int, os.stat_result]:
-    root_stat = _lstat(root)
-    if stat.S_ISLNK(root_stat.st_mode):
-        raise HashingError(f"Hashing root must not be a symlink: {root}")
-    if not stat.S_ISDIR(root_stat.st_mode):
-        raise HashingError(f"Hashing root must be an actual directory: {root}")
+def _relative_path(parent: str, name: str) -> str:
+    return f"{parent}/{name}" if parent else name
 
+
+def _open_anchor(path: Path) -> int:
+    anchor = os.sep if path.is_absolute() else "."
     try:
-        secure_root = root.resolve(strict=True)
-    except (OSError, RuntimeError, ValueError) as exc:
-        raise HashingError(f"Could not resolve hashing root: {root}") from exc
-    secure_root_stat = _lstat(secure_root)
-    _ensure_directory(secure_root_stat, str(root), "after resolving root")
+        return os.open(anchor, _directory_flags())
+    except (OSError, ValueError) as exc:
+        raise HashingError(f"Could not securely open filesystem anchor for {path}") from exc
 
-    directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+
+def _open_directory_component(
+    parent_fd: int,
+    name: str,
+    relative: str,
+    expected: os.stat_result | None = None,
+) -> tuple[int, os.stat_result]:
+    before = _stat_at(parent_fd, name, relative)
+    _ensure_directory(before, relative, "before open")
+    if expected is not None:
+        _ensure_stable(expected, before, relative, "before open")
     descriptor = -1
     try:
-        descriptor = os.open(os.sep, directory_flags)
-        for component in secure_root.parts[1:]:
-            next_descriptor = os.open(
-                component,
-                directory_flags,
-                dir_fd=descriptor,
-            )
-            os.close(descriptor)
-            descriptor = next_descriptor
-        opened_stat = _fstat(descriptor, str(root), "after opening root")
-        _ensure_directory(opened_stat, str(root), "after opening root")
-        if not _same_identity(secure_root_stat, opened_stat):
-            raise HashingError(f"Hashing root changed before traversal: {root}")
-        return descriptor, opened_stat
+        descriptor = os.open(name, _directory_flags(), dir_fd=parent_fd)
+        opened = _fstat(descriptor, relative, "after open")
+        _ensure_directory(opened, relative, "after open")
+        _ensure_stable(before, opened, relative, "between inspection and open")
+        if expected is not None:
+            _ensure_stable(expected, opened, relative, "after open")
+        return descriptor, opened
     except HashingError:
         if descriptor != -1:
             os.close(descriptor)
@@ -194,65 +217,164 @@ def _open_root(root: Path) -> tuple[int, os.stat_result]:
     except (OSError, ValueError) as exc:
         if descriptor != -1:
             os.close(descriptor)
-        raise HashingError(f"Could not securely open hashing root: {root}") from exc
+        raise HashingError(f"Could not securely open package directory: {relative}") from exc
 
 
-def _relative_path(parent: str, name: str) -> str:
-    return f"{parent}/{name}" if parent else name
+def _open_directory_chain(
+    path: Path,
+    expected: os.stat_result | None = None,
+) -> tuple[list[int], int, os.stat_result]:
+    path_stat = _stat_path(path)
+    _ensure_directory(path_stat, str(path), "before open")
+    components = _path_components(path)
+    descriptors: list[int] = []
+    current_fd = -1
+    try:
+        current_fd = _open_anchor(path)
+        descriptors.append(current_fd)
+        opened = _fstat(current_fd, str(path), "after opening anchor")
+        if not components:
+            _ensure_directory(opened, str(path), "after opening anchor")
+            _ensure_stable(path_stat, opened, str(path), "between inspection and open")
+        for index, component in enumerate(components):
+            relative = "/".join(components[: index + 1])
+            next_fd, opened = _open_directory_component(current_fd, component, relative)
+            descriptors.append(next_fd)
+            current_fd = next_fd
+        _ensure_stable(path_stat, opened, str(path), "after open")
+        if expected is not None:
+            _ensure_stable(expected, opened, str(path), "against expected snapshot")
+        return descriptors, current_fd, opened
+    except HashingError:
+        for descriptor in reversed(descriptors):
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+        raise
 
 
 def _walk_directory(
-    directory: _OpenDirectory,
-    directories: list[_OpenDirectory],
-    files: list[_OpenFile],
+    fd: int,
+    relative: str,
+    components: tuple[str, ...],
+    directories: list[_DirectoryRecord],
+    files: list[_FileRecord],
+    initial_stat: os.stat_result,
 ) -> None:
-    initial_names = _list_names(directory)
-    directory.initial_names = initial_names
+    initial_names = _list_names(fd, relative)
+    if directories:
+        directories[-1].initial_names = initial_names
     for name in initial_names:
-        relative = _relative_path(directory.relative, name)
-        entry_stat = _stat_at(directory.fd, name, relative)
+        child_relative = _relative_path(relative, name)
+        entry_stat = _stat_at(fd, name, child_relative)
         if stat.S_ISLNK(entry_stat.st_mode):
-            raise HashingError(f"Symlink is not allowed in frozen benchmark package: {relative}")
+            raise HashingError(f"Symlink is not allowed in frozen benchmark package: {child_relative}")
         if stat.S_ISDIR(entry_stat.st_mode):
-            directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
-            child_fd = -1
+            child_fd, child_stat = _open_directory_component(fd, name, child_relative)
+            child = _DirectoryRecord(
+                child_relative,
+                components + (name,),
+                name,
+                child_stat,
+                (),
+            )
+            directories.append(child)
             try:
-                child_fd = os.open(name, directory_flags, dir_fd=directory.fd)
-                opened_stat = _fstat(child_fd, relative, "after opening directory")
-                _ensure_directory(opened_stat, relative, "after opening directory")
-                _ensure_stable(entry_stat, opened_stat, relative, "between directory inspection and open")
-                child = _OpenDirectory(
+                _walk_directory(
                     child_fd,
-                    name,
-                    directory.fd,
-                    relative,
-                    opened_stat,
-                    (),
+                    child_relative,
+                    components + (name,),
+                    directories,
+                    files,
+                    child_stat,
                 )
-                child_fd = -1
-                directories.append(child)
-                _walk_directory(child, directories, files)
-            except HashingError:
-                if child_fd != -1:
-                    os.close(child_fd)
-                raise
-            except (OSError, ValueError) as exc:
-                if child_fd != -1:
-                    os.close(child_fd)
-                raise HashingError(f"Could not securely open package directory: {relative}") from exc
+                current = _stat_at(fd, name, child_relative)
+                _ensure_directory(current, child_relative, "after traversal")
+                _ensure_stable(child_stat, current, child_relative, "after traversal")
+            finally:
+                _close_fd(child_fd, f"directory {child_relative}")
             continue
         if not stat.S_ISREG(entry_stat.st_mode):
-            raise HashingError(f"Unsupported package entry: {relative}")
+            raise HashingError(f"Unsupported package entry: {child_relative}")
+        files.append(
+            _FileRecord(
+                child_relative,
+                components + (name,),
+                name,
+                entry_stat,
+            )
+        )
 
-        file_flags = os.O_RDONLY | os.O_NOFOLLOW
+    final_names = _list_names(fd, relative)
+    if final_names != initial_names:
+        raise HashingError(f"Package directory entries changed during traversal: {relative or '.'}")
+
+
+def _open_directory_record(
+    root: Path,
+    record: _DirectoryRecord,
+    expected_directories: dict[str, _DirectoryRecord],
+) -> tuple[list[int], int]:
+    root_record = expected_directories[""]
+    descriptors, current_fd, _ = _open_directory_chain(root, root_record.initial_stat)
+    try:
+        for index, component in enumerate(record.components):
+            relative = "/".join(record.components[: index + 1])
+            expected = expected_directories.get(relative)
+            if expected is None:
+                raise HashingError(f"Missing directory snapshot record: {relative}")
+            next_fd, _ = _open_directory_component(
+                current_fd,
+                component,
+                relative,
+                expected.initial_stat,
+            )
+            descriptors.append(next_fd)
+            current_fd = next_fd
+        return descriptors, current_fd
+    except HashingError:
+        for descriptor in reversed(descriptors):
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+        raise
+
+
+def _open_file_record(
+    root: Path,
+    record: _FileRecord,
+    expected_directories: dict[str, _DirectoryRecord],
+) -> tuple[int, list[int], int]:
+    root_record = expected_directories[""]
+    descriptors, current_fd, _ = _open_directory_chain(root, root_record.initial_stat)
+    try:
+        for index, component in enumerate(record.components[:-1]):
+            relative = "/".join(record.components[: index + 1])
+            expected = expected_directories.get(relative)
+            if expected is None:
+                raise HashingError(f"Missing directory snapshot record: {relative}")
+            next_fd, _ = _open_directory_component(
+                current_fd,
+                component,
+                relative,
+                expected.initial_stat,
+            )
+            descriptors.append(next_fd)
+            current_fd = next_fd
+
+        before = _stat_at(current_fd, record.name, record.relative)
+        _ensure_regular(before, record.relative, "before open")
+        _ensure_stable(record.initial_stat, before, record.relative, "against expected snapshot")
         file_fd = -1
         try:
-            file_fd = os.open(name, file_flags, dir_fd=directory.fd)
-            opened_stat = _fstat(file_fd, relative, "after opening")
-            _ensure_regular(opened_stat, relative, "after opening")
-            _ensure_stable(entry_stat, opened_stat, relative, "between inspection and open")
-            files.append(_OpenFile(file_fd, name, directory.fd, relative, opened_stat))
-            file_fd = -1
+            file_fd = os.open(record.name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=current_fd)
+            opened = _fstat(file_fd, record.relative, "after open")
+            _ensure_regular(opened, record.relative, "after open")
+            _ensure_stable(before, opened, record.relative, "between inspection and open")
+            _ensure_stable(record.initial_stat, opened, record.relative, "after open")
+            return file_fd, descriptors, current_fd
         except HashingError:
             if file_fd != -1:
                 os.close(file_fd)
@@ -260,184 +382,205 @@ def _walk_directory(
         except (OSError, ValueError) as exc:
             if file_fd != -1:
                 os.close(file_fd)
-            raise HashingError(f"Could not securely open package file: {relative}") from exc
-
-    final_names = _list_names(directory)
-    if final_names != initial_names:
-        raise HashingError(f"Package directory entries changed during traversal: {directory.relative or '.'}")
-
-
-def _verify_directory(directory: _OpenDirectory) -> None:
-    final_names = _list_names(directory)
-    if final_names != directory.initial_names:
-        raise HashingError(f"Package directory entries changed during traversal: {directory.relative or '.'}")
-    if directory.parent_fd is not None and directory.name is not None:
-        current = _stat_at(directory.parent_fd, directory.name, directory.relative)
-        _ensure_directory(current, directory.relative, "after traversal")
-        _ensure_stable(directory.initial_stat, current, directory.relative, "after traversal")
-
-
-def _open_file_path(path: Path) -> int:
-    """Open a file through canonical descriptor-relative parents."""
-
-    try:
-        secure_path = path.resolve(strict=True)
-    except (OSError, RuntimeError, ValueError) as exc:
-        raise HashingError(f"Could not resolve file path: {path}") from exc
-    directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
-    descriptor = -1
-    try:
-        descriptor = os.open(os.sep, directory_flags)
-        for component in secure_path.parts[1:-1]:
-            next_descriptor = os.open(component, directory_flags, dir_fd=descriptor)
-            os.close(descriptor)
-            descriptor = next_descriptor
-        file_descriptor = os.open(
-            secure_path.name,
-            os.O_RDONLY | os.O_NOFOLLOW,
-            dir_fd=descriptor,
-        )
-        os.close(descriptor)
-        return file_descriptor
+            raise HashingError(f"Could not securely open package file: {record.relative}") from exc
     except HashingError:
-        if descriptor != -1:
-            os.close(descriptor)
-        raise
-    except (OSError, ValueError) as exc:
-        if descriptor != -1:
-            os.close(descriptor)
-        raise HashingError(f"Could not securely open file path: {path}") from exc
-
-
-def _hash_open_file(digest: "hashlib._Hash", entry: _OpenFile) -> None:
-    relative = entry.relative
-    try:
-        before_stream_stat = _fstat(entry.fd, relative, "before streaming")
-        _ensure_regular(before_stream_stat, relative, "before streaming")
-        _ensure_stable(entry.initial_stat, before_stream_stat, relative, "before streaming")
-
-        encoded_path = relative.encode("utf-8")
-        digest.update(encoded_path)
-        digest.update(b"\0")
-        digest.update(str(entry.initial_stat.st_size).encode("ascii"))
-        digest.update(b"\0")
-        byte_count = 0
-        while True:
+        for descriptor in reversed(descriptors):
             try:
-                chunk = os.read(entry.fd, CHUNK_SIZE)
-            except (OSError, ValueError) as exc:
-                raise HashingError(f"Could not read package file: {relative}") from exc
-            if not chunk:
-                break
-            byte_count += len(chunk)
-            digest.update(chunk)
+                os.close(descriptor)
+            except OSError:
+                pass
+        raise
 
-        streamed_stat = _fstat(entry.fd, relative, "after streaming")
-        _ensure_regular(streamed_stat, relative, "after streaming")
-        _ensure_stable(entry.initial_stat, streamed_stat, relative, "during streaming")
-        if byte_count != entry.initial_stat.st_size or byte_count != streamed_stat.st_size:
-            raise HashingError(f"Package file byte count changed during streaming: {relative}")
-    finally:
+
+def _stream_fd(descriptor: int, digest: "hashlib._Hash", label: str) -> int:
+    count = 0
+    while True:
         try:
-            os.close(entry.fd)
-        except OSError as exc:
-            entry.fd = -1
-            raise HashingError(f"Could not close package file: {relative}") from exc
-        entry.fd = -1
+            chunk = os.read(descriptor, CHUNK_SIZE)
+        except (OSError, ValueError) as exc:
+            raise HashingError(f"Could not read {label}") from exc
+        if not chunk:
+            return count
+        count += len(chunk)
+        digest.update(chunk)
 
-    after_stat = _stat_at(entry.parent_fd, entry.name, relative)
-    _ensure_regular(after_stat, relative, "after close")
-    _ensure_stable(entry.initial_stat, after_stat, relative, "after close")
+
+def _hash_file_record(
+    digest: "hashlib._Hash",
+    record: _FileRecord,
+    file_fd: int,
+    parent_fd: int,
+) -> None:
+    try:
+        before_stream = _fstat(file_fd, record.relative, "before streaming")
+        _ensure_regular(before_stream, record.relative, "before streaming")
+        _ensure_stable(record.initial_stat, before_stream, record.relative, "before streaming")
+        digest.update(record.relative.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(str(record.initial_stat.st_size).encode("ascii"))
+        digest.update(b"\0")
+        byte_count = _stream_fd(file_fd, digest, f"package file {record.relative}")
+        streamed = _fstat(file_fd, record.relative, "after streaming")
+        _ensure_regular(streamed, record.relative, "after streaming")
+        _ensure_stable(record.initial_stat, streamed, record.relative, "during streaming")
+        if byte_count != record.initial_stat.st_size or byte_count != streamed.st_size:
+            raise HashingError(f"Package file byte count changed during streaming: {record.relative}")
+    finally:
+        _close_fd(file_fd, f"package file {record.relative}")
+    after = _stat_at(parent_fd, record.name, record.relative)
+    _ensure_regular(after, record.relative, "after close")
+    _ensure_stable(record.initial_stat, after, record.relative, "after close")
     digest.update(b"\xff")
 
 
-def _hash_file_bytes(path: Path) -> str:
-    before_stat = _lstat(path)
-    _ensure_regular(before_stat, str(path), "before open")
-    descriptor = -1
+def _close_chain(descriptors: list[int], label: str) -> None:
+    for descriptor in reversed(descriptors):
+        try:
+            os.close(descriptor)
+        except OSError as exc:
+            raise HashingError(f"Could not close {label}") from exc
+
+
+def _open_file_path(path: Path) -> tuple[int, list[int], int, os.stat_result]:
+    path_stat = _stat_path(path)
+    _ensure_regular(path_stat, str(path), "before open")
+    components = _path_components(path)
+    if not components:
+        raise HashingError(f"File path has no lexical filename: {path}")
+    parent_components = components[:-1]
+    descriptors: list[int] = []
+    current_fd = -1
     try:
-        descriptor = _open_file_path(path)
-        opened_stat = _fstat(descriptor, str(path), "after open")
-        _ensure_regular(opened_stat, str(path), "after open")
-        _ensure_stable(before_stat, opened_stat, str(path), "between inspection and open")
-        digest = hashlib.sha256()
-        byte_count = 0
-        while True:
-            try:
-                chunk = os.read(descriptor, CHUNK_SIZE)
-            except (OSError, ValueError) as exc:
-                raise HashingError(f"Could not read annotation file: {path}") from exc
-            if not chunk:
-                break
-            byte_count += len(chunk)
-            digest.update(chunk)
-        streamed_stat = _fstat(descriptor, str(path), "after streaming")
-        _ensure_regular(streamed_stat, str(path), "after streaming")
-        _ensure_stable(opened_stat, streamed_stat, str(path), "during streaming")
-        if byte_count != opened_stat.st_size:
-            raise HashingError(f"Annotation file byte count changed during streaming: {path}")
-    finally:
-        if descriptor != -1:
+        current_fd = _open_anchor(path)
+        descriptors.append(current_fd)
+        for index, component in enumerate(parent_components):
+            relative = "/".join(components[: index + 1])
+            next_fd, _ = _open_directory_component(current_fd, component, relative)
+            descriptors.append(next_fd)
+            current_fd = next_fd
+        before = _stat_at(current_fd, components[-1], str(path))
+        _ensure_regular(before, str(path), "before open")
+        _ensure_stable(path_stat, before, str(path), "between path inspection and open")
+        file_fd = -1
+        try:
+            file_fd = os.open(components[-1], os.O_RDONLY | os.O_NOFOLLOW, dir_fd=current_fd)
+            opened = _fstat(file_fd, str(path), "after open")
+            _ensure_regular(opened, str(path), "after open")
+            _ensure_stable(before, opened, str(path), "between inspection and open")
+            return file_fd, descriptors, current_fd, path_stat
+        except HashingError:
+            if file_fd != -1:
+                os.close(file_fd)
+            raise
+        except (OSError, ValueError) as exc:
+            if file_fd != -1:
+                os.close(file_fd)
+            raise HashingError(f"Could not securely open file path: {path}") from exc
+    except HashingError:
+        for descriptor in reversed(descriptors):
             try:
                 os.close(descriptor)
-            except OSError as exc:
-                raise HashingError(f"Could not close annotation file: {path}") from exc
-    after_stat = _lstat(path)
-    _ensure_regular(after_stat, str(path), "after close")
-    _ensure_stable(before_stat, after_stat, str(path), "after close")
-    return digest.hexdigest()
+            except OSError:
+                pass
+        raise
+
+
+def _hash_file_bytes(path: Path) -> str:
+    file_fd, descriptors, parent_fd, path_stat = _open_file_path(path)
+    try:
+        digest = hashlib.sha256()
+        before_stream = _fstat(file_fd, str(path), "before streaming")
+        _ensure_stable(path_stat, before_stream, str(path), "before streaming")
+        byte_count = _stream_fd(file_fd, digest, f"annotation file {path}")
+        streamed = _fstat(file_fd, str(path), "after streaming")
+        _ensure_stable(path_stat, streamed, str(path), "during streaming")
+        if byte_count != path_stat.st_size or byte_count != streamed.st_size:
+            raise HashingError(f"Annotation file byte count changed during streaming: {path}")
+    except BaseException:
+        _close_fd(file_fd, f"annotation file {path}")
+        try:
+            _close_chain(descriptors, f"annotation path {path}")
+        except HashingError:
+            pass
+        raise
+    _close_fd(file_fd, f"annotation file {path}")
+    try:
+        after = _stat_at(parent_fd, path.name, str(path))
+        _ensure_regular(after, str(path), "after close")
+        _ensure_stable(path_stat, after, str(path), "after close")
+        result = digest.hexdigest()
+    except BaseException:
+        try:
+            _close_chain(descriptors, f"annotation path {path}")
+        except HashingError:
+            pass
+        raise
+    _close_chain(descriptors, f"annotation path {path}")
+    return result
 
 
 def hash_file(path: Path | str) -> str:
-    """Stream a regular file's raw bytes into SHA-256 without parsing it."""
+    """Stream raw file bytes into SHA-256 without parsing the file."""
 
     _require_secure_hashing()
     return _hash_file_bytes(_path(path))
 
 
+def _verify_directory_record(
+    root: Path,
+    record: _DirectoryRecord,
+    expected_directories: dict[str, _DirectoryRecord],
+) -> None:
+    descriptors, fd = _open_directory_record(root, record, expected_directories)
+    try:
+        final_names = _list_names(fd, record.relative)
+        if final_names != record.initial_names:
+            raise HashingError(
+                f"Package directory entries changed during final verification: {record.relative or '.'}"
+            )
+    finally:
+        _close_chain(descriptors, f"directory {record.relative or '.'}")
+
+
 def hash_tree(root: Path | str) -> str:
-    """Return a deterministic SHA-256 digest for a secure regular-file tree."""
+    """Hash a point-in-time snapshot attempt using bounded descriptors.
+
+    Relative POSIX paths are globally sorted in the aggregate. The function
+    does not lock the filesystem or promise that a later mutation is
+    impossible; callers must run :func:`verify_frozen_case` before use.
+    """
 
     _require_secure_hashing()
     package_root = _path(root)
-    absolute_root = Path(os.path.abspath(package_root))
-    root_fd = -1
-    directories: list[_OpenDirectory] = []
-    files: list[_OpenFile] = []
+    root_stat = _stat_path(package_root)
+    _ensure_directory(root_stat, str(package_root), "before open")
+    root_descriptors, root_fd, opened_root = _open_directory_chain(package_root)
     try:
-        root_fd, root_stat = _open_root(absolute_root)
-        root_directory = _OpenDirectory(root_fd, None, None, "", root_stat, ())
-        directories.append(root_directory)
-        root_fd = -1
-        _walk_directory(root_directory, directories, files)
-
-        files.sort(key=lambda entry: entry.relative)
-        digest = hashlib.sha256()
-        for entry in files:
-            _hash_open_file(digest, entry)
-        for directory in directories:
-            _verify_directory(directory)
-
-        final_root_stat = _lstat(absolute_root)
-        _ensure_directory(final_root_stat, str(absolute_root), "after traversal")
-        if not _same_identity(root_stat, final_root_stat):
-            raise HashingError(f"Hashing root pathname changed during traversal: {absolute_root}")
-        return digest.hexdigest()
+        _ensure_stable(root_stat, opened_root, str(package_root), "after open")
+        directories = [_DirectoryRecord("", (), None, opened_root, ())]
+        files: list[_FileRecord] = []
+        _walk_directory(root_fd, "", (), directories, files, opened_root)
     finally:
-        if root_fd != -1:
-            try:
-                os.close(root_fd)
-            except OSError:
-                pass
-        for entry in files:
-            if entry.fd != -1:
-                try:
-                    os.close(entry.fd)
-                except OSError:
-                    pass
-                entry.fd = -1
-        for directory in directories:
-            try:
-                os.close(directory.fd)
-            except OSError:
-                pass
+        _close_chain(root_descriptors, f"hashing root {package_root}")
+
+    expected_directories = {record.relative: record for record in directories}
+    digest = hashlib.sha256()
+    for record in sorted(files, key=lambda item: item.relative):
+        file_fd, descriptors, parent_fd = _open_file_record(
+            package_root,
+            record,
+            expected_directories,
+        )
+        try:
+            _hash_file_record(digest, record, file_fd, parent_fd)
+        finally:
+            _close_chain(descriptors, f"file path {record.relative}")
+
+    for record in sorted(directories, key=lambda item: (len(item.components), item.relative)):
+        _verify_directory_record(package_root, record, expected_directories)
+
+    final_root = _stat_path(package_root)
+    _ensure_directory(final_root, str(package_root), "after final verification")
+    if not _same_identity(root_stat, final_root):
+        raise HashingError(f"Hashing root pathname changed during final verification: {package_root}")
+    return digest.hexdigest()

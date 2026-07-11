@@ -15,7 +15,7 @@ from jsonschema import Draft202012Validator
 import benchmarks.bria_bench.hashing as hashing_module
 from benchmarks.bria_bench import ContractError, __version__, validate_contract
 from benchmarks.bria_bench.contracts import SCHEMA_ROOT, load_schema
-from benchmarks.bria_bench.hashing import HashingError, hash_tree
+from benchmarks.bria_bench.hashing import HashingError, hash_file, hash_tree
 from benchmarks.bria_bench.registry import (
     RegistryError,
     freeze_manifest,
@@ -814,7 +814,7 @@ class BriaBenchContractTests(unittest.TestCase):
 class BriaBenchRegistryTests(unittest.TestCase):
     def setUp(self) -> None:
         self._temporary = tempfile.TemporaryDirectory()
-        self.root = Path(self._temporary.name)
+        self.root = Path(os.path.realpath(self._temporary.name))
         (self.root / "cases" / "dev_001").mkdir(parents=True)
         (self.root / "cases" / "dev_001" / "payload.bin").write_bytes(b"alpha")
         (self.root / "annotations" / "dev").mkdir(parents=True)
@@ -852,6 +852,12 @@ class BriaBenchRegistryTests(unittest.TestCase):
     def require_secure_hashing(self) -> None:
         if not hashing_module.secure_hashing_supported():
             self.skipTest("secure descriptor-relative hashing primitives are unavailable")
+
+    def test_secure_hashing_capability_gate_fails_closed(self) -> None:
+        with patch.object(hashing_module, "_SECURE_HASHING_SUPPORTED", False):
+            self.assertFalse(hashing_module.secure_hashing_supported())
+            with self.assertRaisesRegex(HashingError, "requires POSIX"):
+                hash_tree(self.root / "cases" / "dev_001")
 
     def test_tree_hash_is_stable_content_sensitive_and_root_name_independent(self) -> None:
         self.require_secure_hashing()
@@ -921,16 +927,82 @@ class BriaBenchRegistryTests(unittest.TestCase):
             with self.assertRaisesRegex(HashingError, "changed"):
                 hash_tree(self.root / "cases" / "dev_001")
 
+    def test_hashing_rejects_symlinked_ancestor(self) -> None:
+        self.require_secure_hashing()
+        target = self.root / "ancestor-target"
+        target.mkdir()
+        (target / "package").mkdir()
+        (target / "package" / "payload.bin").write_bytes(b"payload")
+        (target / "annotation.json").write_text("sealed", encoding="utf-8")
+        ancestor = self.root / "ancestor-link"
+        try:
+            ancestor.symlink_to(target, target_is_directory=True)
+        except (NotImplementedError, OSError) as exc:
+            self.skipTest(f"symlink creation unavailable: {exc}")
+
+        with self.assertRaisesRegex(HashingError, "symlink|securely open|changed before open"):
+            hash_tree(ancestor / "package")
+        with self.assertRaisesRegex(HashingError, "symlink|securely open|changed before open"):
+            hash_file(ancestor / "annotation.json")
+
+    def test_hashing_rejects_ancestor_swap_between_stat_and_open(self) -> None:
+        self.require_secure_hashing()
+        ancestor = self.root / "swap-ancestor"
+        (ancestor / "package").mkdir(parents=True)
+        (ancestor / "package" / "payload.bin").write_bytes(b"old")
+        replacement = self.root / "replacement-ancestor"
+        (replacement / "package").mkdir(parents=True)
+        (replacement / "package" / "payload.bin").write_bytes(b"new")
+        moved = self.root / "moved-ancestor"
+        real_open = hashing_module.os.open
+        swapped = False
+
+        def swap_before_component(path: str | os.PathLike[str], *args: object, **kwargs: object) -> int:
+            nonlocal swapped
+            if path == "swap-ancestor" and not swapped:
+                os.rename(ancestor, moved)
+                os.replace(replacement, ancestor)
+                swapped = True
+            return real_open(path, *args, **kwargs)
+
+        with patch.object(hashing_module.os, "open", side_effect=swap_before_component):
+            with self.assertRaisesRegex(HashingError, "swap-ancestor|changed"):
+                hash_tree(ancestor / "package")
+
+    def test_tree_hash_bounds_file_descriptors_under_lowered_limit(self) -> None:
+        self.require_secure_hashing()
+        try:
+            import resource
+        except ImportError:
+            self.skipTest("resource module unavailable")
+        package = self.root / "many-files"
+        package.mkdir()
+        for index in range(220):
+            (package / f"file-{index:03d}.txt").write_bytes(str(index).encode("ascii"))
+        original_soft, original_hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+        target = 128 if original_hard == resource.RLIM_INFINITY else min(128, original_hard)
+        if target < 32:
+            self.skipTest("file descriptor hard limit is too low")
+        try:
+            if original_soft > target:
+                resource.setrlimit(resource.RLIMIT_NOFILE, (target, original_hard))
+            hash_tree(package)
+        except (OSError, ValueError) as exc:
+            self.skipTest(f"unable to lower file descriptor limit: {exc}")
+        finally:
+            resource.setrlimit(resource.RLIMIT_NOFILE, (original_soft, original_hard))
+
     def test_tree_hash_rejects_same_size_in_place_mutation_after_streaming(self) -> None:
         self.require_secure_hashing()
         payload = self.root / "cases" / "dev_001" / "payload.bin"
-        real_fstat = hashing_module.os.fstat
-        calls = 0
+        real_read = hashing_module.os.read
+        mutated = False
 
-        def mutate_before_post_stream_fstat(descriptor: int) -> os.stat_result:
-            nonlocal calls
-            calls += 1
-            if calls == 2:
+        def mutate_after_first_read(descriptor: int, count: int) -> bytes:
+            nonlocal mutated
+            chunk = real_read(descriptor, count)
+            if chunk and not mutated:
+                mutated = True
                 payload.write_bytes(b"bravo")
                 current = os.lstat(payload)
                 os.utime(
@@ -938,12 +1010,12 @@ class BriaBenchRegistryTests(unittest.TestCase):
                     ns=(current.st_atime_ns, current.st_mtime_ns + 1),
                     follow_symlinks=False,
                 )
-            return real_fstat(descriptor)
+            return chunk
 
         with patch.object(
             hashing_module.os,
-            "fstat",
-            side_effect=mutate_before_post_stream_fstat,
+            "read",
+            side_effect=mutate_after_first_read,
         ):
             with self.assertRaisesRegex(HashingError, "changed"):
                 hash_tree(self.root / "cases" / "dev_001")
@@ -1047,7 +1119,7 @@ class BriaBenchRegistryTests(unittest.TestCase):
             return names
 
         with patch.object(hashing_module.os, "listdir", side_effect=swap_root):
-            with self.assertRaisesRegex(HashingError, "root pathname"):
+            with self.assertRaisesRegex(HashingError, "swap-root"):
                 hash_tree(package)
 
     def test_tree_hash_enforces_nfc_and_casefold_filename_policy(self) -> None:
@@ -1168,6 +1240,21 @@ class BriaBenchRegistryTests(unittest.TestCase):
         with patch("benchmarks.bria_bench.registry._fsync_directory") as fsync_directory:
             freeze_manifest(source, output, "2026-07-11T00:00:00Z")
         fsync_directory.assert_called_once_with(output.parent)
+
+    def test_directory_fsync_error_surfaces_and_restores_previous_output(self) -> None:
+        self.require_secure_hashing()
+        source = self.write_manifest("source.json", self.manifest())
+        output = self.root / "frozen.json"
+        output.write_text('{"status":"old"}\n', encoding="utf-8")
+        before = output.read_bytes()
+        with patch(
+            "benchmarks.bria_bench.registry._fsync_directory",
+            side_effect=OSError(5, "I/O error"),
+        ):
+            with self.assertRaisesRegex(RegistryError, "fsync manifest directory"):
+                freeze_manifest(source, output, "2026-07-11T00:00:00Z")
+        self.assertEqual(output.read_bytes(), before)
+        self.assertEqual(list(self.root.glob(".frozen.json.*.bak")), [])
 
     def test_failed_freeze_serialization_and_replace_preserve_previous_output(self) -> None:
         self.require_secure_hashing()

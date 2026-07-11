@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import errno
 import json
 import os
 import re
@@ -17,6 +18,14 @@ from .hashing import HashingError, hash_file, hash_tree
 
 MANIFEST_SCHEMA = "benchmark_manifest.schema.json"
 SHA256_PATTERN = re.compile(r"^[a-f0-9]{64}$")
+_UNSUPPORTED_DIRECTORY_FSYNC_ERRNOS = frozenset(
+    {
+        errno.EINVAL,
+        errno.ENOSYS,
+        errno.ENOTSUP,
+        getattr(errno, "EOPNOTSUPP", errno.ENOTSUP),
+    }
+)
 
 
 class RegistryError(ValueError):
@@ -160,7 +169,7 @@ def load_manifest(path: Path | str, *, require_frozen: bool = False) -> dict[str
 
 
 def _fsync_directory(directory: Path) -> None:
-    """Best-effort fsync of a containing directory where POSIX supports it."""
+    """Fsync a containing directory, ignoring only unsupported errno values."""
 
     if os.name != "posix" or not hasattr(os, "O_DIRECTORY"):
         return
@@ -168,16 +177,39 @@ def _fsync_directory(directory: Path) -> None:
     try:
         descriptor = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
         os.fsync(descriptor)
-    except (OSError, ValueError):
-        # Some POSIX filesystems expose directory open but reject fsync; the
-        # file itself was already fsynced and publication remains atomic.
-        return
+    except OSError as exc:
+        if exc.errno in _UNSUPPORTED_DIRECTORY_FSYNC_ERRNOS:
+            return
+        raise
     finally:
         if descriptor != -1:
             try:
                 os.close(descriptor)
             except OSError:
                 pass
+
+
+def _make_output_backup(path: Path) -> tuple[Path | None, bool]:
+    """Make a same-directory hard-link backup for fsync-error recovery."""
+
+    try:
+        path.lstat()
+    except FileNotFoundError:
+        return None, False
+    descriptor, backup_name = tempfile.mkstemp(
+        prefix=f".{path.name}.",
+        suffix=".bak",
+        dir=path.parent,
+    )
+    os.close(descriptor)
+    backup = Path(backup_name)
+    backup.unlink()
+    try:
+        os.link(path, backup, follow_symlinks=False)
+    except (OSError, ValueError) as exc:
+        backup.unlink(missing_ok=True)
+        raise RegistryError(f"Could not preserve previous manifest output: {path}") from exc
+    return backup, True
 
 
 def _publish_manifest(path: Path, manifest: dict[str, Any]) -> None:
@@ -189,6 +221,8 @@ def _publish_manifest(path: Path, manifest: dict[str, Any]) -> None:
         dir=parent,
     )
     temporary = Path(temporary_name)
+    backup: Path | None = None
+    output_existed = False
     try:
         with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
             descriptor = -1
@@ -196,8 +230,23 @@ def _publish_manifest(path: Path, manifest: dict[str, Any]) -> None:
             stream.write("\n")
             stream.flush()
             os.fsync(stream.fileno())
+        if os.name == "posix" and hasattr(os, "O_DIRECTORY"):
+            backup, output_existed = _make_output_backup(path)
         os.replace(temporary, path)
-        _fsync_directory(parent)
+        try:
+            _fsync_directory(parent)
+        except OSError as exc:
+            try:
+                if backup is not None:
+                    os.replace(backup, path)
+                    backup = None
+                elif not output_existed:
+                    path.unlink(missing_ok=True)
+            except OSError as restore_exc:
+                raise RegistryError(
+                    f"Could not fsync manifest directory and restore previous output: {path}"
+                ) from restore_exc
+            raise RegistryError(f"Could not fsync manifest directory: {parent}") from exc
     finally:
         if descriptor != -1:
             try:
@@ -210,6 +259,13 @@ def _publish_manifest(path: Path, manifest: dict[str, Any]) -> None:
             pass
         except OSError:
             pass
+        if backup is not None:
+            try:
+                backup.unlink()
+            except FileNotFoundError:
+                pass
+            except OSError:
+                pass
 
 
 def freeze_manifest(
