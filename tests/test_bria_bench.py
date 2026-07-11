@@ -4,6 +4,7 @@ import copy
 import json
 import os
 import re
+import signal
 import sys
 import tempfile
 import time
@@ -13,6 +14,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from jsonschema import Draft202012Validator
+import tomllib
 
 import benchmarks.bria_bench.hashing as hashing_module
 from benchmarks.bria_bench import ContractError, __version__, validate_contract
@@ -1441,7 +1443,10 @@ class BriaBenchRuntimeTests(unittest.TestCase):
         self.assertGreater(result.elapsed_seconds, 0.0)
         self.assertGreaterEqual(result.cpu_seconds, 0.0)
         self.assertGreaterEqual(result.peak_rss_bytes, 0)
+        self.assertTrue(result.cleanup_complete)
+        self.assertEqual(result.cleanup_errors, ())
         self.assertEqual(result.to_dict()["status"], "success")
+        self.assertEqual(result.to_dict()["cleanup_errors"], [])
 
     def test_nonzero_exit_is_process_error(self) -> None:
         result = self.run_python("import sys; sys.stderr.write('failed'); sys.exit(7)")
@@ -1551,6 +1556,138 @@ class BriaBenchRuntimeTests(unittest.TestCase):
         else:
             self.fail("term-ignoring descendant still exists with the recorded identity")
 
+    @unittest.skipUnless(os.name == "posix", "process group tests require POSIX")
+    def test_root_exit_waits_for_and_kills_term_ignoring_descendant(self) -> None:
+        child_code = (
+            "import os, signal, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+            "print('child|' + str(os.getpid()) + '|' + "
+            "str(__import__('psutil').Process().create_time()), flush=True); time.sleep(30)"
+        )
+        source = (
+            "import subprocess, sys\n"
+            f"child = subprocess.Popen([sys.executable, '-c', {child_code!r}])\n"
+            "print('parent|' + str(child.pid), flush=True)\n"
+            "raise SystemExit(0)\n"
+        )
+        result = self.run_python(source, timeout_seconds=0.3, tail_bytes=512)
+
+        self.assertEqual(result.status, "timeout")
+        self.assertEqual(result.returncode, 0)
+        self.assertTrue(result.timed_out)
+        self.assertTrue(result.cleanup_complete)
+        self.assertEqual(result.cleanup_errors, ())
+        child_line = next(line for line in result.stdout_tail.splitlines() if line.startswith("child|"))
+        _, pid_text, create_time_text = child_line.split("|", 2)
+        self.assert_identity_gone(int(pid_text), float(create_time_text))
+
+    @unittest.skipUnless(os.name == "posix", "process group tests require POSIX")
+    def test_root_exit_waits_for_finite_descendant(self) -> None:
+        child_code = "import time; time.sleep(0.35)"
+        source = (
+            "import subprocess, sys\n"
+            f"child = subprocess.Popen([sys.executable, '-c', {child_code!r}])\n"
+            "raise SystemExit(0)\n"
+        )
+        result = self.run_python(source, timeout_seconds=2.0)
+
+        self.assertEqual(result.status, "success")
+        self.assertEqual(result.returncode, 0)
+        self.assertFalse(result.timed_out)
+        self.assertTrue(result.cleanup_complete)
+        self.assertGreater(result.elapsed_seconds, 0.25)
+
+    @unittest.skipUnless(os.name == "posix", "process group tests require POSIX")
+    def test_nonzero_root_waits_for_finite_descendant_without_leaking(self) -> None:
+        child_code = "import time; time.sleep(0.35)"
+        source = (
+            "import subprocess, sys\n"
+            f"child = subprocess.Popen([sys.executable, '-c', {child_code!r}])\n"
+            "raise SystemExit(7)\n"
+        )
+        result = self.run_python(source, timeout_seconds=2.0)
+
+        self.assertEqual(result.status, "process_error")
+        self.assertEqual(result.returncode, 7)
+        self.assertFalse(result.timed_out)
+        self.assertTrue(result.cleanup_complete)
+        self.assertGreater(result.elapsed_seconds, 0.25)
+
+    @unittest.skipUnless(os.name == "posix", "process group tests require POSIX")
+    def test_cleanup_signal_failure_is_disclosed_and_fixture_is_force_cleaned(self) -> None:
+        child_code = (
+            "import os, signal, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+            "print('child|' + str(os.getpid()) + '|' + "
+            "str(__import__('psutil').Process().create_time()), flush=True); time.sleep(30)"
+        )
+        source = (
+            "import os, signal, subprocess, sys, time\n"
+            f"child = subprocess.Popen([sys.executable, '-c', {child_code!r}])\n"
+            "print('parent|' + str(os.getpid()) + '|' + str(__import__('psutil').Process().create_time()), flush=True)\n"
+            "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+            "time.sleep(2.0)\n"
+        )
+        result: RuntimeResult | None = None
+        forced_identities: list[tuple[int, float]] = []
+        try:
+            with patch.object(
+                runtime_module,
+                "_signal_process_group",
+                return_value="injected process-group signal failure",
+            ), patch.object(
+                runtime_module,
+                "_signal_identity",
+                return_value="injected identity signal failure",
+            ):
+                result = self.run_python(source, timeout_seconds=0.2, tail_bytes=512)
+
+            self.assertEqual(result.status, "timeout")
+            self.assertFalse(result.cleanup_complete)
+            self.assertTrue(result.cleanup_errors)
+            self.assertTrue(
+                any("injected process-group signal failure" in error for error in result.cleanup_errors)
+            )
+            self.assertTrue(any("surviv" in error for error in result.cleanup_errors))
+        finally:
+            if result is not None:
+                for line in result.stdout_tail.splitlines():
+                    parts = line.split("|")
+                    if len(parts) != 3:
+                        continue
+                    try:
+                        pid = int(parts[1])
+                        create_time = float(parts[2])
+                        process = runtime_module.psutil.Process(pid)
+                        if process.create_time() == create_time:
+                            forced_identities.append((pid, create_time))
+                            os.kill(pid, signal.SIGKILL)
+                    except (ValueError, OSError, runtime_module.psutil.Error):
+                        pass
+            for pid, create_time in forced_identities:
+                self.assert_identity_gone(pid, create_time)
+
+    def test_packaging_declares_bria_bench_runtime_and_schema_data(self) -> None:
+        project_root = Path(__file__).resolve().parents[1]
+        with (project_root / "pyproject.toml").open("rb") as stream:
+            config = tomllib.load(stream)
+        setuptools = config["tool"]["setuptools"]
+        self.assertIn("benchmarks.bria_bench", setuptools["packages"])
+        self.assertEqual(
+            setuptools["package-data"]["benchmarks.bria_bench"],
+            ["schemas/*.json"],
+        )
+
+    def assert_identity_gone(self, pid: int, create_time: float) -> None:
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline:
+            try:
+                process = runtime_module.psutil.Process(pid)
+                if process.create_time() != create_time or not process.is_running():
+                    return
+            except runtime_module.psutil.NoSuchProcess:
+                return
+            time.sleep(0.02)
+        self.fail(f"process {pid} still exists with the recorded identity")
+
     def test_invalid_configuration_raises_value_error(self) -> None:
         with self.assertRaises(ValueError):
             run_monitored([], self.root, 1.0)
@@ -1603,6 +1740,39 @@ class BriaBenchRuntimeTests(unittest.TestCase):
 
         self.assertEqual(output.read_text(encoding="utf-8"), '{"old": true}\n')
         self.assertEqual(list(self.root.glob(".result.json.*.tmp")), [])
+
+    def test_write_json_atomic_preserves_backup_when_fsync_restore_fails(self) -> None:
+        output = self.root / "result.json"
+        output.write_text('{"old": true}\n', encoding="utf-8")
+        original_replace = runtime_module.os.replace
+        replace_calls = 0
+
+        def replace_with_restore_failure(source: Path, destination: Path) -> None:
+            nonlocal replace_calls
+            replace_calls += 1
+            if replace_calls == 2:
+                raise OSError("restore failed")
+            original_replace(source, destination)
+
+        try:
+            with patch.object(
+                runtime_module,
+                "_fsync_directory",
+                side_effect=OSError("fsync failed"),
+            ), patch.object(
+                runtime_module.os,
+                "replace",
+                side_effect=replace_with_restore_failure,
+            ):
+                with self.assertRaisesRegex(OSError, "backup preserved at") as caught:
+                    write_json_atomic(output, {"new": True})
+
+            backups = list(self.root.glob(".result.json.*.bak"))
+            self.assertEqual(len(backups), 1)
+            self.assertIn(str(backups[0]), str(caught.exception))
+        finally:
+            for backup in self.root.glob(".result.json.*.bak"):
+                backup.unlink(missing_ok=True)
 
 
 if __name__ == "__main__":

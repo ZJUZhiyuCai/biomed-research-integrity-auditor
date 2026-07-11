@@ -1,4 +1,10 @@
-"""Process monitoring and atomic output helpers for BRIA-Bench runners."""
+"""Process monitoring and atomic output helpers for BRIA-Bench runners.
+
+Telemetry is polling-based, so a process that starts and exits wholly between
+samples may be missed. Termination uses immediate identity checks around each
+signal and Linux pidfds when available; other platforms retain a best-effort
+PID-reuse TOCTOU window, especially for process-group signaling.
+"""
 
 from __future__ import annotations
 
@@ -8,6 +14,7 @@ import math
 import os
 import signal
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -43,6 +50,8 @@ class RuntimeResult:
     timed_out: bool
     stdout_tail: str
     stderr_tail: str
+    cleanup_complete: bool = True
+    cleanup_errors: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -54,6 +63,8 @@ class RuntimeResult:
             "timed_out": self.timed_out,
             "stdout_tail": self.stdout_tail,
             "stderr_tail": self.stderr_tail,
+            "cleanup_complete": self.cleanup_complete,
+            "cleanup_errors": list(self.cleanup_errors),
         }
 
 
@@ -78,6 +89,21 @@ class _ByteTail:
 class _TrackedProcess:
     process: psutil.Process
     max_cpu_seconds: float = 0.0
+
+
+@dataclass(frozen=True)
+class _CleanupReport:
+    peak_rss: int
+    survivors: tuple[Identity, ...]
+    errors: tuple[str, ...]
+
+
+@dataclass
+class _ReaderState:
+    label: str
+    stream: Any
+    tail: _ByteTail
+    error: str | None = None
 
 
 def _validate_inputs(
@@ -150,6 +176,27 @@ def _is_live(process: psutil.Process, identity: Identity) -> bool:
         return False
 
 
+def _discover_group_members(
+    tracked: dict[Identity, _TrackedProcess],
+    process_group_id: int | None,
+) -> None:
+    if os.name != "posix" or process_group_id is None:
+        return
+    try:
+        candidates = psutil.process_iter()
+    except (psutil.Error, OSError, TypeError, ValueError):
+        return
+    for candidate in candidates:
+        try:
+            if candidate.pid == os.getpid() or os.getpgid(candidate.pid) != process_group_id:
+                continue
+            candidate_identity = _identity(candidate)
+        except (OSError, psutil.Error, TypeError, ValueError):
+            continue
+        if candidate_identity is not None and candidate_identity not in tracked:
+            tracked[candidate_identity] = _TrackedProcess(candidate)
+
+
 def _discover_and_sample(tracked: dict[Identity, _TrackedProcess], peak_rss: int) -> int:
     """Discover descendants and sample each identity at most once per pass."""
 
@@ -199,65 +246,133 @@ def _live_identities(tracked: dict[Identity, _TrackedProcess]) -> list[Identity]
     return live
 
 
-def _signal_identity(process_identity: Identity, signum: int) -> None:
+def _signal_name(signum: int) -> str:
+    try:
+        return signal.Signals(signum).name
+    except ValueError:
+        return str(signum)
+
+
+def _send_signal(process_identity: Identity, signum: int) -> str | None:
+    pid = process_identity[0]
+    if (
+        sys.platform.startswith("linux")
+        and hasattr(os, "pidfd_open")
+        and hasattr(signal, "pidfd_send_signal")
+    ):
+        try:
+            pidfd = os.pidfd_open(pid)
+        except OSError as exc:
+            if exc.errno not in _DIRECTORY_FSYNC_UNSUPPORTED | {errno.ENOSYS}:
+                return f"pidfd_open failed for pid {pid}: {exc}"
+        else:
+            try:
+                if _identity(psutil.Process(pid)) != process_identity:
+                    return f"process identity changed before pidfd signal for pid {pid}"
+                signal.pidfd_send_signal(pidfd, signum)
+                return None
+            except (OSError, psutil.Error) as exc:
+                return f"pidfd signal {_signal_name(signum)} failed for pid {pid}: {exc}"
+            finally:
+                try:
+                    os.close(pidfd)
+                except OSError:
+                    pass
+
+    try:
+        os.kill(pid, signum)
+    except OSError as exc:
+        if exc.errno == errno.ESRCH and _current_process(process_identity) is None:
+            return None
+        return f"signal {_signal_name(signum)} failed for pid {pid}: {exc}"
+    return None
+
+
+def _signal_identity(process_identity: Identity, signum: int) -> str | None:
     process = _current_process(process_identity)
     if process is None or not _is_live(process, process_identity):
-        return
-    try:
-        os.kill(process_identity[0], signum)
-    except (OSError, psutil.Error):
-        pass
+        return None
+    before = _identity(process)
+    if before != process_identity:
+        return f"process identity changed before {_signal_name(signum)} for pid {process_identity[0]}"
+    error = _send_signal(process_identity, signum)
+    after_process = _current_process(process_identity)
+    if after_process is None:
+        return error
+    after = _identity(after_process)
+    if after != process_identity:
+        return f"process identity changed after {_signal_name(signum)} for pid {process_identity[0]}"
+    return error
 
 
-def _signal_process_group(root_identity: Identity, signum: int) -> None:
-    process = _current_process(root_identity)
-    if process is None or not _is_live(process, root_identity):
-        return
+def _signal_process_group(
+    process_group_id: int | None,
+    tracked: dict[Identity, _TrackedProcess],
+    signum: int,
+) -> str | None:
+    if os.name != "posix" or process_group_id is None or not hasattr(os, "killpg"):
+        return None
+    verified_member = False
+    for process_identity in tracked:
+        process = _current_process(process_identity)
+        if process is None or not _is_live(process, process_identity):
+            continue
+        try:
+            if os.getpgid(process_identity[0]) == process_group_id:
+                verified_member = True
+                break
+        except OSError:
+            continue
+    if not verified_member:
+        return None
     try:
-        if hasattr(os, "killpg") and os.getpgid(root_identity[0]) == root_identity[0]:
-            os.killpg(root_identity[0], signum)
-        else:
-            os.kill(root_identity[0], signum)
-    except (OSError, psutil.Error):
-        pass
+        os.killpg(process_group_id, signum)
+    except OSError as exc:
+        if exc.errno == errno.ESRCH:
+            return None
+        return f"process-group {_signal_name(signum)} failed for pgid {process_group_id}: {exc}"
+    return None
+
+
+def _append_error(errors: list[str], error: str | None) -> None:
+    if error is not None and error not in errors:
+        errors.append(error)
 
 
 def _terminate_process_tree(
     process: subprocess.Popen[bytes],
     root_identity: Identity | None,
+    process_group_id: int | None,
     tracked: dict[Identity, _TrackedProcess],
     poll_interval: float,
-) -> int:
-    if root_identity is not None:
-        _signal_process_group(root_identity, signal.SIGTERM)
-    else:
-        try:
-            process.terminate()
-        except OSError:
-            pass
-
-    term_sent: set[Identity] = set()
+) -> _CleanupReport:
+    errors: list[str] = []
     peak_rss = 0
-    deadline = time.monotonic() + 1.0
-    while True:
-        peak_rss = _discover_and_sample(tracked, peak_rss)
-        for process_identity in _live_identities(tracked):
-            if process_identity not in term_sent:
-                _signal_identity(process_identity, signal.SIGTERM)
-                term_sent.add(process_identity)
-        if not _live_identities(tracked) or time.monotonic() >= deadline:
-            break
-        time.sleep(min(poll_interval, max(0.0, deadline - time.monotonic())))
+    _discover_group_members(tracked, process_group_id)
+    _append_error(errors, _signal_process_group(process_group_id, tracked, signal.SIGTERM))
 
-    kill_sent: set[Identity] = set()
-    kill_deadline = time.monotonic() + 1.0
-    while True:
+    def signal_live(signum: int) -> list[Identity]:
+        live = _live_identities(tracked)
+        for process_identity in live:
+            _append_error(errors, _signal_identity(process_identity, signum))
+        return live
+
+    signal_live(signal.SIGTERM)
+    term_deadline = time.monotonic() + 1.0
+    while time.monotonic() < term_deadline:
+        _discover_group_members(tracked, process_group_id)
         peak_rss = _discover_and_sample(tracked, peak_rss)
-        for process_identity in _live_identities(tracked):
-            if process_identity not in kill_sent:
-                _signal_identity(process_identity, signal.SIGKILL)
-                kill_sent.add(process_identity)
-        if not _live_identities(tracked) or time.monotonic() >= kill_deadline:
+        live = signal_live(signal.SIGTERM)
+        if not live:
+            break
+        time.sleep(min(poll_interval, max(0.0, term_deadline - time.monotonic())))
+
+    kill_deadline = time.monotonic() + 1.0
+    while time.monotonic() < kill_deadline:
+        _discover_group_members(tracked, process_group_id)
+        peak_rss = _discover_and_sample(tracked, peak_rss)
+        live = signal_live(signal.SIGKILL)
+        if not live:
             break
         time.sleep(min(poll_interval, max(0.0, kill_deadline - time.monotonic())))
 
@@ -265,28 +380,38 @@ def _terminate_process_tree(
         process.wait(timeout=1.0)
     except subprocess.TimeoutExpired:
         if root_identity is not None:
-            _signal_identity(root_identity, signal.SIGKILL)
+            _append_error(errors, _signal_identity(root_identity, signal.SIGKILL))
         else:
             try:
                 process.kill()
-            except OSError:
-                pass
+            except OSError as exc:
+                _append_error(errors, f"fallback root KILL failed: {exc}")
         try:
-            process.wait(timeout=1.0)
+            process.wait(timeout=0.25)
         except subprocess.TimeoutExpired:
-            pass
-    return peak_rss
+            _append_error(errors, "root process did not exit after cleanup")
+        except OSError as exc:
+            _append_error(errors, f"could not reap root process: {exc}")
+    except OSError as exc:
+        _append_error(errors, f"could not wait for root process: {exc}")
+
+    _discover_group_members(tracked, process_group_id)
+    peak_rss = _discover_and_sample(tracked, peak_rss)
+    survivors = tuple(_live_identities(tracked))
+    if survivors:
+        _append_error(errors, f"surviving process identities after cleanup: {survivors}")
+    return _CleanupReport(peak_rss, survivors, tuple(errors))
 
 
-def _drain_pipe(stream: Any, tail: _ByteTail) -> None:
+def _drain_pipe(state: _ReaderState) -> None:
     try:
         while True:
-            chunk = stream.read(_READ_CHUNK_BYTES)
+            chunk = state.stream.read(_READ_CHUNK_BYTES)
             if not chunk:
                 return
-            tail.append(chunk)
-    except (OSError, ValueError):
-        return
+            state.tail.append(chunk)
+    except (OSError, ValueError) as exc:
+        state.error = f"{state.label} reader failed: {type(exc).__name__}: {exc}"
 
 
 def run_monitored(
@@ -336,19 +461,18 @@ def run_monitored(
 
     assert process.stdout is not None
     assert process.stderr is not None
+    reader_states = [
+        _ReaderState("stdout", process.stdout, stdout_tail),
+        _ReaderState("stderr", process.stderr, stderr_tail),
+    ]
     readers = [
         threading.Thread(
             target=_drain_pipe,
-            args=(process.stdout, stdout_tail),
-            name="bria-stdout-drain",
+            args=(state,),
+            name=f"bria-{state.label}-drain",
             daemon=True,
-        ),
-        threading.Thread(
-            target=_drain_pipe,
-            args=(process.stderr, stderr_tail),
-            name="bria-stderr-drain",
-            daemon=True,
-        ),
+        )
+        for state in reader_states
     ]
     for reader in readers:
         reader.start()
@@ -361,37 +485,64 @@ def run_monitored(
     root_identity = _identity(root_process) if root_process is not None else None
     if root_identity is not None and root_process is not None:
         tracked[root_identity] = _TrackedProcess(root_process)
+    process_group_id = root_identity[0] if root_identity is not None and os.name == "posix" else None
 
     peak_rss = _discover_and_sample(tracked, 0)
+    root_returncode: int | None = None
     timed_out = False
+    cleanup_errors: list[str] = []
     deadline = started + timeout
     while True:
+        if root_returncode is None:
+            polled = process.poll()
+            if polled is not None:
+                root_returncode = polled
+        if root_returncode is not None:
+            _discover_group_members(tracked, process_group_id)
         peak_rss = _discover_and_sample(tracked, peak_rss)
-        returncode = process.poll()
-        now = time.monotonic()
-        if returncode is not None:
+        live = _live_identities(tracked)
+        if root_returncode is not None and not live:
             break
+        now = time.monotonic()
         if now >= deadline:
             timed_out = True
-            peak_rss = _discover_and_sample(tracked, peak_rss)
-            peak_rss = max(
-                peak_rss,
-                _terminate_process_tree(process, root_identity, tracked, poll_interval),
+            report = _terminate_process_tree(
+                process,
+                root_identity,
+                process_group_id,
+                tracked,
+                poll_interval,
             )
-            returncode = process.poll()
+            peak_rss = max(peak_rss, report.peak_rss)
+            cleanup_errors.extend(report.errors)
             break
         time.sleep(min(poll_interval, max(0.0, deadline - now)))
 
-    if not timed_out:
+    returncode = root_returncode if root_returncode is not None else process.poll()
+    if returncode is None:
         try:
-            returncode = process.wait()
+            returncode = process.wait(timeout=0.25)
         except (OSError, subprocess.SubprocessError):
             returncode = process.poll()
+
+    reader_deadline = time.monotonic() + 2.0
     for reader in readers:
-        reader.join(timeout=2.0)
-    for stream in (process.stdout, process.stderr):
+        reader.join(timeout=max(0.0, reader_deadline - time.monotonic()))
+    if any(reader.is_alive() for reader in readers):
+        for state in reader_states:
+            try:
+                state.stream.close()
+            except OSError as exc:
+                _append_error(cleanup_errors, f"could not close {state.label} pipe: {exc}")
+        for reader in readers:
+            reader.join(timeout=max(0.0, reader_deadline - time.monotonic()))
+    for state, reader in zip(reader_states, readers):
+        if state.error is not None:
+            _append_error(cleanup_errors, state.error)
+        if reader.is_alive():
+            _append_error(cleanup_errors, f"{state.label} reader did not finish before deadline")
         try:
-            stream.close()
+            state.stream.close()
         except OSError:
             pass
 
@@ -412,6 +563,8 @@ def run_monitored(
         timed_out=timed_out,
         stdout_tail=stdout_tail.decode(),
         stderr_tail=stderr_tail.decode(),
+        cleanup_complete=not cleanup_errors,
+        cleanup_errors=tuple(cleanup_errors),
     )
 
 
@@ -471,6 +624,7 @@ def write_json_atomic(path: Path | str, payload: Any) -> None:
     )
     temporary = Path(temporary_name)
     backup: Path | None = None
+    preserve_backup = False
     try:
         with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
             descriptor = -1
@@ -481,13 +635,20 @@ def write_json_atomic(path: Path | str, payload: Any) -> None:
         os.replace(temporary, output)
         try:
             _fsync_directory(output.parent)
-        except OSError:
+        except OSError as fsync_error:
             if backup is not None:
-                os.replace(backup, output)
-                backup = None
+                try:
+                    os.replace(backup, output)
+                    backup = None
+                except OSError as restore_error:
+                    preserve_backup = True
+                    raise OSError(
+                        f"Could not fsync JSON directory and restore previous output: {output}; "
+                        f"backup preserved at {backup}"
+                    ) from restore_error
             else:
                 output.unlink(missing_ok=True)
-            raise
+            raise fsync_error
     finally:
         if descriptor != -1:
             try:
@@ -500,7 +661,7 @@ def write_json_atomic(path: Path | str, payload: Any) -> None:
             pass
         except OSError:
             pass
-        if backup is not None:
+        if backup is not None and not preserve_backup:
             try:
                 backup.unlink()
             except FileNotFoundError:
