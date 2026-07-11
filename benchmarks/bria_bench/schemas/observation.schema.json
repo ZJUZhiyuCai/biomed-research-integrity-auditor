@@ -1,0 +1,348 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.org/bria-bench/schemas/observation.schema.json",
+  "title": "BRIA-Bench Normalized Observation Payload",
+  "type": "object",
+  "required": [
+    "case_id",
+    "observations",
+    "technical_failures",
+    "reported_technical_failures",
+    "boundary_violations",
+    "contract_errors"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "case_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "observations": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/observation"
+      }
+    },
+    "technical_failures": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/technicalFailure"
+      }
+    },
+    "reported_technical_failures": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/technicalFailure"
+      }
+    },
+    "boundary_violations": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/boundaryViolation"
+      }
+    },
+    "contract_errors": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/contractError"
+      }
+    }
+  },
+  "$defs": {
+    "observation": {
+      "type": "object",
+      "required": [
+        "observation_id",
+        "issue_family",
+        "location",
+        "risk_level"
+      ],
+      "properties": {
+        "observation_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_finding_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_detector": {
+          "type": "string",
+          "minLength": 1
+        },
+        "issue_family": {
+          "type": "string",
+          "minLength": 1
+        },
+        "finding_type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "location": {
+          "$ref": "#/$defs/location"
+        },
+        "risk_level": {
+          "$ref": "#/$defs/riskLevel"
+        },
+        "evidence_type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "summary": {
+          "type": "string"
+        },
+        "recommended_action": {
+          "type": "string"
+        },
+        "benign_explanations": {
+          "$ref": "#/$defs/stringList"
+        },
+        "benign_explanations_considered": {
+          "$ref": "#/$defs/stringList"
+        },
+        "required_materials": {
+          "$ref": "#/$defs/stringList"
+        },
+        "required_materials_to_resolve": {
+          "$ref": "#/$defs/stringList"
+        },
+        "source_artifact": {
+          "type": "string",
+          "minLength": 1
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "technicalFailure": {
+      "type": "object",
+      "required": [
+        "module"
+      ],
+      "properties": {
+        "module": {
+          "type": "string",
+          "minLength": 1
+        },
+        "failure_type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "category": {
+          "type": "string",
+          "minLength": 1
+        },
+        "message": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "type": "string",
+          "minLength": 1
+        },
+        "reported": {
+          "type": "boolean"
+        },
+        "returncode": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "timed_out": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "boundaryViolation": {
+      "oneOf": [
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "type": "object",
+          "required": [
+            "message"
+          ],
+          "properties": {
+            "message": {
+              "type": "string",
+              "minLength": 1
+            },
+            "source": {
+              "type": "string",
+              "minLength": 1
+            },
+            "term": {
+              "type": "string",
+              "minLength": 1
+            },
+            "location": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "contractError": {
+      "oneOf": [
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "type": "object",
+          "required": [
+            "message"
+          ],
+          "properties": {
+            "message": {
+              "type": "string",
+              "minLength": 1
+            },
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "path": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "location": {
+      "oneOf": [
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "type": "object",
+          "minProperties": 1,
+          "properties": {
+            "text": {
+              "type": "string",
+              "minLength": 1
+            },
+            "terms": {
+              "$ref": "#/$defs/stringList"
+            },
+            "file": {
+              "type": "string",
+              "minLength": 1
+            },
+            "page": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "figure": {
+              "type": "string",
+              "minLength": 1
+            },
+            "panel": {
+              "type": "string",
+              "minLength": 1
+            },
+            "table": {
+              "type": "string",
+              "minLength": 1
+            },
+            "sheet": {
+              "type": "string",
+              "minLength": 1
+            },
+            "columns": {
+              "$ref": "#/$defs/stringList"
+            },
+            "rows": {
+              "type": "array",
+              "items": {
+                "oneOf": [
+                  {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                ]
+              }
+            },
+            "region": {
+              "$ref": "#/$defs/region"
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "region": {
+      "type": "object",
+      "required": [
+        "x",
+        "y",
+        "width",
+        "height"
+      ],
+      "properties": {
+        "x": {
+          "type": "number",
+          "minimum": 0
+        },
+        "y": {
+          "type": "number",
+          "minimum": 0
+        },
+        "width": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "height": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "coordinate_space": {
+          "enum": [
+            "normalized",
+            "pixels"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "riskLevel": {
+      "enum": [
+        "R0",
+        "R1",
+        "R2",
+        "R3",
+        "R4"
+      ]
+    },
+    "stringList": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  },
+  "additionalProperties": false
+}

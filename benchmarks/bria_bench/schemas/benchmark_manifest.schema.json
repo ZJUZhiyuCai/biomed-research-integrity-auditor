@@ -1,0 +1,122 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.org/bria-bench/schemas/benchmark_manifest.schema.json",
+  "title": "BRIA-Bench Benchmark Manifest",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "benchmark_id",
+    "benchmark_version",
+    "cases"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$"
+    },
+    "benchmark_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "benchmark_version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$"
+    },
+    "frozen_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "cases": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/case"
+      }
+    }
+  },
+  "$defs": {
+    "case": {
+      "type": "object",
+      "required": [
+        "case_id",
+        "track",
+        "split",
+        "package_path",
+        "annotation_path",
+        "mode",
+        "scan_profile",
+        "redistributable",
+        "license"
+      ],
+      "properties": {
+        "case_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "track": {
+          "enum": [
+            "regression",
+            "blinded_challenge",
+            "public_realism",
+            "public_concern",
+            "robustness_scale"
+          ]
+        },
+        "split": {
+          "enum": [
+            "dev",
+            "test",
+            "reference"
+          ]
+        },
+        "package_path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "annotation_path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "mode": {
+          "enum": [
+            "internal_presubmission",
+            "external_public_material",
+            "response_to_concern"
+          ]
+        },
+        "scan_profile": {
+          "enum": [
+            "quick",
+            "standard",
+            "deep"
+          ]
+        },
+        "redistributable": {
+          "type": "boolean"
+        },
+        "license": {
+          "type": "string",
+          "minLength": 1
+        },
+        "expected_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "headline_eligible": {
+          "type": "boolean"
+        },
+        "source": {
+          "type": "string",
+          "minLength": 1
+        },
+        "notes": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    }
+  },
+  "additionalProperties": false
+}
