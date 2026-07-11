@@ -3578,6 +3578,21 @@ class BriaBenchMetricAggregationTests(unittest.TestCase):
             )["headline_detection_eligible"]
         )
 
+    def test_failed_regression_assertions_remain_denominated_but_not_met(
+        self,
+    ) -> None:
+        case = metric_bundle(
+            "failed-regression", status="process_error", track="regression"
+        )
+        case["regression_assertions"] = [True, False]
+
+        result = self.aggregate([case])
+
+        self.assertEqual(
+            result["detection"]["regression_assertions"],
+            {"met": 0, "not_met": 2, "total": 2},
+        )
+
     def test_real_matcher_uses_only_evaluated_roles_and_preserves_false_alerts(
         self,
     ) -> None:

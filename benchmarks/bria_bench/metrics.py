@@ -9,7 +9,8 @@ and ``over_budget``.  Presence makes an optional boolean fact applicable.
 
 Facts are never inferred from prose.  In particular, a failed eligible negative
 control is conservatively counted as an alerted package, because it did not
-produce evidence that the package was clean.
+produce evidence that the package was clean.  Failed regression runs retain all
+provided assertion denominators but treat every assertion as not met.
 
 The evaluator must call ``select_evaluation_labels(manifest_case, annotation)``
 and produce ``match_result`` with ``match_labels(selected_labels, observations,
@@ -453,7 +454,8 @@ def aggregate_metrics(
 
         if track == "regression":
             assertions = bundle.get("regression_assertions", [])
-            regression_met += sum(assertions)
+            if status == _SUCCESS:
+                regression_met += sum(assertions)
             regression_total += len(assertions)
 
         actual_events, reported_events = _failure_events(run)
