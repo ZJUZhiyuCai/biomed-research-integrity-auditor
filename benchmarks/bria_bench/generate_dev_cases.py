@@ -10,6 +10,7 @@ import random
 import shutil
 import stat
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -78,6 +79,15 @@ _MANUSCRIPTS = {
 
 class DevelopmentCaseError(ValueError):
     """Raised when controlled development fixtures cannot be published safely."""
+
+
+@dataclass(slots=True)
+class _PublishState:
+    destination: Path
+    backup: Path
+    prior_existed: bool
+    backup_moved: bool = False
+    staged_published: bool = False
 
 
 def _observation(
@@ -493,24 +503,27 @@ def _publish_targets(
                     f"owned destination has the wrong filesystem type: {destination}"
                 )
 
-    records: list[tuple[Path, Path, bool]] = []
+    records: list[_PublishState] = []
     try:
         for staged, destination, backup in targets:
-            existed = destination.exists()
-            records.append((destination, backup, existed))
-            if existed:
+            state = _PublishState(destination, backup, destination.exists())
+            records.append(state)
+            if state.prior_existed:
                 backup.parent.mkdir(parents=True, exist_ok=True)
                 os.replace(destination, backup)
+                state.backup_moved = True
             os.replace(staged, destination)
+            state.staged_published = True
     except Exception:
         rollback_errors: list[str] = []
-        for destination, backup, existed in reversed(records):
+        for state in reversed(records):
             try:
-                _remove_path(destination)
-                if existed and (backup.exists() or backup.is_symlink()):
-                    os.replace(backup, destination)
+                if state.staged_published:
+                    _remove_path(state.destination)
+                if state.backup_moved:
+                    os.replace(state.backup, state.destination)
             except Exception as rollback_error:  # noqa: BLE001 - retain every rollback attempt.
-                rollback_errors.append(f"{destination}: {rollback_error}")
+                rollback_errors.append(f"{state.destination}: {rollback_error}")
         if rollback_errors:
             raise DevelopmentCaseError(
                 "development case publication failed and rollback was incomplete: "

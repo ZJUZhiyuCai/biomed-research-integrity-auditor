@@ -988,6 +988,14 @@ class BriaBenchDevelopmentCaseTests(unittest.TestCase):
                 snapshot[relative] = ("other", None)
         return snapshot
 
+    def assert_no_dev_transaction_residue(self, root: Path) -> None:
+        residue = [
+            path.relative_to(root).as_posix()
+            for path in root.rglob("*")
+            if path.name.startswith(".bria-dev-stage-") or path.name == "backup"
+        ]
+        self.assertEqual(residue, [])
+
     @staticmethod
     def canonical_sha(payload: Any) -> str:
         serialized = json.dumps(
@@ -1234,7 +1242,7 @@ class BriaBenchDevelopmentCaseTests(unittest.TestCase):
                 ),
             )
 
-    def test_generation_and_publish_failures_leave_public_data_unchanged(self) -> None:
+    def test_generation_failure_before_publish_leaves_public_data_unchanged(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             packages = root / "packages"
@@ -1254,6 +1262,60 @@ class BriaBenchDevelopmentCaseTests(unittest.TestCase):
                 with self.assertRaises(DevelopmentCaseError):
                     generate_dev_cases(packages, annotations_root=annotations)
             self.assertEqual(self.tree_snapshot(root), before)
+
+    def test_first_existing_backup_rename_failure_preserves_all_public_bytes(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            packages = root / "cases" / "dev"
+            annotations = root / "annotations" / "dev"
+            generate_dev_cases(packages, annotations_root=annotations)
+            (root / "benchmark_manifest.source.json").write_bytes(
+                b'{"sentinel":"source manifest"}\n'
+            )
+            (root / "benchmark_manifest.json").write_bytes(
+                b'{"sentinel":"frozen manifest"}\n'
+            )
+            before = self.tree_snapshot(root)
+            first_destination = (packages / self.CASE_IDS[0]).resolve()
+            original_replace = dev_cases_module.os.replace
+            backup_attempts = 0
+
+            def fail_first_backup(source: Path, destination: Path) -> None:
+                nonlocal backup_attempts
+                source_path = Path(source).resolve()
+                destination_path = Path(destination)
+                is_staged_backup = any(
+                    part.startswith(".bria-dev-stage-")
+                    for part in destination_path.parts
+                ) and "backup" in destination_path.parts
+                if source_path == first_destination and is_staged_backup:
+                    backup_attempts += 1
+                    raise OSError("injected first backup rename failure")
+                original_replace(source, destination)
+
+            with patch.object(
+                dev_cases_module.os, "replace", side_effect=fail_first_backup
+            ):
+                with self.assertRaises(DevelopmentCaseError):
+                    generate_dev_cases(packages, annotations_root=annotations)
+
+            self.assertEqual(backup_attempts, 1)
+            self.assertEqual(self.tree_snapshot(root), before)
+            self.assert_no_dev_transaction_residue(root)
+
+    def test_staged_publish_failure_after_backup_restores_all_public_bytes(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            packages = root / "cases" / "dev"
+            annotations = root / "annotations" / "dev"
+            generate_dev_cases(packages, annotations_root=annotations)
+            (root / "benchmark_manifest.source.json").write_bytes(
+                b'{"sentinel":"source manifest"}\n'
+            )
+            (root / "benchmark_manifest.json").write_bytes(
+                b'{"sentinel":"frozen manifest"}\n'
+            )
+            before = self.tree_snapshot(root)
 
             original_replace = dev_cases_module.os.replace
             publication_count = 0
@@ -1282,6 +1344,49 @@ class BriaBenchDevelopmentCaseTests(unittest.TestCase):
                     generate_dev_cases(packages, annotations_root=annotations)
             self.assertGreaterEqual(publication_count, 3)
             self.assertEqual(self.tree_snapshot(root), before)
+            self.assert_no_dev_transaction_residue(root)
+
+    def test_staged_publish_failure_without_prior_destination_leaves_no_residue(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            packages = root / "packages"
+            annotations = root / "annotations"
+            packages.mkdir()
+            annotations.mkdir()
+            (root / "benchmark_manifest.source.json").write_bytes(
+                b'{"sentinel":"source manifest"}\n'
+            )
+            (root / "benchmark_manifest.json").write_bytes(
+                b'{"sentinel":"frozen manifest"}\n'
+            )
+            before = self.tree_snapshot(root)
+            first_destination = (packages / self.CASE_IDS[0]).resolve()
+            original_replace = dev_cases_module.os.replace
+            publication_attempts = 0
+
+            def fail_first_publication(source: Path, destination: Path) -> None:
+                nonlocal publication_attempts
+                source_path = Path(source)
+                destination_path = Path(destination).resolve()
+                is_staged_source = any(
+                    part.startswith(".bria-dev-stage-") for part in source_path.parts
+                )
+                if is_staged_source and destination_path == first_destination:
+                    publication_attempts += 1
+                    raise OSError("injected publication without prior destination failure")
+                original_replace(source, destination)
+
+            with patch.object(
+                dev_cases_module.os, "replace", side_effect=fail_first_publication
+            ):
+                with self.assertRaises(DevelopmentCaseError):
+                    generate_dev_cases(packages, annotations_root=annotations)
+
+            self.assertEqual(publication_attempts, 1)
+            self.assertEqual(self.tree_snapshot(root), before)
+            self.assert_no_dev_transaction_residue(root)
 
     def test_annotations_and_36_case_manifest_are_exact_and_frozen(self) -> None:
         source = load_manifest(BRIA_BENCH_ROOT / "benchmark_manifest.source.json")
