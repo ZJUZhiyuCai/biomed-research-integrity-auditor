@@ -126,10 +126,12 @@
           "maxItems": 2
         },
         "benign_explanations": {
-          "$ref": "#/$defs/stringList"
+          "$ref": "#/$defs/stringList",
+          "minItems": 1
         },
         "required_materials": {
-          "$ref": "#/$defs/stringList"
+          "$ref": "#/$defs/stringList",
+          "minItems": 1
         },
         "presence": {
           "enum": [
@@ -195,7 +197,8 @@
               "minLength": 1
             },
             "terms": {
-              "$ref": "#/$defs/stringList"
+              "$ref": "#/$defs/stringList",
+              "minItems": 1
             },
             "file": {
               "type": "string",
@@ -265,7 +268,8 @@
         "x",
         "y",
         "width",
-        "height"
+        "height",
+        "coordinate_space"
       ],
       "propertyNames": {
         "not": {
@@ -288,15 +292,15 @@
         },
         "width": {
           "type": "number",
-          "exclusiveMinimum": 0
+          "minimum": 0
         },
         "height": {
           "type": "number",
-          "exclusiveMinimum": 0
+          "minimum": 0
         },
         "coordinate_space": {
           "enum": [
-            "normalized",
+            "normalized_0_1",
             "pixels"
           ]
         }

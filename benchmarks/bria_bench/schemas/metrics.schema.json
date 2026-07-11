@@ -408,8 +408,17 @@
           ]
         },
         "status": {
-          "type": "string",
-          "minLength": 1
+          "enum": [
+            "success",
+            "process_error",
+            "timeout",
+            "environment_failure",
+            "contract_error",
+            "normalization_error",
+            "missing_output",
+            "invalid_output",
+            "skipped"
+          ]
         },
         "adapter": {
           "type": "string",

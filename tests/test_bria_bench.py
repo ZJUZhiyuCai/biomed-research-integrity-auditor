@@ -95,10 +95,28 @@ def minimal_run_result() -> dict[str, object]:
             "elapsed_seconds": 1.25,
             "cpu_seconds": 0.75,
             "peak_rss_bytes": 1024,
+            "timed_out": False,
         },
         "output_paths": {"case_output": "results/dev_001"},
         "normalized_observation": minimal_observation(),
         "failure": None,
+    }
+
+
+def failure_details(category: str = "process_error", *, timed_out: bool = False) -> dict[str, object]:
+    return {
+        "category": category,
+        "message": f"Run ended with {category}.",
+        "timed_out": timed_out,
+    }
+
+
+def metric_case(case_id: str, status: str = "success") -> dict[str, object]:
+    return {
+        "case_id": case_id,
+        "track": "blinded_challenge",
+        "split": "dev",
+        "status": status,
     }
 
 
@@ -209,6 +227,18 @@ class BriaBenchContractTests(unittest.TestCase):
         manifest["cases"][0]["expected_sha256"] = "d" * 64
         validate_contract("benchmark_manifest.schema.json", manifest)
 
+    def test_manifest_rejects_invalid_frozen_at_format(self) -> None:
+        manifest = minimal_manifest()
+        manifest["frozen_at"] = "not-a-date"
+        with self.assertRaisesRegex(ContractError, "frozen_at"):
+            validate_contract("benchmark_manifest.schema.json", manifest)
+
+    def test_manifest_rejects_duplicate_case_ids(self) -> None:
+        manifest = minimal_manifest()
+        manifest["cases"].append(copy.deepcopy(manifest["cases"][0]))
+        with self.assertRaisesRegex(ContractError, r"cases\.1\.case_id:.*unique"):
+            validate_contract("benchmark_manifest.schema.json", manifest)
+
     def test_annotation_review_statuses_and_observation_roles(self) -> None:
         annotation = minimal_annotation()
         for status in (
@@ -254,6 +284,226 @@ class BriaBenchContractTests(unittest.TestCase):
                     with self.assertRaises(ContractError):
                         validate_contract("annotation.schema.json", candidate)
 
+    def test_annotation_rejects_duplicate_observation_ids(self) -> None:
+        annotation = minimal_annotation()
+        annotation["expected_observations"].append(
+            copy.deepcopy(annotation["expected_observations"][0])
+        )
+        with self.assertRaisesRegex(
+            ContractError,
+            r"expected_observations\.1\.observation_id:.*unique",
+        ):
+            validate_contract("annotation.schema.json", annotation)
+
+    def test_annotation_requires_nonempty_explanations_materials_and_terms(self) -> None:
+        for field in ("benign_explanations", "required_materials"):
+            with self.subTest(field=field):
+                annotation = minimal_annotation()
+                annotation["expected_observations"][0][field] = []
+                with self.assertRaises(ContractError):
+                    validate_contract("annotation.schema.json", annotation)
+
+        annotation = minimal_annotation()
+        annotation["expected_observations"][0]["location"]["terms"] = []
+        with self.assertRaises(ContractError):
+            validate_contract("annotation.schema.json", annotation)
+
+    def test_regions_require_coordinate_space_and_validate_coordinates(self) -> None:
+        invalid_regions = (
+            {"x": 0, "y": 0, "width": 0.5, "height": 0.5},
+            {
+                "x": 1.1,
+                "y": 0,
+                "width": 0,
+                "height": 0.5,
+                "coordinate_space": "normalized_0_1",
+            },
+            {
+                "x": 0.75,
+                "y": 0,
+                "width": 0.5,
+                "height": 0.5,
+                "coordinate_space": "normalized_0_1",
+            },
+            {
+                "x": 0,
+                "y": 0.75,
+                "width": 0.5,
+                "height": 0.5,
+                "coordinate_space": "normalized_0_1",
+            },
+            {
+                "x": -1,
+                "y": 0,
+                "width": 10,
+                "height": 10,
+                "coordinate_space": "pixels",
+            },
+        )
+        for index, region in enumerate(invalid_regions):
+            with self.subTest(region=index):
+                annotation = minimal_annotation()
+                annotation["expected_observations"][0]["location"]["region"] = region
+                with self.assertRaises(ContractError):
+                    validate_contract("annotation.schema.json", annotation)
+
+        for region in (
+            {
+                "x": 0.5,
+                "y": 0.5,
+                "width": 0.5,
+                "height": 0.5,
+                "coordinate_space": "normalized_0_1",
+            },
+            {
+                "x": 0,
+                "y": 0,
+                "width": 0,
+                "height": 0,
+                "coordinate_space": "pixels",
+            },
+        ):
+            with self.subTest(valid_region=region["coordinate_space"]):
+                annotation = minimal_annotation()
+                annotation["expected_observations"][0]["location"]["region"] = region
+                validate_contract("annotation.schema.json", annotation)
+
+    def test_normalized_region_semantics_apply_standalone_and_in_run_result(self) -> None:
+        invalid_region = {
+            "x": 0.8,
+            "y": 0,
+            "width": 0.3,
+            "height": 0.5,
+            "coordinate_space": "normalized_0_1",
+        }
+        observation = minimal_observation()
+        observation["observations"][0]["location"] = {"region": invalid_region}
+        with self.assertRaisesRegex(ContractError, r"observations\.0\.location\.region\.width"):
+            validate_contract("observation.schema.json", observation)
+
+        run_result = minimal_run_result()
+        run_result["normalized_observation"]["observations"][0]["location"] = {
+            "region": invalid_region
+        }
+        with self.assertRaisesRegex(
+            ContractError,
+            r"normalized_observation\.observations\.0\.location\.region\.width",
+        ):
+            validate_contract("run_result.schema.json", run_result)
+
+    def test_normalized_observations_require_unique_ids(self) -> None:
+        payload = minimal_observation()
+        payload["observations"].append(copy.deepcopy(payload["observations"][0]))
+        with self.assertRaisesRegex(
+            ContractError,
+            r"observations\.1\.observation_id:.*unique",
+        ):
+            validate_contract("observation.schema.json", payload)
+
+    def test_run_result_case_id_matches_normalized_payload(self) -> None:
+        payload = minimal_run_result()
+        payload["normalized_observation"]["case_id"] = "different_case"
+        with self.assertRaisesRegex(
+            ContractError,
+            r"normalized_observation\.case_id:.*outer case_id",
+        ):
+            validate_contract("run_result.schema.json", payload)
+
+    def test_run_result_success_requires_null_failure_and_not_timed_out(self) -> None:
+        failure_payload = minimal_run_result()
+        failure_payload["failure"] = failure_details()
+        with self.assertRaisesRegex(ContractError, r"failure:.*null"):
+            validate_contract("run_result.schema.json", failure_payload)
+
+        timeout_payload = minimal_run_result()
+        timeout_payload["telemetry"]["timed_out"] = True
+        with self.assertRaisesRegex(ContractError, r"telemetry\.timed_out:.*false"):
+            validate_contract("run_result.schema.json", timeout_payload)
+
+    def test_run_result_timeout_requires_flag_and_failure(self) -> None:
+        missing_flag = minimal_run_result()
+        missing_flag["status"] = "timeout"
+        missing_flag["failure"] = failure_details("timeout", timed_out=True)
+        with self.assertRaisesRegex(ContractError, r"telemetry\.timed_out:.*true"):
+            validate_contract("run_result.schema.json", missing_flag)
+
+        missing_failure = minimal_run_result()
+        missing_failure["status"] = "timeout"
+        missing_failure["telemetry"]["timed_out"] = True
+        with self.assertRaisesRegex(ContractError, r"failure:.*non-null"):
+            validate_contract("run_result.schema.json", missing_failure)
+
+    def test_other_non_success_run_states_require_coherent_failure(self) -> None:
+        statuses = set(
+            load_schema("run_result.schema.json")["properties"]["status"]["enum"]
+        ) - {"success", "timeout"}
+        for status in statuses:
+            with self.subTest(status=status):
+                payload = minimal_run_result()
+                payload["status"] = status
+                with self.assertRaisesRegex(ContractError, r"failure:.*non-null"):
+                    validate_contract("run_result.schema.json", payload)
+
+        payload = minimal_run_result()
+        payload["status"] = "process_error"
+        payload["telemetry"]["timed_out"] = True
+        payload["failure"] = failure_details()
+        with self.assertRaisesRegex(ContractError, r"telemetry\.timed_out:.*false"):
+            validate_contract("run_result.schema.json", payload)
+
+        malformed = minimal_run_result()
+        malformed["status"] = "process_error"
+        malformed["failure"] = failure_details()
+        malformed["failure"]["message"] = ""
+        with self.assertRaises(ContractError):
+            validate_contract("run_result.schema.json", malformed)
+
+    def test_run_result_accepts_coherent_non_success_states(self) -> None:
+        statuses = set(
+            load_schema("run_result.schema.json")["properties"]["status"]["enum"]
+        ) - {"success", "timeout"}
+        for status in statuses:
+            with self.subTest(status=status):
+                payload = minimal_run_result()
+                payload["status"] = status
+                payload["failure"] = failure_details(status)
+                validate_contract("run_result.schema.json", payload)
+
+        timeout = minimal_run_result()
+        timeout["status"] = "timeout"
+        timeout["telemetry"]["timed_out"] = True
+        timeout["failure"] = failure_details("timeout", timed_out=True)
+        validate_contract("run_result.schema.json", timeout)
+
+    def test_run_result_failure_timeout_flag_must_match_telemetry(self) -> None:
+        payload = minimal_run_result()
+        payload["status"] = "process_error"
+        payload["failure"] = failure_details(timed_out=True)
+        with self.assertRaisesRegex(ContractError, r"failure\.timed_out:.*match"):
+            validate_contract("run_result.schema.json", payload)
+
+    def test_embedded_run_observation_contract_matches_standalone_schema(self) -> None:
+        observation_schema = load_schema("observation.schema.json")
+        run_schema = load_schema("run_result.schema.json")
+        embedded = run_schema["$defs"]["normalizedObservation"]
+        for key in ("type", "required", "properties", "additionalProperties"):
+            with self.subTest(section=key):
+                self.assertEqual(embedded[key], observation_schema[key])
+
+        shared_definitions = (
+            "observation",
+            "technicalFailure",
+            "boundaryViolation",
+            "contractError",
+            "location",
+            "region",
+            "riskLevel",
+            "stringList",
+        )
+        for name in shared_definitions:
+            with self.subTest(definition=name):
+                self.assertEqual(run_schema["$defs"][name], observation_schema["$defs"][name])
+
     def test_metrics_rejects_composite_score_fields(self) -> None:
         for key in ("score", "overall_score"):
             with self.subTest(key=key):
@@ -262,11 +512,99 @@ class BriaBenchContractTests(unittest.TestCase):
                 with self.assertRaises(ContractError):
                     validate_contract("metrics.schema.json", payload)
 
+    def test_metrics_recursively_rejects_composite_score_keys(self) -> None:
+        distribution = {
+            "count": 1,
+            "p50": 0.1,
+            "p95": 0.1,
+            "values": [0.1],
+        }
+        for key in ("score", "overall_score"):
+            with self.subTest(key=key):
+                payload = minimal_metrics()
+                payload["performance"]["module_seconds"] = {key: distribution}
+                with self.assertRaisesRegex(ContractError, key):
+                    validate_contract("metrics.schema.json", payload)
+
+    def test_metrics_rejects_duplicate_case_ids(self) -> None:
+        payload = minimal_metrics()
+        payload["case_results"] = [metric_case("dev_001"), metric_case("dev_001")]
+        with self.assertRaisesRegex(
+            ContractError,
+            r"case_results\.1\.case_id:.*unique",
+        ):
+            validate_contract("metrics.schema.json", payload)
+
+    def test_metric_case_status_uses_run_result_status_enum(self) -> None:
+        run_schema = load_schema("run_result.schema.json")
+        metrics_schema = load_schema("metrics.schema.json")
+        run_statuses = run_schema["properties"]["status"]["enum"]
+        metric_statuses = metrics_schema["$defs"]["caseResult"]["properties"]["status"][
+            "enum"
+        ]
+        self.assertEqual(metric_statuses, run_statuses)
+
+        payload = minimal_metrics()
+        payload["case_results"] = [metric_case("dev_001", status="unknown")]
+        with self.assertRaises(ContractError):
+            validate_contract("metrics.schema.json", payload)
+
+    def test_metric_fraction_semantics(self) -> None:
+        invalid_fractions = (
+            {"numerator": 2, "denominator": 1, "value": 1.0},
+            {"numerator": 0, "denominator": 0, "value": 0.0},
+            {"numerator": 1, "denominator": 3, "value": 0.5},
+        )
+        for index, fraction in enumerate(invalid_fractions):
+            with self.subTest(fraction=index):
+                payload = minimal_metrics()
+                payload["detection"]["expected_finding_recall"] = fraction
+                with self.assertRaises(ContractError):
+                    validate_contract("metrics.schema.json", payload)
+
+        payload = minimal_metrics()
+        payload["detection"]["expected_finding_recall"] = {
+            "numerator": 1,
+            "denominator": 3,
+            "value": (1 / 3) + 1e-12,
+        }
+        validate_contract("metrics.schema.json", payload)
+
+        payload["detection"]["expected_finding_recall"] = {
+            "numerator": 0,
+            "denominator": 0,
+            "value": None,
+        }
+        validate_contract("metrics.schema.json", payload)
+
+    def test_percentile_summary_semantics(self) -> None:
+        invalid_summaries = (
+            {"count": 2, "p50": 2.0, "p95": 1.0, "values": [1.0, 2.0]},
+            {"count": 2, "p50": 1.0, "p95": 1.0, "values": [1.0]},
+            {"count": 0, "p50": 0.0, "p95": 0.0, "values": []},
+        )
+        for index, summary in enumerate(invalid_summaries):
+            with self.subTest(summary=index):
+                payload = minimal_metrics()
+                payload["performance"]["wall_time_seconds"] = summary
+                with self.assertRaises(ContractError):
+                    validate_contract("metrics.schema.json", payload)
+
+        payload = minimal_metrics()
+        payload["performance"]["wall_time_seconds"] = {
+            "count": 0,
+            "p50": None,
+            "p95": None,
+            "values": [],
+        }
+        validate_contract("metrics.schema.json", payload)
+
     def test_schema_filename_resolution_is_safe(self) -> None:
         for name in (
             "../annotation.schema.json",
             "schemas/annotation.schema.json",
             "/tmp/annotation.schema.json",
+            "Annotation.schema.json",
             "missing.schema.json",
         ):
             with self.subTest(name=name):

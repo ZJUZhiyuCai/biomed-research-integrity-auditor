@@ -299,7 +299,8 @@
         "x",
         "y",
         "width",
-        "height"
+        "height",
+        "coordinate_space"
       ],
       "properties": {
         "x": {
@@ -312,15 +313,15 @@
         },
         "width": {
           "type": "number",
-          "exclusiveMinimum": 0
+          "minimum": 0
         },
         "height": {
           "type": "number",
-          "exclusiveMinimum": 0
+          "minimum": 0
         },
         "coordinate_space": {
           "enum": [
-            "normalized",
+            "normalized_0_1",
             "pixels"
           ]
         }
