@@ -480,6 +480,53 @@ class BriaBenchLegacyRegressionTests(unittest.TestCase):
                 ).encode("utf-8")
                 self.assertEqual(content, canonical, relative)
 
+    def test_materialization_rejects_equal_and_descendant_output_roots_without_mutation(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = self.copy_evals(root)
+            before = self.tree_snapshot(source)
+
+            with self.assertRaises(LegacyRegressionError):
+                expand_legacy_regression(source, source)
+            self.assertEqual(self.tree_snapshot(source), before)
+
+            nested_output = source / "generated-output"
+            with self.assertRaises(LegacyRegressionError):
+                expand_legacy_regression(source, nested_output)
+            self.assertFalse(nested_output.exists())
+            self.assertEqual(self.tree_snapshot(source), before)
+
+    def test_materialization_rejects_source_below_owned_output_without_mutation(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / "output"
+            source = output / "cases" / "regression" / "legacy-source"
+            source.parent.mkdir(parents=True)
+            shutil.copytree(LEGACY_EVAL_ROOT, source)
+            (source / "sentinel.bin").write_bytes(b"source sentinel\x00\xff")
+            before = self.tree_snapshot(output)
+
+            with self.assertRaises(LegacyRegressionError):
+                expand_legacy_regression(source, output)
+
+            self.assertEqual(self.tree_snapshot(output), before)
+
+    def test_materialization_allows_sibling_source_and_output_roots(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = self.copy_evals(root)
+            output = root / "output"
+            before = self.tree_snapshot(source)
+
+            cases = expand_legacy_regression(source, output)
+
+            self.assertEqual([case["case_id"] for case in cases], list(self.CASE_IDS))
+            self.assertTrue((output / "benchmark_manifest.json").is_file())
+            self.assertEqual(self.tree_snapshot(source), before)
+
     def test_materialization_rejects_symlinked_cases_ancestor_without_touching_victim(
         self,
     ) -> None:

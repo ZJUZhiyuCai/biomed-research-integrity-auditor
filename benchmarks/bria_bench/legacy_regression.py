@@ -739,6 +739,33 @@ def _validated_root(value: Path | str, *, label: str, create: bool = False) -> P
         raise LegacyRegressionError(f"invalid {label}: {value!r}") from exc
 
 
+def _prospective_output_root(value: Path | str) -> Path:
+    try:
+        path = Path(os.path.abspath(value))
+        current = path
+        missing_components: list[str] = []
+        while True:
+            try:
+                metadata = current.lstat()
+            except FileNotFoundError:
+                missing_components.append(current.name)
+                current = current.parent
+                continue
+            if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
+                raise LegacyRegressionError(
+                    "benchmark output root components must be actual directories: "
+                    f"{current}"
+                )
+            resolved = current.resolve(strict=True)
+            return resolved.joinpath(*reversed(missing_components))
+    except LegacyRegressionError:
+        raise
+    except (OSError, RuntimeError, TypeError, ValueError) as exc:
+        raise LegacyRegressionError(
+            f"invalid benchmark output root: {value!r}"
+        ) from exc
+
+
 def expand_legacy_regression(
     evals_root: Path | str,
     output_root: Path | str | None = None,
@@ -746,15 +773,22 @@ def expand_legacy_regression(
     """Copy and convert the sealed 30-case legacy collection into a benchmark root."""
 
     source = _validated_root(evals_root, label="legacy eval root")
+    destination_candidate = _prospective_output_root(
+        output_root if output_root is not None else Path(__file__).resolve().parent
+    )
+    if (
+        destination_candidate == source
+        or destination_candidate.is_relative_to(source)
+        or source.is_relative_to(destination_candidate)
+    ):
+        raise LegacyRegressionError(
+            "benchmark output root and legacy eval root must not overlap"
+        )
     destination = _validated_root(
-        output_root if output_root is not None else Path(__file__).resolve().parent,
+        destination_candidate,
         label="benchmark output root",
         create=True,
     )
-    if destination == source or destination.is_relative_to(source):
-        raise LegacyRegressionError(
-            "benchmark output root must be outside the legacy eval root"
-        )
     _validate_source_inventory(source)
 
     loaded = {case_id: _load_label(source, case_id) for case_id in CASE_IDS}
