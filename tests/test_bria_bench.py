@@ -1478,13 +1478,17 @@ class BriaBenchRuntimeTests(unittest.TestCase):
     @unittest.skipUnless(os.name == "posix", "process identity tests require POSIX")
     def test_child_rss_contributes_to_peak(self) -> None:
         child_code = (
-            "import time; buf = bytearray(48 * 1024 * 1024); "
-            "buf[::4096] = b\"x\" * (48 * 1024); time.sleep(0.8)"
+            "import time\n"
+            "buf = bytearray(48 * 1024 * 1024)\n"
+            "for offset in range(0, len(buf), 4096):\n"
+            "    buf[offset] = 1\n"
+            "time.sleep(1.2)"
         )
         source = (
             "import subprocess, sys, time\n"
             f"child = subprocess.Popen([sys.executable, '-c', {child_code!r}])\n"
             "child.wait()\n"
+            "raise SystemExit(child.returncode)\n"
         )
         result = self.run_python(source, timeout_seconds=5.0)
 
