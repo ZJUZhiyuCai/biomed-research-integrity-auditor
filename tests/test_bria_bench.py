@@ -3092,7 +3092,24 @@ class BriaBenchMatchingTests(unittest.TestCase):
                 self.observation("O6", "SOURCE_DATA"),
             ).compatible
         )
-        for generic in ("Figure", "Panel", "Table", "Sheet"):
+        for generic in (
+            "Figure",
+            "Panel",
+            "Table",
+            "Sheet",
+            "Page",
+            "Row",
+            "Column",
+            "Region",
+            "Day",
+            "Fig.",
+            "Section",
+            "Paragraph",
+            "Cell",
+            "Cell range",
+            "Timepoint",
+            "File",
+        ):
             with self.subTest(generic=generic):
                 self.assertFalse(
                     label_observation_compatible(
@@ -3100,6 +3117,54 @@ class BriaBenchMatchingTests(unittest.TestCase):
                         self.observation("OG", generic),
                     ).compatible
                 )
+
+    def test_composite_structured_terms_use_parser_components(self) -> None:
+        cases = (
+            ({"terms": ["Figure_3c_3d"]}, "Figure 3C and Figure 3D"),
+            ({"terms": ["Sheet Data, cells A1:B2"]}, "Sheet Data, cells A1:B2"),
+            ({"terms": ["Figure 1A, Day 7"]}, "Figure 1A, D7"),
+        )
+        for index, (label_location, observation_location) in enumerate(cases):
+            with self.subTest(index=index):
+                self.assertTrue(
+                    label_observation_compatible(
+                        self.label(f"LC{index}", label_location),
+                        self.observation(f"OC{index}", observation_location),
+                    ).compatible
+                )
+
+    def test_separate_opaque_term_remains_required_alongside_structured_term(self) -> None:
+        label = self.label("L1", {"terms": ["Figure 1A", "left hippocampus"]})
+        without_opaque = self.observation("O1", "Figure 1A")
+        with_opaque = self.observation(
+            "O2",
+            {"text": "Figure 1A", "terms": ["LEFT HIPPOCAMPUS"]},
+        )
+        self.assertFalse(label_observation_compatible(label, without_opaque).compatible)
+        self.assertTrue(label_observation_compatible(label, with_opaque).compatible)
+
+    def test_space_containing_filename_spans_are_exact_and_conservative(self) -> None:
+        label = self.label("L1", {"file": "my image.png"})
+        self.assertTrue(label_observation_compatible(label, self.observation("O1", "my image.png")).compatible)
+        self.assertTrue(label_observation_compatible(label, self.observation("O2", '"my image.png"')).compatible)
+        self.assertFalse(label_observation_compatible(label, self.observation("O3", "other image.png")).compatible)
+        path_label = self.label("L2", {"file": "/tmp/my image.png"})
+        self.assertTrue(label_observation_compatible(path_label, self.observation("O4", '"/tmp/my image.png"')).compatible)
+        self.assertTrue(label_observation_compatible(path_label, self.observation("O5", "my image.png")).compatible)
+
+    def test_different_figure_shorthand_requires_both_figures(self) -> None:
+        label = self.label("L1", "Figure 1A and 2B")
+        self.assertFalse(label_observation_compatible(label, self.observation("O1", "Figure 1A")).compatible)
+        self.assertTrue(label_observation_compatible(label, self.observation("O2", "Figure 1A and Figure 2B")).compatible)
+
+    def test_plain_compound_text_retains_opaque_remainder(self) -> None:
+        label = self.label("L1", {"terms": ["Figure 1A", "left hippocampus"]})
+        self.assertTrue(
+            label_observation_compatible(label, self.observation("O1", "Fig. 1A and LEFT HIPPOCAMPUS")).compatible
+        )
+        self.assertFalse(
+            label_observation_compatible(label, self.observation("O2", "Fig. 1A and RIGHT HIPPOCAMPUS")).compatible
+        )
 
     def test_regions_require_same_space_and_thresholded_overlap(self) -> None:
         base = {"figure": "2", "region": {"x": 0.0, "y": 0.0, "width": 0.5, "height": 0.5, "coordinate_space": "normalized_0_1"}}

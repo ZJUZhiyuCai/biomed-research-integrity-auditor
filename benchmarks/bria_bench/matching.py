@@ -27,9 +27,60 @@ _SECTION_RE = re.compile(r"\b(?:section\s*[:#-]?\s*)?(introduction|background|me
 _TIME_DAY_RE = re.compile(r"(?<![a-z0-9])(?:day\s*(\d+)|(\d+)\s*days?|d\s*(\d+))\b", re.IGNORECASE)
 _CELL_RE = re.compile(r"(?<![a-z0-9])([a-z]{1,3})(\d+)(?::([a-z]{1,3})(\d+))?\b", re.IGNORECASE)
 _FILE_RE = re.compile(r"(?<![a-z0-9])(?:[~./\\_-]*[a-z0-9][a-z0-9._/\\_-]*)\.(?:pdf|png|jpe?g|tiff?|xlsx?|csv|docx?)\b", re.IGNORECASE)
+_FILE_SUFFIX_RE = re.compile(r"\.(?:pdf|png|jpe?g|tiff?|xlsx?|csv|docx?)$", re.IGNORECASE)
 _CELL_TEXT_RE = re.compile(r"\b(?:cells?|cell\s+range|range)\s*[:#-]?\s*([a-z]{1,3}\d+(?::[a-z]{1,3}\d+)?)\b", re.IGNORECASE)
 _NAMED_SHEET_RE = re.compile(r"\bsheet\s+([a-z][a-z0-9 _-]*?)(?=\s*(?:,|;|\bcell|\brange|$))", re.IGNORECASE)
-_GENERIC_WORDS = frozenset({"figure", "fig", "panel", "table", "sheet", "page", "pages", "region", "day", "days", "column", "columns", "row", "rows"})
+_FIGURE_CHAIN_RE = re.compile(r"(?:\band\s+|[_/,;&]+)\d+\s*[a-z]\b", re.IGNORECASE)
+_GENERIC_LOCATION_TOKENS = frozenset({
+    "cell",
+    "cells",
+    "column",
+    "columns",
+    "day",
+    "days",
+    "fig",
+    "figure",
+    "file",
+    "page",
+    "pages",
+    "panel",
+    "paragraph",
+    "paragraphs",
+    "range",
+    "region",
+    "row",
+    "rows",
+    "section",
+    "sections",
+    "sheet",
+    "sheets",
+    "table",
+    "tables",
+    "timepoint",
+    "timepoints",
+})
+_IGNORABLE_REMAINDER_TOKENS = _GENERIC_LOCATION_TOKENS | frozenset({
+    "a",
+    "an",
+    "and",
+    "at",
+    "by",
+    "file",
+    "find",
+    "from",
+    "in",
+    "located",
+    "of",
+    "on",
+    "or",
+    "refer",
+    "review",
+    "see",
+    "source",
+    "the",
+    "to",
+    "with",
+})
 
 
 @dataclass(frozen=True)
@@ -250,10 +301,12 @@ def _add_figures(location: _Location, text: str) -> None:
             location.panels.add(panel)
         tail = text[match.end() : match.end() + 32]
         for chained in re.finditer(r"(?:[_/,;&]+|\band\s+)(\d+)\s*([a-z])\b", tail, re.IGNORECASE):
-            if int(chained.group(1)) == number:
-                panel = chained.group(2).upper()
-                location.figures.add(_Figure(supplement, number, panel))
-                location.panels.add(panel)
+            chained_number = int(chained.group(1))
+            if chained_number < 1:
+                raise ValueError("figure numbers must be positive")
+            chained_panel = chained.group(2).upper()
+            location.figures.add(_Figure(supplement, chained_number, chained_panel))
+            location.panels.add(chained_panel)
     for match in _SHORT_SUPP_FIGURE_RE.finditer(text):
         if int(match.group(1)) < 1:
             raise ValueError("figure numbers must be positive")
@@ -321,8 +374,29 @@ def _has_structured_location(location: _Location) -> bool:
     )
 
 
-def _fully_structured_term(text: str) -> bool:
-    patterns = (
+def _is_generic_location_text(text: str) -> bool:
+    tokens = re.findall(r"[a-z]+", unicodedata.normalize("NFKC", text).casefold())
+    return bool(tokens) and all(token in _GENERIC_LOCATION_TOKENS for token in tokens)
+
+
+def _filename_span(text: str) -> str | None:
+    candidate = text.strip()
+    if len(candidate) >= 2 and candidate[0] == candidate[-1] and candidate[0] in {'"', "'"}:
+        candidate = candidate[1:-1].strip()
+        return candidate if candidate and _FILE_SUFFIX_RE.search(candidate) else None
+    if not _FILE_SUFFIX_RE.search(candidate):
+        return None
+    first_word = re.match(r"[a-z]+\b", candidate, re.IGNORECASE)
+    if first_word and first_word.group(0).casefold() in _IGNORABLE_REMAINDER_TOKENS:
+        return None
+    return candidate
+
+
+def _opaque_remainder(text: str) -> str:
+    if _filename_span(text) is not None:
+        return ""
+    remainder = text
+    for pattern in (
         _FIGURE_RE,
         _SHORT_SUPP_FIGURE_RE,
         _PANEL_RE,
@@ -337,8 +411,16 @@ def _fully_structured_term(text: str) -> bool:
         _FILE_RE,
         _SECTION_RE,
         _TIME_DAY_RE,
-    )
-    return text in {"abstract", "introduction", "background", "methods", "materials", "results", "discussion", "conclusion", "supplement", "supplementary"} or any(pattern.fullmatch(text) for pattern in patterns)
+        _FIGURE_CHAIN_RE,
+    ):
+        remainder = pattern.sub(" ", remainder)
+    remainder = re.sub(r"\b(?:and|or|with|at|by|from|in|of|on|refer|review|see|source|the|to)\b", " ", remainder)
+    remainder = re.sub(r"[^a-z0-9]+", " ", remainder, flags=re.IGNORECASE)
+    remainder = _norm(" ".join(remainder.split()))
+    tokens = re.findall(r"[a-z]+", remainder)
+    if not tokens or all(token in _IGNORABLE_REMAINDER_TOKENS for token in tokens):
+        return ""
+    return remainder
 
 
 def _add_text(location: _Location, value: object, *, terms: bool = False) -> None:
@@ -380,14 +462,22 @@ def _add_text(location: _Location, value: object, *, terms: bool = False) -> Non
         location.sections.add(text)
     for match in _TIME_DAY_RE.finditer(text):
         location.timepoints.add(int(next(item for item in match.groups() if item is not None)))
-    for match in _FILE_RE.finditer(text):
-        location.files.add(_norm(match.group(0)))
+    whole_filename = _filename_span(text)
+    if whole_filename is not None:
+        location.files.add(_norm(whole_filename))
+    else:
+        for match in _FILE_RE.finditer(text):
+            location.files.add(_norm(match.group(0)))
     if terms:
-        if not _fully_structured_term(text) and text not in _GENERIC_WORDS and text:
+        if before == _structured_snapshot(location) and not _is_generic_location_text(text) and text:
             location.terms.add(text)
     elif before == _structured_snapshot(location) and not _has_structured_location(location):
-        if text not in _GENERIC_WORDS and text:
+        if not _is_generic_location_text(text) and text:
             location.terms.add(text)
+    elif before != _structured_snapshot(location):
+        remainder = _opaque_remainder(text)
+        if remainder:
+            location.terms.add(remainder)
 
 
 def _add_region(location: _Location, value: object) -> None:
