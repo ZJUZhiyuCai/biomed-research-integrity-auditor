@@ -209,7 +209,12 @@ def _open_directory_component(
         descriptor = os.open(name, _directory_flags(), dir_fd=parent_fd)
         opened = _fstat(descriptor, relative, "after open")
         _ensure_directory(opened, relative, "after open")
-        _ensure_stable(before, opened, relative, "between inspection and open")
+        if check_expected_metadata:
+            _ensure_stable(before, opened, relative, "between inspection and open")
+        elif not _same_identity(before, opened):
+            raise HashingError(
+                f"Package directory identity changed between inspection and open: {relative}"
+            )
         if expected is not None and check_expected_metadata:
             _ensure_stable(expected, opened, relative, "after open")
         elif expected is not None and not _same_identity(expected, opened):
@@ -244,7 +249,12 @@ def _open_directory_chain(
             _ensure_stable(path_stat, opened, str(path), "between inspection and open")
         for index, component in enumerate(components):
             relative = "/".join(components[: index + 1])
-            next_fd, opened = _open_directory_component(current_fd, component, relative)
+            next_fd, opened = _open_directory_component(
+                current_fd,
+                component,
+                relative,
+                check_expected_metadata=index == len(components) - 1,
+            )
             descriptors.append(next_fd)
             current_fd = next_fd
         _ensure_stable(path_stat, opened, str(path), "after open")
@@ -473,7 +483,12 @@ def _open_file_path(path: Path) -> tuple[int, list[int], int, os.stat_result]:
         descriptors.append(current_fd)
         for index, component in enumerate(parent_components):
             relative = "/".join(components[: index + 1])
-            next_fd, _ = _open_directory_component(current_fd, component, relative)
+            next_fd, _ = _open_directory_component(
+                current_fd,
+                component,
+                relative,
+                check_expected_metadata=False,
+            )
             descriptors.append(next_fd)
             current_fd = next_fd
         before = _stat_at(current_fd, components[-1], str(path))

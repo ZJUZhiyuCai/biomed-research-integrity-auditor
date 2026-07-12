@@ -3177,6 +3177,31 @@ class BriaBenchRegistryTests(unittest.TestCase):
             with self.assertRaisesRegex(HashingError, "swap-ancestor|changed"):
                 hash_tree(ancestor / "package")
 
+    def test_hashing_allows_unrelated_ancestor_directory_churn(self) -> None:
+        self.require_secure_hashing()
+        shared = self.root / "shared-ancestor"
+        package = shared / "stable" / "package"
+        package.mkdir(parents=True)
+        (package / "payload.bin").write_bytes(b"payload")
+        real_open = hashing_module.os.open
+        churned = False
+
+        def churn_before_component(
+            path: str | os.PathLike[str], *args: object, **kwargs: object
+        ) -> int:
+            nonlocal churned
+            if path == "shared-ancestor" and not churned:
+                (shared / "unrelated-sibling").mkdir()
+                churned = True
+            return real_open(path, *args, **kwargs)
+
+        with patch.object(
+            hashing_module.os,
+            "open",
+            side_effect=churn_before_component,
+        ):
+            self.assertEqual(hash_tree(package), hash_tree(package))
+
     def test_tree_hash_bounds_file_descriptors_under_lowered_limit(self) -> None:
         self.require_secure_hashing()
         try:
