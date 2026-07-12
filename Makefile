@@ -70,6 +70,7 @@ benchmark-smoke:
 	mkdir -p $(BRIA_BENCH_SMOKE_DIR)
 	$(PYTHON) -m benchmarks.bria_bench.cli run --manifest $(BRIA_BENCH_MANIFEST) --runs-dir $(BRIA_BENCH_SMOKE_DIR) --split dev --adapter full --timeout-seconds 60
 	$(PYTHON) -m benchmarks.bria_bench.cli evaluate --manifest $(BRIA_BENCH_MANIFEST) --runs-dir $(BRIA_BENCH_SMOKE_DIR) --split dev --output $(BRIA_BENCH_SMOKE_DIR)/metrics.json
+	$(PYTHON) -m benchmarks.bria_bench.cli report --metrics $(BRIA_BENCH_SMOKE_DIR)/metrics.json --output $(BRIA_BENCH_SMOKE_DIR)/REPORT.md
 
 benchmark:
 	mkdir -p $(BRIA_BENCH_RUNS_DIR)

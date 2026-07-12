@@ -30,7 +30,7 @@ The benchmark extra installs `psutil`, which is required for process monitoring.
 make benchmark-smoke
 ```
 
-The smoke target runs all dev cases with the `full` adapter, applies a 60 second timeout per case, and writes only under `tmp/bria_bench_smoke`. It passes the same `--split dev` selection to both `run` and `evaluate`.
+The smoke target runs all dev cases with the `full` adapter, applies a 60 second timeout per case, and writes only under `tmp/bria_bench_smoke`. It passes the same `--split dev` selection to both `run` and `evaluate`, then renders the evaluated metrics as a report.
 
 Equivalent direct commands:
 
@@ -47,7 +47,13 @@ python -m benchmarks.bria_bench.cli evaluate \
   --runs-dir tmp/bria_bench_smoke \
   --split dev \
   --output tmp/bria_bench_smoke/metrics.json
+
+python -m benchmarks.bria_bench.cli report \
+  --metrics tmp/bria_bench_smoke/metrics.json \
+  --output tmp/bria_bench_smoke/REPORT.md
 ```
+
+Run artifacts and `run_summary.json` record technical execution, `metrics.json` is the machine-readable evaluation, and `REPORT.md` is the rendered technical metrics report. All of these smoke outputs remain under `tmp/bria_bench_smoke`.
 
 ## Manual Full Run
 

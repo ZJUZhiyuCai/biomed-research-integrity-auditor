@@ -7670,6 +7670,12 @@ class BriaBenchCliTests(unittest.TestCase):
         self.assertIn("--split dev --adapter full --timeout-seconds 60", smoke)
         self.assertIn("--runs-dir $(BRIA_BENCH_SMOKE_DIR)", smoke)
         self.assertIn("--split dev --output $(BRIA_BENCH_SMOKE_DIR)/metrics.json", smoke)
+        self.assertEqual(
+            smoke.rstrip().splitlines()[-1],
+            "\t$(PYTHON) -m benchmarks.bria_bench.cli report "
+            "--metrics $(BRIA_BENCH_SMOKE_DIR)/metrics.json "
+            "--output $(BRIA_BENCH_SMOKE_DIR)/REPORT.md",
+        )
         self.assertNotIn("--case", smoke)
 
         full = target_body("benchmark")
