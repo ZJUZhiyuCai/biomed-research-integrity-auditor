@@ -67,6 +67,7 @@ benchmark-freeze:
 	$(PYTHON) -m benchmarks.bria_bench.cli freeze --source $(BRIA_BENCH_SOURCE_MANIFEST) --output $(BRIA_BENCH_MANIFEST) --frozen-at 2026-07-11T00:00:00Z
 
 benchmark-smoke:
+	rm -rf $(BRIA_BENCH_SMOKE_DIR)
 	mkdir -p $(BRIA_BENCH_SMOKE_DIR)
 	$(PYTHON) -m benchmarks.bria_bench.cli run --manifest $(BRIA_BENCH_MANIFEST) --runs-dir $(BRIA_BENCH_SMOKE_DIR) --split dev --adapter full --timeout-seconds 60
 	$(PYTHON) -m benchmarks.bria_bench.cli evaluate --manifest $(BRIA_BENCH_MANIFEST) --runs-dir $(BRIA_BENCH_SMOKE_DIR) --split dev --output $(BRIA_BENCH_SMOKE_DIR)/metrics.json

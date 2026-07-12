@@ -7,6 +7,7 @@ import argparse
 import csv
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import tomllib
@@ -47,34 +48,41 @@ EXCLUDED_PARTS = {
     "playwright-report",
 }
 EXCLUDED_SUFFIXES = {".pyc", ".pyo", ".DS_Store"}
-BRIA_BENCH_PRIVATE_ROOTS = (
-    "runs",
-    "reviewer_packets",
-    "reviewer-packets",
-    "reviewer_packet",
-    "reviewer-packet",
-    "mappings",
-    "reviewer_mappings",
-    "api_cache",
-    ".api_cache",
-    "cache",
-    ".cache",
-    "metrics",
-    "local_metrics",
-    "seeds",
-    "identity",
-    "identities",
+BRIA_BENCH_PRIVATE_DIRECTORIES = frozenset(
+    {
+        "runs",
+        "results",
+        "reviewer_packets",
+        "reviewer-packets",
+        "reviewer_packet",
+        "reviewer-packet",
+        "mappings",
+        "reviewer_mappings",
+        "reviewer-mappings",
+        "api_cache",
+        "api-cache",
+        ".api_cache",
+        ".api-cache",
+        "cache",
+        ".cache",
+        "metrics",
+        "local_metrics",
+        "local-metrics",
+        "seeds",
+        "identity",
+        "identities",
+    }
 )
-BRIA_BENCH_PRIVATE_ROOT_FILES = (
+BRIA_BENCH_PRIVATE_FILE_PATTERNS = (
     re.compile(r"run_summary\.json\Z"),
-    re.compile(r"metrics(?:-.+)?\.json\Z"),
+    re.compile(r"metrics(?:[-_].+)?\.json\Z"),
     re.compile(r"local_metrics.*\.json\Z"),
     re.compile(r"reviewer_mapping.*\.json\Z"),
     re.compile(r".*_mapping\.json\Z"),
-    re.compile(r"reviewer_packet.*\.(?:json|zip)\Z"),
+    re.compile(r"reviewer[-_]packet.*\.(?:json|zip)\Z"),
     re.compile(r"seed.*\.(?:json|txt)\Z"),
     re.compile(r".*identity.*\.json\Z"),
-    re.compile(r".*api_cache.*\.json\Z"),
+    re.compile(r".*api[-_]cache.*\.json\Z"),
 )
 BRIA_BENCH_RELEASE_SUMMARY = re.compile(
     r"results/(?:release_summary|public_summary)_[A-Za-z0-9._-]+\.json\Z"
@@ -95,22 +103,56 @@ def should_include(path: Path) -> bool:
     return path.name not in EXCLUDED_SUFFIXES and path.suffix not in EXCLUDED_SUFFIXES
 
 
-def _is_bria_bench_private_artifact(rel: Path) -> bool:
+def should_prune_directory(path: Path) -> bool:
+    rel = path.relative_to(ROOT)
+    if any(part in EXCLUDED_PARTS for part in rel.parts):
+        return True
+    return _is_bria_bench_private_directory(rel)
+
+
+def _bria_bench_local_parts(rel: Path) -> tuple[str, ...] | None:
     parts = rel.parts
     if len(parts) < 2 or parts[:2] != ("benchmarks", "bria_bench"):
+        return None
+    return parts[2:]
+
+
+def _is_bria_bench_private_directory(rel: Path) -> bool:
+    local_parts = _bria_bench_local_parts(rel)
+    if not local_parts or local_parts == ("results",):
         return False
-    local_parts = parts[2:]
+    return any(part in BRIA_BENCH_PRIVATE_DIRECTORIES for part in local_parts)
+
+
+def _is_bria_bench_private_artifact(rel: Path) -> bool:
+    local_parts = _bria_bench_local_parts(rel)
     if not local_parts:
         return False
-    first = local_parts[0]
     local = Path(*local_parts).as_posix()
-    if first == "results":
-        return local not in {"results/.gitkeep"} and BRIA_BENCH_RELEASE_SUMMARY.fullmatch(local) is None
-    if first in BRIA_BENCH_PRIVATE_ROOTS:
+    if local == "results/.gitkeep" or BRIA_BENCH_RELEASE_SUMMARY.fullmatch(local):
+        return False
+    if any(part in BRIA_BENCH_PRIVATE_DIRECTORIES for part in local_parts[:-1]):
         return True
-    if len(local_parts) == 1:
-        return any(pattern.fullmatch(first) for pattern in BRIA_BENCH_PRIVATE_ROOT_FILES)
-    return False
+    return any(
+        pattern.fullmatch(local_parts[-1])
+        for pattern in BRIA_BENCH_PRIVATE_FILE_PATTERNS
+    )
+
+
+def _iter_directory_files(path: Path) -> list[Path]:
+    files: list[Path] = []
+    for current, directory_names, file_names in os.walk(path, topdown=True):
+        current_path = Path(current)
+        directory_names[:] = sorted(
+            name
+            for name in directory_names
+            if not should_prune_directory(current_path / name)
+        )
+        for name in sorted(file_names):
+            child = current_path / name
+            if child.is_file() and should_include(child):
+                files.append(child)
+    return sorted(files)
 
 
 def iter_source_files() -> list[Path]:
@@ -122,9 +164,7 @@ def iter_source_files() -> list[Path]:
         if path.is_file() and should_include(path):
             files.append(path)
             continue
-        for child in sorted(path.rglob("*")):
-            if child.is_file() and should_include(child):
-                files.append(child)
+        files.extend(_iter_directory_files(path))
     return files
 
 

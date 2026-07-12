@@ -78,6 +78,47 @@ skill = [
   "biomed-research-integrity-auditor/templates/reporting_checklists/*.yaml"
 ]
 
+[tool.setuptools.exclude-package-data]
+"benchmarks.bria_bench" = [
+  "runs/**", "**/runs/**",
+  "reviewer_packets/**", "**/reviewer_packets/**",
+  "reviewer-packets/**", "**/reviewer-packets/**",
+  "reviewer_packet/**", "**/reviewer_packet/**",
+  "reviewer-packet/**", "**/reviewer-packet/**",
+  "mappings/**", "**/mappings/**",
+  "reviewer_mappings/**", "**/reviewer_mappings/**",
+  "reviewer-mappings/**", "**/reviewer-mappings/**",
+  "api_cache/**", "**/api_cache/**",
+  "api-cache/**", "**/api-cache/**",
+  ".api_cache/**", "**/.api_cache/**",
+  ".api-cache/**", "**/.api-cache/**",
+  "cache/**", "**/cache/**",
+  ".cache/**", "**/.cache/**",
+  "metrics/**", "**/metrics/**",
+  "local_metrics/**", "**/local_metrics/**",
+  "local-metrics/**", "**/local-metrics/**",
+  "seeds/**", "**/seeds/**",
+  "identity/**", "**/identity/**",
+  "identities/**", "**/identities/**",
+  "**/results/**",
+  "run_summary.json", "**/run_summary.json",
+  "metrics.json", "**/metrics.json",
+  "metrics-*.json", "**/metrics-*.json",
+  "metrics_*.json", "**/metrics_*.json",
+  "local_metrics*.json", "**/local_metrics*.json",
+  "reviewer_mapping*.json", "**/reviewer_mapping*.json",
+  "*_mapping.json", "**/*_mapping.json",
+  "reviewer_packet*.json", "**/reviewer_packet*.json",
+  "reviewer_packet*.zip", "**/reviewer_packet*.zip",
+  "reviewer-packet*.json", "**/reviewer-packet*.json",
+  "reviewer-packet*.zip", "**/reviewer-packet*.zip",
+  "seed*.json", "**/seed*.json",
+  "seed*.txt", "**/seed*.txt",
+  "*identity*.json", "**/*identity*.json",
+  "*api_cache*.json", "**/*api_cache*.json",
+  "*api-cache*.json", "**/*api-cache*.json"
+]
+
 [tool.mypy]
 python_version = "3.10"
 ignore_missing_imports = true

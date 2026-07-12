@@ -15,38 +15,39 @@ recursive-include examples *
 recursive-include benchmarks *.py *.md *.json *.csv *.txt *.jpg *.png *.pdf
 recursive-include evals *.py *.json *.csv *.txt *.md *.pdf *.png *.yaml
 prune audit_outputs
-prune benchmarks/bria_bench/runs
-recursive-exclude benchmarks/bria_bench/results *
+recursive-exclude benchmarks/bria_bench runs/**
+recursive-exclude benchmarks/bria_bench reviewer_packets/**
+recursive-exclude benchmarks/bria_bench reviewer-packets/**
+recursive-exclude benchmarks/bria_bench reviewer_packet/**
+recursive-exclude benchmarks/bria_bench reviewer-packet/**
+recursive-exclude benchmarks/bria_bench mappings/**
+recursive-exclude benchmarks/bria_bench reviewer_mappings/**
+recursive-exclude benchmarks/bria_bench reviewer-mappings/**
+recursive-exclude benchmarks/bria_bench api_cache/**
+recursive-exclude benchmarks/bria_bench api-cache/**
+recursive-exclude benchmarks/bria_bench .api_cache/**
+recursive-exclude benchmarks/bria_bench .api-cache/**
+recursive-exclude benchmarks/bria_bench cache/**
+recursive-exclude benchmarks/bria_bench .cache/**
+recursive-exclude benchmarks/bria_bench metrics/**
+recursive-exclude benchmarks/bria_bench local_metrics/**
+recursive-exclude benchmarks/bria_bench local-metrics/**
+recursive-exclude benchmarks/bria_bench seeds/**
+recursive-exclude benchmarks/bria_bench identity/**
+recursive-exclude benchmarks/bria_bench identities/**
+recursive-exclude benchmarks/bria_bench results/**
 include benchmarks/bria_bench/results/.gitkeep
 include benchmarks/bria_bench/results/release_summary_*.json
 include benchmarks/bria_bench/results/public_summary_*.json
-prune benchmarks/bria_bench/reviewer_packets
-prune benchmarks/bria_bench/reviewer-packets
-prune benchmarks/bria_bench/reviewer_packet
-prune benchmarks/bria_bench/reviewer-packet
-prune benchmarks/bria_bench/mappings
-prune benchmarks/bria_bench/reviewer_mappings
-prune benchmarks/bria_bench/api_cache
-prune benchmarks/bria_bench/.api_cache
-prune benchmarks/bria_bench/cache
-prune benchmarks/bria_bench/.cache
-prune benchmarks/bria_bench/metrics
-prune benchmarks/bria_bench/local_metrics
-prune benchmarks/bria_bench/seeds
-prune benchmarks/bria_bench/identity
-prune benchmarks/bria_bench/identities
-exclude benchmarks/bria_bench/run_summary.json
-exclude benchmarks/bria_bench/metrics.json
-exclude benchmarks/bria_bench/metrics-*.json
-exclude benchmarks/bria_bench/local_metrics*.json
-exclude benchmarks/bria_bench/reviewer_mapping*.json
-exclude benchmarks/bria_bench/*_mapping.json
-exclude benchmarks/bria_bench/reviewer_packet*.zip
-exclude benchmarks/bria_bench/reviewer_packet*.json
-exclude benchmarks/bria_bench/seed*.txt
-exclude benchmarks/bria_bench/seed*.json
-exclude benchmarks/bria_bench/*identity*.json
-exclude benchmarks/bria_bench/*api_cache*.json
+recursive-exclude benchmarks/bria_bench run_summary.json
+recursive-exclude benchmarks/bria_bench metrics.json metrics-*.json metrics_*.json
+recursive-exclude benchmarks/bria_bench local_metrics*.json
+recursive-exclude benchmarks/bria_bench reviewer_mapping*.json *_mapping.json
+recursive-exclude benchmarks/bria_bench reviewer_packet*.json reviewer_packet*.zip
+recursive-exclude benchmarks/bria_bench reviewer-packet*.json reviewer-packet*.zip
+recursive-exclude benchmarks/bria_bench seed*.json seed*.txt
+recursive-exclude benchmarks/bria_bench *identity*.json
+recursive-exclude benchmarks/bria_bench *api_cache*.json *api-cache*.json
 prune evals/outputs
 prune evals/prompts
 prune evals/scorecards
