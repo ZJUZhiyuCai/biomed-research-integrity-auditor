@@ -4217,7 +4217,15 @@ class BriaBenchRuntimeTests(unittest.TestCase):
                 "annotations/**/*.json",
                 "cases/**/*",
                 "results/.gitkeep",
-                "schemas/*.json",
+                "schemas/annotation.schema.json",
+                "schemas/benchmark_manifest.schema.json",
+                "schemas/metrics.schema.json",
+                "schemas/observation.schema.json",
+                "schemas/reviewer_form_completed.schema.json",
+                "schemas/reviewer_form_template.schema.json",
+                "schemas/reviewer_mapping.schema.json",
+                "schemas/reviewer_packet_manifest.schema.json",
+                "schemas/run_result.schema.json",
             ],
         )
 
