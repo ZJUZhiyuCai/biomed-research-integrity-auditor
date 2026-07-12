@@ -3827,6 +3827,96 @@ class BriaBenchRegistryTests(unittest.TestCase):
         self.assertTrue(file_close_failed)
         self.assertTrue(chain_attempted)
 
+    def test_post_open_failure_cleans_directory_chain_when_file_close_fails(
+        self,
+    ) -> None:
+        self.require_secure_hashing()
+        annotation = self.root / "post-open-failure.json"
+        annotation.write_bytes(b"sealed")
+        package = self.root / "post-open-package"
+        package.mkdir()
+        (package / "payload.bin").write_bytes(b"payload")
+
+        for label, operation, failure_relative in (
+            ("hash_file", lambda: hash_file(annotation), str(annotation)),
+            ("hash_tree", lambda: hash_tree(package), "payload.bin"),
+        ):
+            with self.subTest(operation=label):
+                real_open = hashing_module.os.open
+                real_close = hashing_module.os.close
+                real_fstat = hashing_module._fstat
+                directory_fds: set[int] = set()
+                file_fds: set[int] = set()
+                closed_fds: set[int] = set()
+                failed_file_fd: int | None = None
+                validation_failed = False
+
+                def tracked_open(
+                    path: str | os.PathLike[str],
+                    flags: int,
+                    *args: object,
+                    **kwargs: object,
+                ) -> int:
+                    descriptor = real_open(path, flags, *args, **kwargs)
+                    if flags & os.O_DIRECTORY:
+                        directory_fds.add(descriptor)
+                    else:
+                        file_fds.add(descriptor)
+                    return descriptor
+
+                def fail_first_file_close(descriptor: int) -> None:
+                    nonlocal failed_file_fd
+                    if descriptor in file_fds and failed_file_fd is None:
+                        failed_file_fd = descriptor
+                        raise OSError("injected file close failure")
+                    real_close(descriptor)
+                    closed_fds.add(descriptor)
+
+                def fail_after_file_open(
+                    descriptor: int,
+                    relative: str,
+                    stage: str,
+                ) -> os.stat_result:
+                    nonlocal validation_failed
+                    if (
+                        not validation_failed
+                        and relative == failure_relative
+                        and stage == "after open"
+                    ):
+                        validation_failed = True
+                        raise HashingError("injected post-open validation failure")
+                    return real_fstat(descriptor, relative, stage)
+
+                try:
+                    with (
+                        patch.object(
+                            hashing_module.os,
+                            "open",
+                            side_effect=tracked_open,
+                        ),
+                        patch.object(
+                            hashing_module.os,
+                            "close",
+                            side_effect=fail_first_file_close,
+                        ),
+                        patch.object(
+                            hashing_module,
+                            "_fstat",
+                            side_effect=fail_after_file_open,
+                        ),
+                    ):
+                        with self.assertRaisesRegex(
+                            HashingError,
+                            "injected post-open validation",
+                        ):
+                            operation()
+                    self.assertTrue(validation_failed)
+                    self.assertIsNotNone(failed_file_fd)
+                    self.assertTrue(directory_fds.issubset(closed_fds))
+                finally:
+                    if failed_file_fd is not None:
+                        real_close(failed_file_fd)
+
     def test_load_frozen_checks_shape_only_and_verify_detects_stale_package(self) -> None:
         self.require_secure_hashing()
         source = self.write_manifest("source.json", self.manifest())

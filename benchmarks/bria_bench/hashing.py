@@ -153,6 +153,13 @@ def _close_fd(descriptor: int, label: str) -> None:
         raise HashingError(f"Could not close {label}") from exc
 
 
+def _close_fd_quietly(descriptor: int) -> None:
+    try:
+        os.close(descriptor)
+    except OSError:
+        pass
+
+
 def _list_names(fd: int, relative: str) -> tuple[str, ...]:
     try:
         names = os.listdir(fd)
@@ -222,11 +229,11 @@ def _open_directory_component(
         return descriptor, opened
     except HashingError:
         if descriptor != -1:
-            os.close(descriptor)
+            _close_fd_quietly(descriptor)
         raise
     except (OSError, ValueError) as exc:
         if descriptor != -1:
-            os.close(descriptor)
+            _close_fd_quietly(descriptor)
         raise HashingError(f"Could not securely open package directory: {relative}") from exc
 
 
@@ -282,10 +289,7 @@ def _open_directory_chain(
         return descriptors, current_fd, opened
     except HashingError:
         for descriptor in reversed(descriptors):
-            try:
-                os.close(descriptor)
-            except OSError:
-                pass
+            _close_fd_quietly(descriptor)
         raise
 
 
@@ -370,10 +374,7 @@ def _open_directory_record(
         return descriptors, current_fd
     except HashingError:
         for descriptor in reversed(descriptors):
-            try:
-                os.close(descriptor)
-            except OSError:
-                pass
+            _close_fd_quietly(descriptor)
         raise
 
 
@@ -418,18 +419,15 @@ def _open_file_record(
             return file_fd, descriptors, current_fd
         except HashingError:
             if file_fd != -1:
-                os.close(file_fd)
+                _close_fd_quietly(file_fd)
             raise
         except (OSError, ValueError) as exc:
             if file_fd != -1:
-                os.close(file_fd)
+                _close_fd_quietly(file_fd)
             raise HashingError(f"Could not securely open package file: {record.relative}") from exc
     except HashingError:
         for descriptor in reversed(descriptors):
-            try:
-                os.close(descriptor)
-            except OSError:
-                pass
+            _close_fd_quietly(descriptor)
         raise
 
 
@@ -540,18 +538,15 @@ def _open_file_path(path: Path) -> tuple[int, list[int], int, os.stat_result]:
             return file_fd, descriptors, current_fd, path_stat
         except HashingError:
             if file_fd != -1:
-                os.close(file_fd)
+                _close_fd_quietly(file_fd)
             raise
         except (OSError, ValueError) as exc:
             if file_fd != -1:
-                os.close(file_fd)
+                _close_fd_quietly(file_fd)
             raise HashingError(f"Could not securely open file path: {path}") from exc
     except HashingError:
         for descriptor in reversed(descriptors):
-            try:
-                os.close(descriptor)
-            except OSError:
-                pass
+            _close_fd_quietly(descriptor)
         raise
 
 
