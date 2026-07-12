@@ -407,6 +407,16 @@ class BriaBenchReleasePrivacyTests(unittest.TestCase):
             return match.group(1).rstrip().splitlines()
 
         smoke = target_lines("benchmark-smoke")
+        self.assertIn(
+            "BENCHMARK_FROZEN_AT ?= 2026-07-11T00:00:00Z",
+            makefile,
+        )
+        self.assertIn(
+            "--frozen-at $(BENCHMARK_FROZEN_AT)",
+            "\n".join(target_lines("benchmark-freeze")),
+        )
+        self.assertIn("make benchmark-freeze", readme)
+        self.assertIn("git diff --exit-code", readme)
         self.assertEqual(smoke[0], "\trm -rf $(BRIA_BENCH_SMOKE_DIR)")
         self.assertEqual(smoke[1], "\tmkdir -p $(BRIA_BENCH_SMOKE_DIR)")
         self.assertIn(

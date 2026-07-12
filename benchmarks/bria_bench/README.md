@@ -24,6 +24,23 @@ python -m pip install -e '.[benchmark]'
 
 The benchmark extra installs `psutil`, which is required for process monitoring. Missing `psutil` is an environment failure and must never be interpreted as a scientific finding.
 
+## Freeze And Reproduce The Registry
+
+The committed manifest uses a fixed freeze timestamp so package and annotation hashes can be regenerated deterministically:
+
+```bash
+make benchmark-freeze
+git diff --exit-code -- benchmarks/bria_bench/benchmark_manifest.json
+```
+
+For a deliberately new benchmark release, supply its recorded UTC timestamp explicitly:
+
+```bash
+make benchmark-freeze BENCHMARK_FROZEN_AT=2026-07-11T00:00:00Z
+```
+
+Review and commit any resulting manifest change. Do not change the timestamp merely to refresh a file; it is part of the frozen benchmark identity. The smoke and full-run commands below reproduce execution from that committed manifest.
+
 ## Offline Smoke
 
 ```bash
