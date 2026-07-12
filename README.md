@@ -41,7 +41,7 @@ python -m pip install -e ".[webapp,ocr]"
 make preflight PYTHON=.venv/bin/python
 ```
 
-For CLI-only use, `python -m pip install -e .` is enough. Add extras only when needed: `.[webapp]` for the local web UI, `.[ocr]` for scanned-PDF OCR Python bindings, and `.[dev]` for contributor tools. Use `requirements.txt` for normal development and Python 3.10-3.12 CI-style installs. Use `requirements-lock.txt` when you need a Python 3.11 reproducible install for bug reproduction or deployment audits.
+For CLI-only use, `python -m pip install -e .` is enough. Add extras only when needed: `.[webapp]` for the local web UI, `.[ocr]` for scanned-PDF OCR Python bindings, `.[benchmark]` for BRIA-Bench process monitoring, and `.[dev]` for contributor tools. Use `requirements.txt` for normal development and Python 3.10-3.12 CI-style installs. Use `requirements-lock.txt` when you need a Python 3.11 reproducible install for bug reproduction or deployment audits.
 
 For a repeatable deployment that also links commands into `~/.local/bin`:
 
@@ -277,7 +277,7 @@ DOCX manuscript/protocol intake reads body paragraphs, caption-styled paragraphs
 | `docs/response-to-concern-guide.md` | Neutral workflow for journal/reviewer/public concern responses. |
 | `docs/architecture.md`, `docs/design-notes.md` | Pipeline architecture and design rationale. |
 | `evals/` | Synthetic packages, eval harness, and ground truth. |
-| `benchmarks/` | True-PDF, scanned-PDF OCR, real-image regression, and PPPR public-concern benchmarks. |
+| `benchmarks/` | True-PDF, scanned-PDF OCR, real-image regression, BRIA-Bench, and PPPR public-concern benchmarks. |
 | `webapp/` | Local FastAPI + React/Vite self-audit UI wrapping the CLI artifacts. |
 
 ---
@@ -331,6 +331,17 @@ The harness rewards restraint as much as recall: over-claiming, ignoring benign 
 ### Archived eval run
 
 A persisted scorecard at [`evals/llm_runs/2026-06-30-codex-orchestrated/`](evals/llm_runs/2026-06-30-codex-orchestrated/): 30/30 synthetic cases passed, 0 boundary violations, 0 risk-cap violations. The manifest and scorecard are retained; generated per-case reports are not committed because local audit reports can contain machine-specific paths. This is not an independent third-party validation and does not measure real-manuscript performance.
+
+### BRIA-Bench
+
+[`benchmarks/bria_bench/`](benchmarks/bria_bench/) contains the offline BRIA-Bench registry, schemas, CLI, and reviewer-packet workflow demo. Install `.[benchmark]` before running it:
+
+```bash
+python -m pip install -e ".[benchmark]"
+make benchmark-smoke
+```
+
+The current public BRIA-Bench corpus has 36 fixtures, no public test split, no completed independent blinded result, and zero headline-eligible cases. The 30 synthetic legacy cases are regression/reliability/performance fixtures only, and the 6 dev fixtures are controlled workflow cases; neither group measures real-manuscript validation. Read [`benchmarks/bria_bench/README.md`](benchmarks/bria_bench/README.md) before using the manual full benchmark targets.
 
 ### Public-concern benchmark
 
@@ -387,7 +398,7 @@ make release-artifacts
 
 Builds the frontend, Python wheel/sdist, source bundle, and SHA-256 manifest under `dist/release/`. GitHub Actions templates are at `packaging/github-workflows/`; enabling them requires a maintainer token with workflow permission. PyPI and Homebrew publication require maintainer credentials; see [`packaging/README.md`](packaging/README.md).
 
-The active validation workflow is in [`.github/workflows/validate.yml`](.github/workflows/validate.yml). It installs Python and OCR runtime, uses the runner's Node/npm for frontend dependency installation through `make validate`, then runs key synthetic audit regressions.
+The active validation workflow is in [`.github/workflows/validate.yml`](.github/workflows/validate.yml). It installs Python, OCR runtime, and the benchmark extra, uses the runner's Node/npm for frontend dependency installation through `make validate`, runs the offline BRIA-Bench smoke target, then runs key synthetic audit regressions.
 
 ### Install as a Codex skill
 

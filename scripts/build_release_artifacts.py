@@ -8,6 +8,7 @@ import csv
 import hashlib
 import json
 from pathlib import Path
+import re
 import tomllib
 import zipfile
 
@@ -46,6 +47,38 @@ EXCLUDED_PARTS = {
     "playwright-report",
 }
 EXCLUDED_SUFFIXES = {".pyc", ".pyo", ".DS_Store"}
+BRIA_BENCH_PRIVATE_ROOTS = (
+    "runs",
+    "reviewer_packets",
+    "reviewer-packets",
+    "reviewer_packet",
+    "reviewer-packet",
+    "mappings",
+    "reviewer_mappings",
+    "api_cache",
+    ".api_cache",
+    "cache",
+    ".cache",
+    "metrics",
+    "local_metrics",
+    "seeds",
+    "identity",
+    "identities",
+)
+BRIA_BENCH_PRIVATE_ROOT_FILES = (
+    re.compile(r"run_summary\.json\Z"),
+    re.compile(r"metrics(?:-.+)?\.json\Z"),
+    re.compile(r"local_metrics.*\.json\Z"),
+    re.compile(r"reviewer_mapping.*\.json\Z"),
+    re.compile(r".*_mapping\.json\Z"),
+    re.compile(r"reviewer_packet.*\.(?:json|zip)\Z"),
+    re.compile(r"seed.*\.(?:json|txt)\Z"),
+    re.compile(r".*identity.*\.json\Z"),
+    re.compile(r".*api_cache.*\.json\Z"),
+)
+BRIA_BENCH_RELEASE_SUMMARY = re.compile(
+    r"results/(?:release_summary|public_summary)_[A-Za-z0-9._-]+\.json\Z"
+)
 
 
 def project_version() -> str:
@@ -57,7 +90,27 @@ def should_include(path: Path) -> bool:
     rel = path.relative_to(ROOT)
     if any(part in EXCLUDED_PARTS for part in rel.parts):
         return False
+    if _is_bria_bench_private_artifact(rel):
+        return False
     return path.name not in EXCLUDED_SUFFIXES and path.suffix not in EXCLUDED_SUFFIXES
+
+
+def _is_bria_bench_private_artifact(rel: Path) -> bool:
+    parts = rel.parts
+    if len(parts) < 2 or parts[:2] != ("benchmarks", "bria_bench"):
+        return False
+    local_parts = parts[2:]
+    if not local_parts:
+        return False
+    first = local_parts[0]
+    local = Path(*local_parts).as_posix()
+    if first == "results":
+        return local not in {"results/.gitkeep"} and BRIA_BENCH_RELEASE_SUMMARY.fullmatch(local) is None
+    if first in BRIA_BENCH_PRIVATE_ROOTS:
+        return True
+    if len(local_parts) == 1:
+        return any(pattern.fullmatch(first) for pattern in BRIA_BENCH_PRIVATE_ROOT_FILES)
+    return False
 
 
 def iter_source_files() -> list[Path]:

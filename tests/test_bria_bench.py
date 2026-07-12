@@ -17,6 +17,7 @@ import sys
 import tempfile
 import time
 import unittest
+import zipfile
 import zlib
 from decimal import Decimal, localcontext
 from pathlib import Path
@@ -64,6 +65,7 @@ from benchmarks.bria_bench.registry import (
 )
 import benchmarks.bria_bench.runtime as runtime_module
 import benchmarks.bria_bench.cli as cli_module
+import scripts.build_release_artifacts as release_module
 from benchmarks.bria_bench.runtime import RuntimeResult, run_monitored, write_json_atomic
 from benchmarks.bria_bench.cli import (
     CliError,
@@ -4023,7 +4025,15 @@ class BriaBenchRuntimeTests(unittest.TestCase):
         self.assertIn("benchmarks.bria_bench", setuptools["packages"])
         self.assertEqual(
             setuptools["package-data"]["benchmarks.bria_bench"],
-            ["REVIEWER_GUIDE.md", "schemas/*.json"],
+            [
+                "README.md",
+                "REVIEWER_GUIDE.md",
+                "benchmark_manifest*.json",
+                "annotations/**/*.json",
+                "cases/**/*",
+                "results/.gitkeep",
+                "schemas/*.json",
+            ],
         )
 
     def assert_identity_gone(self, pid: int, create_time: float) -> None:
@@ -7309,6 +7319,43 @@ class BriaBenchCliTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.temporary.cleanup()
 
+    def create_private_bria_bench_artifacts(self) -> list[str]:
+        relative_paths = [
+            "results/task12_private_run_summary.json",
+            "reviewer_packets/task12_packet/packet_manifest.json",
+            "mappings/task12_mapping.json",
+            "api_cache/task12_cache.json",
+            "local_metrics/task12_metrics.json",
+            "seeds/task12_seed.txt",
+            "identity/task12_identity.json",
+            "reviewer_mapping_task12.json",
+            "metrics-task12.json",
+            "seed_task12.txt",
+            "identity_task12.json",
+            "reviewer_packet_task12.zip",
+        ]
+        created_dirs: set[Path] = set()
+        for relative in relative_paths:
+            path = BRIA_BENCH_ROOT / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            parent = path.parent
+            while parent != BRIA_BENCH_ROOT:
+                created_dirs.add(parent)
+                parent = parent.parent
+            path.write_text("private local artifact\n", encoding="utf-8")
+        for directory in sorted(created_dirs, key=lambda item: len(item.parts)):
+            self.addCleanup(self.remove_empty_directory, directory)
+        for relative in relative_paths:
+            self.addCleanup((BRIA_BENCH_ROOT / relative).unlink, missing_ok=True)
+        return relative_paths
+
+    @staticmethod
+    def remove_empty_directory(path: Path) -> None:
+        try:
+            path.rmdir()
+        except OSError:
+            pass
+
     def configure_legacy_regression_case(
         self, *, required_report_terms: list[str] | None = None
     ) -> None:
@@ -7601,6 +7648,100 @@ class BriaBenchCliTests(unittest.TestCase):
             project["project"]["scripts"]["bria-bench"],
             "benchmarks.bria_bench.cli:main",
         )
+        help_text = cli_module.build_parser().format_help()
+        self.assertIn("Render a BRIA-Bench metrics report.", help_text)
+        self.assertIn("Export a workflow-demo reviewer packet.", help_text)
+        self.assertNotIn("Task 8", help_text)
+        self.assertNotIn("Task 11", help_text)
+        self.assertNotIn("when installed", help_text)
+
+    def test_make_and_ci_benchmark_surface_matches_task12_contract(self) -> None:
+        makefile = (REPOSITORY_ROOT / "Makefile").read_text(encoding="utf-8")
+        workflow = (REPOSITORY_ROOT / ".github/workflows/validate.yml").read_text(
+            encoding="utf-8"
+        )
+
+        def target_body(name: str) -> str:
+            match = re.search(rf"^{re.escape(name)}:\n((?:\t.*\n)+)", makefile, re.MULTILINE)
+            self.assertIsNotNone(match, name)
+            return match.group(1)
+
+        smoke = target_body("benchmark-smoke")
+        self.assertIn("--split dev --adapter full --timeout-seconds 60", smoke)
+        self.assertIn("--runs-dir $(BRIA_BENCH_SMOKE_DIR)", smoke)
+        self.assertIn("--split dev --output $(BRIA_BENCH_SMOKE_DIR)/metrics.json", smoke)
+        self.assertNotIn("--case", smoke)
+
+        full = target_body("benchmark")
+        report = target_body("benchmark-report")
+        self.assertIn("--runs-dir $(BRIA_BENCH_RUNS_DIR)", full)
+        self.assertIn("--timeout-seconds 900", full)
+        self.assertIn("--output $(BRIA_BENCH_RUNS_DIR)/metrics.json", full)
+        self.assertNotIn("--split", full)
+        self.assertNotIn("--case", full)
+        self.assertIn("--runs-dir $(BRIA_BENCH_RUNS_DIR)", report)
+        self.assertIn("--output $(BRIA_BENCH_RUNS_DIR)/metrics.json", report)
+        self.assertIn("--output $(BRIA_BENCH_RUNS_DIR)/REPORT.md", report)
+        self.assertNotIn("--split", report)
+        self.assertNotIn("--case", report)
+
+        validate = target_body("validate")
+        self.assertNotIn("benchmark-smoke", validate)
+        self.assertNotIn("bria_bench_runs", validate)
+
+        self.assertIn("python -m pip install -e '.[benchmark]'", workflow)
+        self.assertLess(workflow.index("run: make validate"), workflow.index("run: make benchmark-smoke"))
+        self.assertIn("timeout-minutes: 10", workflow)
+        self.assertNotRegex(workflow, r"run:\s*make benchmark\s*$")
+
+    def test_release_builder_excludes_private_bria_bench_artifacts(self) -> None:
+        private_paths = self.create_private_bria_bench_artifacts()
+        release_summary = BRIA_BENCH_ROOT / "results" / "release_summary_task12.json"
+        release_summary.write_text('{"summary":"public release note"}\n', encoding="utf-8")
+        self.addCleanup(release_summary.unlink, missing_ok=True)
+
+        included = {
+            path.relative_to(REPOSITORY_ROOT).as_posix()
+            for path in release_module.iter_source_files()
+        }
+
+        for relative in private_paths:
+            self.assertNotIn(f"benchmarks/bria_bench/{relative}", included)
+            self.assertFalse(
+                release_module.should_include(BRIA_BENCH_ROOT / relative),
+                relative,
+            )
+        for relative in (
+            "README.md",
+            "REVIEWER_GUIDE.md",
+            "benchmark_manifest.json",
+            "benchmark_manifest.source.json",
+            "schemas/metrics.schema.json",
+            "annotations/dev/dev_006_manifest_laundering.json",
+            "cases/dev/dev_001_global_flip/PACKAGE_NOTE.txt",
+            "results/.gitkeep",
+            "results/release_summary_task12.json",
+        ):
+            self.assertIn(f"benchmarks/bria_bench/{relative}", included)
+            self.assertTrue(
+                release_module.should_include(BRIA_BENCH_ROOT / relative),
+                relative,
+            )
+
+    def test_public_bria_bench_docs_keep_current_claim_boundaries(self) -> None:
+        bria_readme = (BRIA_BENCH_ROOT / "README.md").read_text(encoding="utf-8")
+        root_readme = (REPOSITORY_ROOT / "README.md").read_text(encoding="utf-8")
+        changelog = (REPOSITORY_ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+        self.assertIn("There is no public `test` split", bria_readme)
+        self.assertIn("zero headline-eligible cases", bria_readme)
+        self.assertIn("no completed independent blinded result", bria_readme)
+        self.assertIn("Detection denominators are deliberately zero", bria_readme)
+        self.assertIn("not real-manuscript validation", bria_readme)
+        self.assertIn("workflow_demo_only", bria_readme)
+        self.assertIn("join keys", bria_readme)
+        self.assertIn("Missing `psutil` is an environment failure", bria_readme)
+        self.assertIn("`.[benchmark]`", root_readme)
+        self.assertIn("zero headline-eligible", changelog)
 
     def test_report_command_renders_metrics(self) -> None:
         metrics_path = self.root / "metrics.json"
@@ -8361,6 +8502,7 @@ class BriaBenchCliTests(unittest.TestCase):
         self.assertIn(".[benchmark]", result["failure"]["message"])
 
     def test_isolated_wheel_supports_help_and_full_adapter_fingerprint(self) -> None:
+        private_paths = self.create_private_bria_bench_artifacts()
         wheel_dir = self.root / "wheel"
         site_dir = self.root / "site"
         wheel_dir.mkdir()
@@ -8382,6 +8524,13 @@ class BriaBenchCliTests(unittest.TestCase):
             text=True,
         )
         wheel = next(wheel_dir.glob("*.whl"))
+        with zipfile.ZipFile(wheel) as archive:
+            wheel_names = set(archive.namelist())
+        self.assertIn("benchmarks/bria_bench/README.md", wheel_names)
+        self.assertIn("benchmarks/bria_bench/schemas/metrics.schema.json", wheel_names)
+        for relative in private_paths:
+            self.assertNotIn(f"benchmarks/bria_bench/{relative}", wheel_names)
+
         subprocess.run(
             [sys.executable, "-m", "pip", "install", "--no-deps", "--target", str(site_dir), str(wheel)],
             check=True,
@@ -8397,6 +8546,10 @@ class BriaBenchCliTests(unittest.TestCase):
             "assert pathlib.Path(cmd[1]).is_file(); "
             "assert cli._hash_files(cli._runner_inputs(a,cmd)); "
             "root=pathlib.Path(sys.argv[1])/'benchmarks'/'bria_bench'; "
+            "private_rels=json.loads(sys.argv[2]); "
+            "assert (root/'README.md').is_file(); "
+            "assert (root/'schemas/metrics.schema.json').is_file(); "
+            "assert (root/'schemas/reviewer_mapping.schema.json').is_file(); "
             "manifest=json.loads((root/'benchmark_manifest.json').read_text()); "
             "assert len(manifest['cases']) == 36; "
             "assert sum(1 for c in manifest['cases'] for p in (root/c['package_path']).rglob('*') if p.is_file()) == 177; "
@@ -8405,10 +8558,11 @@ class BriaBenchCliTests(unittest.TestCase):
             "assert (root/'cases/dev/dev_003_stats_shift/source_data/Figure_3_source.csv').is_file(); "
             "assert (root/'cases/dev/dev_001_global_flip/LICENSE.txt').is_file(); "
             "assert (root/'annotations/dev/dev_006_manifest_laundering.json').is_file(); "
+            "assert all(not (root/rel).exists() for rel in private_rels); "
             "assert cli.main(['--help']) == 0"
         )
         completed = subprocess.run(
-            [sys.executable, "-I", "-c", code, str(site_dir)],
+            [sys.executable, "-I", "-c", code, str(site_dir), json.dumps(private_paths)],
             cwd=self.root,
             check=False,
             capture_output=True,

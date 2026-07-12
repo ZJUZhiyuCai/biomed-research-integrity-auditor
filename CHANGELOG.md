@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### Added
+- BRIA-Bench integration commands and docs: `make benchmark-smoke` now runs the six controlled dev
+  fixtures offline with the full adapter and a 60-second per-case timeout, while manual full
+  benchmark targets use all 36 public fixtures under `tmp/bria_bench_runs`. Public docs now state
+  that the current corpus has no test split, no completed blinded result, zero headline-eligible
+  cases, and no real-manuscript validation claim.
 - Audit publication is now transactional: each output directory has a single-writer lock, detector
   artifacts are built in a sibling staging directory, failed runs preserve the previous audit, and
   successful runs atomically replace generated files while retaining unrelated user files.

@@ -1,8 +1,13 @@
 PYTHON ?= $(if $(wildcard .venv/bin/python),.venv/bin/python,python3)
 SKILL_DIR := skill/biomed-research-integrity-auditor
 EVAL_DIR := evals
+BRIA_BENCH_DIR := benchmarks/bria_bench
+BRIA_BENCH_MANIFEST := $(BRIA_BENCH_DIR)/benchmark_manifest.json
+BRIA_BENCH_SOURCE_MANIFEST := $(BRIA_BENCH_DIR)/benchmark_manifest.source.json
+BRIA_BENCH_SMOKE_DIR := tmp/bria_bench_smoke
+BRIA_BENCH_RUNS_DIR := tmp/bria_bench_runs
 
-.PHONY: run preflight validate install-local frontend-smoke release-artifacts regenerate-evals prompts score true-pdf-benchmark scanned-pdf-benchmark real-image-benchmark pppr-public-smoke
+.PHONY: run preflight validate install-local frontend-smoke release-artifacts regenerate-evals prompts score true-pdf-benchmark scanned-pdf-benchmark real-image-benchmark pppr-public-smoke benchmark-freeze benchmark-smoke benchmark benchmark-report
 
 run:
 	$(PYTHON) scripts/run_local_webapp.py
@@ -57,3 +62,21 @@ real-image-benchmark:
 
 pppr-public-smoke:
 	$(PYTHON) benchmarks/pppr_integrity_benchmark/scripts/run_public_smoke_benchmark.py --output-root tmp/pppr_public_smoke
+
+benchmark-freeze:
+	$(PYTHON) -m benchmarks.bria_bench.cli freeze --source $(BRIA_BENCH_SOURCE_MANIFEST) --output $(BRIA_BENCH_MANIFEST) --frozen-at 2026-07-11T00:00:00Z
+
+benchmark-smoke:
+	mkdir -p $(BRIA_BENCH_SMOKE_DIR)
+	$(PYTHON) -m benchmarks.bria_bench.cli run --manifest $(BRIA_BENCH_MANIFEST) --runs-dir $(BRIA_BENCH_SMOKE_DIR) --split dev --adapter full --timeout-seconds 60
+	$(PYTHON) -m benchmarks.bria_bench.cli evaluate --manifest $(BRIA_BENCH_MANIFEST) --runs-dir $(BRIA_BENCH_SMOKE_DIR) --split dev --output $(BRIA_BENCH_SMOKE_DIR)/metrics.json
+
+benchmark:
+	mkdir -p $(BRIA_BENCH_RUNS_DIR)
+	$(PYTHON) -m benchmarks.bria_bench.cli run --manifest $(BRIA_BENCH_MANIFEST) --runs-dir $(BRIA_BENCH_RUNS_DIR) --adapter full --timeout-seconds 900
+	$(PYTHON) -m benchmarks.bria_bench.cli evaluate --manifest $(BRIA_BENCH_MANIFEST) --runs-dir $(BRIA_BENCH_RUNS_DIR) --output $(BRIA_BENCH_RUNS_DIR)/metrics.json
+
+benchmark-report:
+	mkdir -p $(BRIA_BENCH_RUNS_DIR)
+	$(PYTHON) -m benchmarks.bria_bench.cli evaluate --manifest $(BRIA_BENCH_MANIFEST) --runs-dir $(BRIA_BENCH_RUNS_DIR) --output $(BRIA_BENCH_RUNS_DIR)/metrics.json
+	$(PYTHON) -m benchmarks.bria_bench.cli report --metrics $(BRIA_BENCH_RUNS_DIR)/metrics.json --output $(BRIA_BENCH_RUNS_DIR)/REPORT.md

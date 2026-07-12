@@ -56,7 +56,15 @@ packages = ["benchmarks.bria_bench", "calibrators", "detectors", "detectors.imag
 
 [tool.setuptools.package-data]
 schemas = ["*.json", "*.yaml"]
-"benchmarks.bria_bench" = ["REVIEWER_GUIDE.md", "schemas/*.json"]
+"benchmarks.bria_bench" = [
+  "README.md",
+  "REVIEWER_GUIDE.md",
+  "benchmark_manifest*.json",
+  "annotations/**/*.json",
+  "cases/**/*",
+  "results/.gitkeep",
+  "schemas/*.json"
+]
 webapp = ["frontend/dist/*.html", "frontend/dist/assets/*"]
 skill = [
   "biomed-research-integrity-auditor/*.md",

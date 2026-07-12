@@ -1468,11 +1468,11 @@ def build_parser() -> argparse.ArgumentParser:
     evaluate.add_argument("--output", required=True, type=Path)
     evaluate.add_argument("--case", action="append", dest="case_ids")
     evaluate.add_argument("--split", action="append", dest="splits", choices=_SPLITS)
-    report = commands.add_parser("report", help="Render Task 8 metrics report (when installed).")
+    report = commands.add_parser("report", help="Render a BRIA-Bench metrics report.")
     report.add_argument("--metrics", required=True, type=Path)
     report.add_argument("--output", required=True, type=Path)
     packet = commands.add_parser(
-        "reviewer-packet", help="Export Task 11 reviewer packet (when installed)."
+        "reviewer-packet", help="Export a workflow-demo reviewer packet."
     )
     packet.add_argument("--manifest", required=True, type=Path)
     packet.add_argument("--case", action="append", dest="case_ids", required=True)
@@ -1527,7 +1527,7 @@ def _dispatch(args: argparse.Namespace) -> int:
         except ModuleNotFoundError as exc:
             if exc.name == "benchmarks.bria_bench.report":
                 raise CliError(
-                    "The report command requires BRIA-Bench Task 8; report.py is not implemented yet"
+                    "The report command is unavailable because report.py could not be imported"
                 ) from exc
             raise
         metrics = _strict_json(args.metrics, label="metrics")
@@ -1539,7 +1539,7 @@ def _dispatch(args: argparse.Namespace) -> int:
         except ModuleNotFoundError as exc:
             if exc.name == "benchmarks.bria_bench.reviewer_packet":
                 raise CliError(
-                    "The reviewer-packet command requires BRIA-Bench Task 11; reviewer_packet.py is not implemented yet"
+                    "The reviewer-packet command is unavailable because reviewer_packet.py could not be imported"
                 ) from exc
             raise
         export_reviewer_packet(
