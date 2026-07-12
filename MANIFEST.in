@@ -48,7 +48,16 @@ recursive-exclude benchmarks/bria_bench reviewer-packet*.json reviewer-packet*.z
 recursive-exclude benchmarks/bria_bench seed*.json seed*.txt
 recursive-exclude benchmarks/bria_bench *identity*.json
 recursive-exclude benchmarks/bria_bench *api_cache*.json *api-cache*.json
-include benchmarks/bria_bench/schemas/*.schema.json
+recursive-exclude benchmarks/bria_bench/schemas *.schema.json
+include benchmarks/bria_bench/schemas/annotation.schema.json
+include benchmarks/bria_bench/schemas/benchmark_manifest.schema.json
+include benchmarks/bria_bench/schemas/metrics.schema.json
+include benchmarks/bria_bench/schemas/observation.schema.json
+include benchmarks/bria_bench/schemas/reviewer_form_completed.schema.json
+include benchmarks/bria_bench/schemas/reviewer_form_template.schema.json
+include benchmarks/bria_bench/schemas/reviewer_mapping.schema.json
+include benchmarks/bria_bench/schemas/reviewer_packet_manifest.schema.json
+include benchmarks/bria_bench/schemas/run_result.schema.json
 prune evals/outputs
 prune evals/prompts
 prune evals/scorecards

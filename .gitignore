@@ -64,7 +64,16 @@ benchmarks/bria_bench/**/seed*.json
 benchmarks/bria_bench/**/*identity*.json
 benchmarks/bria_bench/**/*api_cache*.json
 benchmarks/bria_bench/**/*api-cache*.json
-!benchmarks/bria_bench/schemas/*.schema.json
+benchmarks/bria_bench/schemas/*
+!benchmarks/bria_bench/schemas/annotation.schema.json
+!benchmarks/bria_bench/schemas/benchmark_manifest.schema.json
+!benchmarks/bria_bench/schemas/metrics.schema.json
+!benchmarks/bria_bench/schemas/observation.schema.json
+!benchmarks/bria_bench/schemas/reviewer_form_completed.schema.json
+!benchmarks/bria_bench/schemas/reviewer_form_template.schema.json
+!benchmarks/bria_bench/schemas/reviewer_mapping.schema.json
+!benchmarks/bria_bench/schemas/reviewer_packet_manifest.schema.json
+!benchmarks/bria_bench/schemas/run_result.schema.json
 
 *.log
 tmp/

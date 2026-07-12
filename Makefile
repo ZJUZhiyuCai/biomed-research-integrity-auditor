@@ -38,7 +38,8 @@ release-artifacts:
 	cd webapp/frontend && npm ci
 	cd webapp/frontend && npm run build
 	$(PYTHON) -m pip install --upgrade build
-	rm -rf build *.egg-info
+	rm -rf build *.egg-info dist/release
+	rm -f dist/biomed_research_integrity_auditor-*.whl dist/biomed_research_integrity_auditor-*.tar.gz
 	$(PYTHON) -m build
 	$(PYTHON) scripts/build_release_artifacts.py
 

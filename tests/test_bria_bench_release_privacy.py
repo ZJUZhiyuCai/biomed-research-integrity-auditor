@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -53,18 +54,30 @@ class BriaBenchReleasePrivacyTests(unittest.TestCase):
             [
                 "git",
                 "ls-files",
-                "benchmarks/bria_bench/schemas/*reviewer*.schema.json",
+                "benchmarks/bria_bench/schemas/*.schema.json",
             ],
             cwd=REPOSITORY_ROOT,
             check=True,
             capture_output=True,
             text=True,
         ).stdout.splitlines()
-        self.reviewer_schema_paths = tuple(
+        self.public_schema_paths = tuple(
             Path(path).relative_to("benchmarks/bria_bench")
             for path in committed_schemas
         )
+        self.reviewer_schema_paths = tuple(
+            path for path in self.public_schema_paths if "reviewer" in path.name
+        )
+        self.assertEqual(
+            {path.as_posix() for path in self.public_schema_paths},
+            set(release_module.BRIA_BENCH_PUBLIC_SCHEMAS),
+        )
         self.assertTrue(self.reviewer_schema_paths)
+        self._create_file(
+            BRIA_BENCH_ROOT
+            / "schemas"
+            / f"task12_private_{self.token}.schema.json"
+        )
 
         marker_parent = (
             BRIA_BENCH_ROOT
@@ -159,6 +172,24 @@ class BriaBenchReleasePrivacyTests(unittest.TestCase):
         path.write_text('{"task12": "private fixture"}\n', encoding="utf-8")
         self.created_files.append(path)
 
+    def _copy_project_source(self) -> Path:
+        source_root = self.output_root / "source"
+        shutil.copytree(
+            REPOSITORY_ROOT,
+            source_root,
+            ignore=shutil.ignore_patterns(
+                ".git",
+                ".venv",
+                "*.egg-info",
+                "__pycache__",
+                "build",
+                "dist",
+                "node_modules",
+                "tmp",
+            ),
+        )
+        return source_root
+
     @staticmethod
     def _benchmark_members(names: set[str]) -> set[str]:
         marker = "benchmarks/bria_bench/"
@@ -176,7 +207,7 @@ class BriaBenchReleasePrivacyTests(unittest.TestCase):
         self.assertIn("benchmarks/bria_bench/README.md", members)
         self.assertIn("benchmarks/bria_bench/results/.gitkeep", members)
         self.assertIn("benchmarks/bria_bench/schemas/metrics.schema.json", members)
-        for relative in self.reviewer_schema_paths:
+        for relative in self.public_schema_paths:
             self.assertIn(f"benchmarks/bria_bench/{relative.as_posix()}", members)
         self.assertIn(
             "benchmarks/bria_bench/cases/dev/dev_001_global_flip/PACKAGE_NOTE.txt",
@@ -212,7 +243,7 @@ class BriaBenchReleasePrivacyTests(unittest.TestCase):
             )
             self.assertEqual(completed.returncode, 1, relative.as_posix())
 
-        for relative in self.reviewer_schema_paths:
+        for relative in self.public_schema_paths:
             completed = subprocess.run(
                 [
                     "git",
@@ -228,6 +259,7 @@ class BriaBenchReleasePrivacyTests(unittest.TestCase):
             self.assertEqual(completed.returncode, 1, relative.as_posix())
 
     def test_sdist_wheel_and_release_zip_are_fail_closed(self) -> None:
+        source_root = self._copy_project_source()
         sdist_dir = self.output_root / "sdist"
         wheel_dir = self.output_root / "wheel"
         site_dir = self.output_root / "site"
@@ -241,7 +273,7 @@ class BriaBenchReleasePrivacyTests(unittest.TestCase):
                 "build_sdist(sys.argv[1])",
                 str(sdist_dir),
             ],
-            cwd=REPOSITORY_ROOT,
+            cwd=source_root,
             check=True,
             capture_output=True,
             text=True,
@@ -256,9 +288,9 @@ class BriaBenchReleasePrivacyTests(unittest.TestCase):
                 "--no-deps",
                 "--wheel-dir",
                 str(wheel_dir),
-                str(REPOSITORY_ROOT),
+                str(source_root),
             ],
-            cwd=REPOSITORY_ROOT,
+            cwd=source_root,
             check=True,
             capture_output=True,
             text=True,
@@ -311,9 +343,10 @@ class BriaBenchReleasePrivacyTests(unittest.TestCase):
         self.assertEqual(load_check.returncode, 0, load_check.stderr)
 
         release_zip = self.output_root / "release-source.zip"
-        release_module.write_zip(
-            release_zip, release_module.iter_source_files(), "task12-source"
-        )
+        with patch.object(release_module, "ROOT", source_root):
+            release_module.write_zip(
+                release_zip, release_module.iter_source_files(), "task12-source"
+            )
         with zipfile.ZipFile(release_zip) as archive:
             release_members = self._benchmark_members(set(archive.namelist()))
         self._assert_archive_privacy(release_members)
@@ -338,6 +371,29 @@ class BriaBenchReleasePrivacyTests(unittest.TestCase):
             path.relative_to(REPOSITORY_ROOT).as_posix() for path in first
         }
         self._assert_archive_privacy(included)
+
+    def test_release_copy_uses_only_the_current_distribution_version(self) -> None:
+        source_root = self._copy_project_source()
+        dist_dir = source_root / "dist"
+        dist_dir.mkdir()
+        version = release_module.project_version()
+        expected = {
+            f"biomed_research_integrity_auditor-{version}.tar.gz",
+            f"biomed_research_integrity_auditor-{version}-py3-none-any.whl",
+        }
+        for name in expected | {
+            "biomed_research_integrity_auditor-0.0.0.tar.gz",
+            "biomed_research_integrity_auditor-0.0.0-py3-none-any.whl",
+        }:
+            (dist_dir / name).write_bytes(name.encode("ascii"))
+        output = self.output_root / "copied-dist"
+        output.mkdir()
+
+        with patch.object(release_module, "ROOT", source_root):
+            copied = release_module.copy_dist_artifacts(output)
+
+        self.assertEqual({path.name for path in copied}, expected)
+        self.assertEqual({path.name for path in output.iterdir()}, expected)
 
     def test_smoke_target_cleans_before_run_and_keeps_manual_resumability(self) -> None:
         makefile = (REPOSITORY_ROOT / "Makefile").read_text(encoding="utf-8")
@@ -368,8 +424,13 @@ class BriaBenchReleasePrivacyTests(unittest.TestCase):
         self.assertNotIn("rm -rf", "\n".join(target_lines("benchmark")))
 
         release = target_lines("release-artifacts")
-        build_index = release.index("\trm -rf build *.egg-info")
+        build_index = release.index("\trm -rf build *.egg-info dist/release")
         self.assertLess(build_index, release.index("\t$(PYTHON) -m build"))
+        dist_index = release.index(
+            "\trm -f dist/biomed_research_integrity_auditor-*.whl "
+            "dist/biomed_research_integrity_auditor-*.tar.gz"
+        )
+        self.assertLess(dist_index, release.index("\t$(PYTHON) -m build"))
 
 
 if __name__ == "__main__":

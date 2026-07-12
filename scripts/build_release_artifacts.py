@@ -87,8 +87,18 @@ BRIA_BENCH_PRIVATE_FILE_PATTERNS = (
 BRIA_BENCH_RELEASE_SUMMARY = re.compile(
     r"results/(?:release_summary|public_summary)_[A-Za-z0-9._-]+\.json\Z"
 )
-BRIA_BENCH_PUBLIC_SCHEMA = re.compile(
-    r"schemas/[A-Za-z0-9._-]+\.schema\.json\Z"
+BRIA_BENCH_PUBLIC_SCHEMAS = frozenset(
+    {
+        "schemas/annotation.schema.json",
+        "schemas/benchmark_manifest.schema.json",
+        "schemas/metrics.schema.json",
+        "schemas/observation.schema.json",
+        "schemas/reviewer_form_completed.schema.json",
+        "schemas/reviewer_form_template.schema.json",
+        "schemas/reviewer_mapping.schema.json",
+        "schemas/reviewer_packet_manifest.schema.json",
+        "schemas/run_result.schema.json",
+    }
 )
 
 
@@ -135,9 +145,11 @@ def _is_bria_bench_private_artifact(rel: Path) -> bool:
     if (
         local == "results/.gitkeep"
         or BRIA_BENCH_RELEASE_SUMMARY.fullmatch(local)
-        or BRIA_BENCH_PUBLIC_SCHEMA.fullmatch(local)
+        or local in BRIA_BENCH_PUBLIC_SCHEMAS
     ):
         return False
+    if local_parts[0] == "schemas":
+        return True
     if any(part in BRIA_BENCH_PRIVATE_DIRECTORIES for part in local_parts[:-1]):
         return True
     return any(
@@ -195,7 +207,10 @@ def copy_dist_artifacts(output_dir: Path) -> list[Path]:
     dist_dir = ROOT / "dist"
     if not dist_dir.exists():
         return copied
-    for artifact in sorted(dist_dir.glob("biomed_research_integrity_auditor-*")):
+    prefix = f"biomed_research_integrity_auditor-{project_version()}"
+    candidates = [dist_dir / f"{prefix}.tar.gz"]
+    candidates.extend(sorted(dist_dir.glob(f"{prefix}-*.whl")))
+    for artifact in candidates:
         if artifact.is_file():
             target = output_dir / artifact.name
             target.write_bytes(artifact.read_bytes())
