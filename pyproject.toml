@@ -64,6 +64,7 @@ schemas = ["*.json", "*.yaml"]
   "benchmark_manifest*.json",
   "annotations/**/*.json",
   "cases/**/*",
+  "fixtures/**/*.json",
   "results/.gitkeep",
   "schemas/annotation.schema.json",
   "schemas/benchmark_manifest.schema.json",

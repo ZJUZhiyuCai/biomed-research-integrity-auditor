@@ -1,0 +1,33 @@
+{
+  "base_url": "https://api.deepseek.com",
+  "case_id": "dev_003_stats_shift",
+  "model": "deepseek-v4-flash",
+  "prompt_sha256": "b35a55c81559c440d2ff4f892a4917c1db9349be6bfaff7341d47fa2cfbbad5b",
+  "provider": "deepseek",
+  "request_sha256": "efbad5352dbc15d932160f2ed426afb4a09cf4742fe9d908fa04679c275395e1",
+  "response": {
+    "choices": [
+      {
+        "finish_reason": "stop",
+        "index": 0,
+        "message": {
+          "content": "{\"observations\":[{\"issue_family\":\"statistics_or_numeric\",\"location\":\"source_data/Figure_3_source.csv: control and treatment columns, rows 2-13\",\"risk_level\":\"R2\",\"summary\":\"Each treatment value is exactly 10.00 above its paired control value while preserving the decimal pattern.\",\"why_it_matters\":\"A constant paired offset can arise from a valid transformation but warrants checking the recorded analysis and source values.\",\"recommended_action\":\"Confirm the transformation in the analysis code and compare both columns with the original instrument export.\",\"required_materials\":[\"Original instrument export\",\"Analysis code or calculation workbook\"],\"benign_explanations\":[\"A prespecified baseline correction or unit conversion\",\"A documented synthetic development fixture\"],\"confidence\":0.98}],\"coverage_gaps\":[],\"scope_note\":\"Limited direct text review; source records and human review remain required.\"}",
+          "role": "assistant"
+        }
+      }
+    ],
+    "created": 0,
+    "id": "fixture-dev-003",
+    "model": "deepseek-v4-flash",
+    "object": "chat.completion",
+    "system_fingerprint": "fixture-v1",
+    "usage": {
+      "completion_tokens": 181,
+      "prompt_cache_hit_tokens": 0,
+      "prompt_cache_miss_tokens": 529,
+      "prompt_tokens": 529,
+      "total_tokens": 710
+    }
+  },
+  "schema_version": "1.0.0"
+}

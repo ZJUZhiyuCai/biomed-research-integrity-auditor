@@ -233,6 +233,37 @@ def fixture_sha256(index: int) -> str:
     return hashlib.sha256(f"bria-bench-fixture-{index}".encode("utf-8")).hexdigest()
 
 
+def complete_llm_telemetry(
+    *,
+    input_tokens: int = 0,
+    output_tokens: int = 0,
+    latency_seconds: object = 0.0,
+    estimated_cost_cny: object = 0.0,
+) -> dict[str, object]:
+    return {
+        "provider": "test-provider",
+        "model": "model",
+        "prompt_sha256": "1" * 64,
+        "system_prompt_sha256": "2" * 64,
+        "user_prompt_sha256": "3" * 64,
+        "request_sha256": "4" * 64,
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "prompt_cache_hit_tokens": 0,
+        "prompt_cache_miss_tokens": input_tokens,
+        "latency_seconds": latency_seconds,
+        "estimated_cost_cny": estimated_cost_cny,
+        "temperature": 0.0,
+        "top_p": 1.0,
+        "max_output_tokens": 8192,
+        "thinking": "disabled",
+        "repeat_index": 1,
+        "response_cache_status": "miss",
+        "response_model": "model",
+        "finish_reason": "stop",
+    }
+
+
 def minimal_reproduction(
     selected_cases: list[dict[str, str]],
     *,
@@ -1237,8 +1268,8 @@ class BriaBenchDevelopmentCaseTests(unittest.TestCase):
                     "LICENSE.txt",
                     "PACKAGE_NOTE.txt",
                     "manuscript/manuscript.txt",
-                    "figures/Figure_5A_valid.png",
-                    "figures/Figure_5B_truncated.png",
+                    "figures/Figure_5A.png",
+                    "figures/Figure_5B.png",
                 },
                 "dev_006_manifest_laundering": {
                     "LICENSE.txt",
@@ -1314,10 +1345,8 @@ class BriaBenchDevelopmentCaseTests(unittest.TestCase):
                 )
                 self.assertGreater(differing / len(image_a.tobytes()), 0.99)
 
-            valid = packages / "dev_005_corrupt_image/figures/Figure_5A_valid.png"
-            truncated = (
-                packages / "dev_005_corrupt_image/figures/Figure_5B_truncated.png"
-            )
+            valid = packages / "dev_005_corrupt_image/figures/Figure_5A.png"
+            truncated = packages / "dev_005_corrupt_image/figures/Figure_5B.png"
             self.assertGreater(valid.stat().st_size, 24)
             self.assertEqual(truncated.read_bytes(), valid.read_bytes()[:24])
 
@@ -1410,7 +1439,7 @@ class BriaBenchDevelopmentCaseTests(unittest.TestCase):
                 "dev_001_global_flip/figures/Figure_1B.png": (1001, True),
                 "dev_002_independent_images/figures/Figure_2A.png": (2001, False),
                 "dev_002_independent_images/figures/Figure_2B.png": (2002, False),
-                "dev_005_corrupt_image/figures/Figure_5A_valid.png": (5001, False),
+                "dev_005_corrupt_image/figures/Figure_5A.png": (5001, False),
                 "dev_006_manifest_laundering/figures/Figure_6A.png": (6001, False),
                 "dev_006_manifest_laundering/figures/Figure_6B.png": (6001, True),
             }
@@ -2275,7 +2304,7 @@ class BriaBenchDevelopmentCaseTests(unittest.TestCase):
             self.assertTrue(corrupt_gaps)
             self.assertTrue(
                 any(
-                    "Figure_5B_truncated.png" in json.dumps(item)
+                    "Figure_5B.png" in json.dumps(item)
                     for item in corrupt_gaps
                 )
             )
@@ -4407,6 +4436,7 @@ class BriaBenchRuntimeTests(unittest.TestCase):
                 "benchmark_manifest*.json",
                 "annotations/**/*.json",
                 "cases/**/*",
+                "fixtures/**/*.json",
                 "results/.gitkeep",
                 "schemas/annotation.schema.json",
                 "schemas/benchmark_manifest.schema.json",
@@ -6779,14 +6809,12 @@ class BriaBenchMetricAggregationTests(unittest.TestCase):
                     "peak_rss_bytes": int(elapsed * 100),
                     "output_size_bytes": int(elapsed * 10),
                     "module_seconds": {"images": elapsed / 4},
-                    "llm": {
-                        "provider": "fixture",
-                        "model": "model",
-                        "input_tokens": int(elapsed * 10),
-                        "output_tokens": int(elapsed * 2),
-                        "latency_seconds": elapsed / 3,
-                        "estimated_cost_cny": elapsed / 100,
-                    },
+                    "llm": complete_llm_telemetry(
+                        input_tokens=int(elapsed * 10),
+                        output_tokens=int(elapsed * 2),
+                        latency_seconds=elapsed / 3,
+                        estimated_cost_cny=elapsed / 100,
+                    ),
                 }
             )
             if index != 3:
@@ -6986,12 +7014,10 @@ class BriaBenchMetricAggregationTests(unittest.TestCase):
                 "elapsed_seconds": Decimal("1.25"),
                 "cpu_seconds": Decimal("0.75"),
                 "module_seconds": {"images": Decimal("0.5")},
-                "llm": {
-                    "provider": "fixture",
-                    "model": "model",
-                    "latency_seconds": Decimal("0.4"),
-                    "estimated_cost_cny": Decimal("0.03"),
-                },
+                "llm": complete_llm_telemetry(
+                    latency_seconds=Decimal("0.4"),
+                    estimated_cost_cny=Decimal("0.03"),
+                ),
             }
         )
 
@@ -7023,6 +7049,25 @@ class BriaBenchMetricAggregationTests(unittest.TestCase):
         unknown_fact["attack_resistance"] = True
         with self.assertRaises((ValueError, ContractError)):
             self.aggregate([unknown_fact])
+
+    def test_synthetic_llm_fixture_is_never_headline_eligible(self) -> None:
+        case = metric_bundle("fixture-headline", matched=True)
+        case["run_result"]["adapter"] = "deepseek-fixture"
+        telemetry = complete_llm_telemetry(input_tokens=20, output_tokens=5)
+        telemetry["provider"] = "deepseek-fixture"
+        case["run_result"]["telemetry"]["llm"] = telemetry
+
+        result = self.aggregate([case])
+
+        self.assertIs(
+            result["case_results"][0]["headline_detection_eligible"], False
+        )
+        self.assertIs(
+            result["tracks"]["blinded_challenge"][
+                "headline_detection_eligible"
+            ],
+            False,
+        )
 
 
 class BriaBenchReportTests(unittest.TestCase):
@@ -7082,14 +7127,12 @@ class BriaBenchReportTests(unittest.TestCase):
                     "peak_rss_bytes": peak_rss,
                     "output_size_bytes": output_size,
                     "module_seconds": module_seconds,
-                    "llm": {
-                        "provider": "fixture",
-                        "model": "model",
-                        "input_tokens": index * 10,
-                        "output_tokens": index * 2,
-                        "latency_seconds": index / 10,
-                        "estimated_cost_cny": index / 100,
-                    },
+                    "llm": complete_llm_telemetry(
+                        input_tokens=index * 10,
+                        output_tokens=index * 2,
+                        latency_seconds=index / 10,
+                        estimated_cost_cny=index / 100,
+                    ),
                 }
             )
             bundle["over_budget"] = over_budget
@@ -9254,6 +9297,10 @@ class BriaBenchCliTests(unittest.TestCase):
             wheel_names = set(archive.namelist())
         self.assertIn("benchmarks/bria_bench/README.md", wheel_names)
         self.assertIn("benchmarks/bria_bench/schemas/metrics.schema.json", wheel_names)
+        self.assertIn(
+            "benchmarks/bria_bench/fixtures/deepseek-v4-flash/dev_003_stats_shift.json",
+            wheel_names,
+        )
         for relative in private_paths:
             self.assertNotIn(f"benchmarks/bria_bench/{relative}", wheel_names)
 

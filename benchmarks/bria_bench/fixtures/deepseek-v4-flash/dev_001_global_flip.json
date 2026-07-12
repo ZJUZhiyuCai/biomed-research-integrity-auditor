@@ -1,0 +1,33 @@
+{
+  "base_url": "https://api.deepseek.com",
+  "case_id": "dev_001_global_flip",
+  "model": "deepseek-v4-flash",
+  "prompt_sha256": "018d44f949e8fb9a77b9e377b4c9c64c273d9e4aa311c6bb29d79440ff4c8b8f",
+  "provider": "deepseek",
+  "request_sha256": "6a79012ba1f0c2cad0862b182139a4d88a20574f7831d9829189eb74c4571e75",
+  "response": {
+    "choices": [
+      {
+        "finish_reason": "stop",
+        "index": 0,
+        "message": {
+          "content": "{\"observations\":[],\"coverage_gaps\":[{\"location\":\"figures/Figure_1A.png and figures/Figure_1B.png\",\"message\":\"The text-only model cannot inspect image pixels or compare spatial transformations.\",\"recommended_action\":\"Use an image-capable or specialist image-integrity review on the supplied panels.\"}],\"scope_note\":\"Limited direct text review; source records and human review remain required.\"}",
+          "role": "assistant"
+        }
+      }
+    ],
+    "created": 0,
+    "id": "fixture-dev-001",
+    "model": "deepseek-v4-flash",
+    "object": "chat.completion",
+    "system_fingerprint": "fixture-v1",
+    "usage": {
+      "completion_tokens": 83,
+      "prompt_cache_hit_tokens": 0,
+      "prompt_cache_miss_tokens": 516,
+      "prompt_tokens": 516,
+      "total_tokens": 599
+    }
+  },
+  "schema_version": "1.0.0"
+}

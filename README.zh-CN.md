@@ -332,6 +332,20 @@ harness 同时奖励 recall 和克制：越界下结论、忽略良性解释、�
 
 [`evals/llm_runs/2026-06-30-codex-orchestrated/`](evals/llm_runs/2026-06-30-codex-orchestrated/) 保留了一份 scorecard：30/30 synthetic cases 通过，0 violations。仓库只保留 manifest 和 scorecard；逐 case 生成报告不提交，因为本地 audit report 可能包含机器路径。这不是独立第三方盲测，也不代表真实论文场景性能。
 
+### BRIA-Bench
+
+[`benchmarks/bria_bench/`](benchmarks/bria_bench/) 包含离线 BRIA-Bench registry、schema、CLI 和 reviewer-packet 工作流演示：
+
+```bash
+python -m pip install -e ".[benchmark]"
+make benchmark-smoke
+make benchmark-llm-smoke  # 离线 DeepSeek 兼容响应 fixture
+```
+
+当前公开语料有 36 个 fixture，没有公开 `test` split、没有完成独立盲测结果，可用于 headline accuracy 的 case 为 0。30 个 synthetic legacy case 只用于回归、可靠性和性能验证，6 个 dev fixture 只用于受控工作流验证；二者都不代表真实论文验证。
+
+可选的真实 DeepSeek 基线会把从材料中提取的文本发送到外部 API，不属于 local-first 审计路径。它必须同时设置 `DEEPSEEK_API_KEY` 与 `BRIA_BENCH_ALLOW_REMOTE_LLM=1`；离线 fixture 不访问网络。DeepSeek V4 是文本模型，因此图片像素会被诚实记录为未执行模态，而不会被默认成“已经审过”。详情见 [`benchmarks/bria_bench/README.md`](benchmarks/bria_bench/README.md)。
+
 ### Public-concern benchmark
 
 `benchmarks/pppr_integrity_benchmark/` 是 post-publication concern benchmark 脚手架，含真实公开数据 smoke runner。PubPeer 只作为 discovery 元数据，Crossref/Retraction Watch 作为 publication-status 元数据，PMC Open Access 作为合法材料来源，ORI samples 作为图像单元用例。不是 PubPeer 爬虫，不保存评论。

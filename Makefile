@@ -9,7 +9,7 @@ BRIA_BENCH_RUNS_DIR := tmp/bria_bench_runs
 BENCHMARK_FROZEN_AT ?= 2026-07-11T00:00:00Z
 RELEASE_SOURCE_DATE_EPOCH ?= 1783728000
 
-.PHONY: run preflight validate install-local frontend-smoke release-artifacts regenerate-evals prompts score true-pdf-benchmark scanned-pdf-benchmark real-image-benchmark pppr-public-smoke benchmark-freeze benchmark-smoke benchmark benchmark-report
+.PHONY: run preflight validate install-local frontend-smoke release-artifacts regenerate-evals prompts score true-pdf-benchmark scanned-pdf-benchmark real-image-benchmark pppr-public-smoke benchmark-freeze benchmark-smoke benchmark-llm-smoke benchmark-deepseek benchmark benchmark-report
 
 run:
 	$(PYTHON) scripts/run_local_webapp.py
@@ -28,6 +28,7 @@ validate:
 	$(PYTHON) benchmarks/scanned_pdf/run_scanned_pdf_benchmark.py --output-dir tmp/scanned_pdf_benchmark --skip-if-unavailable
 	$(PYTHON) benchmarks/real_image/run_real_image_benchmark.py --output-dir tmp/real_image_benchmark
 	$(PYTHON) $(EVAL_DIR)/run_eval.py generate-prompts
+	$(MAKE) benchmark-llm-smoke PYTHON=$(PYTHON)
 
 install-local:
 	$(PYTHON) scripts/install_local_commands.py
@@ -76,6 +77,24 @@ benchmark-smoke:
 	$(PYTHON) -m benchmarks.bria_bench.cli run --manifest $(BRIA_BENCH_MANIFEST) --runs-dir $(BRIA_BENCH_SMOKE_DIR) --split dev --adapter full --timeout-seconds 60
 	$(PYTHON) -m benchmarks.bria_bench.cli evaluate --manifest $(BRIA_BENCH_MANIFEST) --runs-dir $(BRIA_BENCH_SMOKE_DIR) --split dev --output $(BRIA_BENCH_SMOKE_DIR)/metrics.json
 	$(PYTHON) -m benchmarks.bria_bench.cli report --metrics $(BRIA_BENCH_SMOKE_DIR)/metrics.json --output $(BRIA_BENCH_SMOKE_DIR)/REPORT.md
+
+benchmark-llm-smoke:
+	rm -rf tmp/bria_bench_llm_fixture
+	mkdir -p tmp/bria_bench_llm_fixture
+	$(PYTHON) -m benchmarks.bria_bench.cli run --manifest $(BRIA_BENCH_MANIFEST) --runs-dir tmp/bria_bench_llm_fixture --split dev --adapter deepseek-fixture --timeout-seconds 60
+	$(PYTHON) -m benchmarks.bria_bench.cli evaluate --manifest $(BRIA_BENCH_MANIFEST) --runs-dir tmp/bria_bench_llm_fixture --split dev --output tmp/bria_bench_llm_fixture/metrics.json
+	$(PYTHON) -m benchmarks.bria_bench.cli report --metrics tmp/bria_bench_llm_fixture/metrics.json --output tmp/bria_bench_llm_fixture/REPORT.md
+
+benchmark-deepseek:
+	@test "$${BRIA_BENCH_ALLOW_REMOTE_LLM:-}" = "1" || (echo "Set BRIA_BENCH_ALLOW_REMOTE_LLM=1 only after confirming benchmark materials may be sent to DeepSeek." >&2; exit 2)
+	@test -n "$${DEEPSEEK_API_KEY:-}" || (echo "Set DEEPSEEK_API_KEY in the environment; do not paste it into logs or Git." >&2; exit 2)
+	@for repeat in 1 2 3; do \
+		dir="tmp/bria_bench_deepseek_r$$repeat"; \
+		rm -rf "$$dir"; mkdir -p "$$dir"; \
+		$(PYTHON) -m benchmarks.bria_bench.cli run --manifest $(BRIA_BENCH_MANIFEST) --runs-dir "$$dir" --split dev --adapter "deepseek-v4-flash-r$$repeat" --timeout-seconds 900 || exit $$?; \
+		$(PYTHON) -m benchmarks.bria_bench.cli evaluate --manifest $(BRIA_BENCH_MANIFEST) --runs-dir "$$dir" --split dev --output "$$dir/metrics.json" || exit $$?; \
+		$(PYTHON) -m benchmarks.bria_bench.cli report --metrics "$$dir/metrics.json" --output "$$dir/REPORT.md" || exit $$?; \
+	done
 
 benchmark:
 	mkdir -p $(BRIA_BENCH_RUNS_DIR)

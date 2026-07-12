@@ -3,6 +3,16 @@
 ## Unreleased
 
 ### Added
+- Provider-neutral OpenAI-compatible BRIA-Bench direct-LLM baseline with a current DeepSeek
+  `deepseek-v4-flash` configuration, three separately identified live repeats, prompt-locked
+  offline fixtures, strict JSON parsing, private response caching, token/latency/cost telemetry,
+  and an explicit external-data-transfer opt-in. The text-only model records image pixels as an
+  unexecuted modality and uses the same normalized-observation matcher as the full pipeline.
+- Direct-LLM benchmark hardening now removes expected-outcome cues from dev manuscripts, sends only
+  a hash-verified no-symlink package snapshot, locks fixtures and cache entries to the complete API
+  request, disables HTTP redirects, rejects repository/package/output cache overlap, validates the
+  returned model and repeat identity, exposes model-reported coverage gaps to the common matcher,
+  and prevents synthetic fixture runs from becoming headline-eligible.
 - BRIA-Bench integration commands and docs: `make benchmark-smoke` now runs the six controlled dev
   fixtures offline with the full adapter and a 60-second per-case timeout, while manual full
   benchmark targets use all 36 public fixtures under `tmp/bria_bench_runs`. Public docs now state

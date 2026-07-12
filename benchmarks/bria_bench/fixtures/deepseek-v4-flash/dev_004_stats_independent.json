@@ -1,0 +1,33 @@
+{
+  "base_url": "https://api.deepseek.com",
+  "case_id": "dev_004_stats_independent",
+  "model": "deepseek-v4-flash",
+  "prompt_sha256": "0126527488d9282379c81049f7cb683714518262c2b12a4ec2db08c88022c958",
+  "provider": "deepseek",
+  "request_sha256": "5c12ceec2f4ee321e43422fb646c63fbf3d61ab5b35b86cc5b46c6b6e3a170d8",
+  "response": {
+    "choices": [
+      {
+        "finish_reason": "stop",
+        "index": 0,
+        "message": {
+          "content": "{\"observations\":[],\"coverage_gaps\":[],\"scope_note\":\"Limited direct text review; no reviewable numerical pattern was identified in this fixture, and source records plus human review remain required.\"}",
+          "role": "assistant"
+        }
+      }
+    ],
+    "created": 0,
+    "id": "fixture-dev-004",
+    "model": "deepseek-v4-flash",
+    "object": "chat.completion",
+    "system_fingerprint": "fixture-v1",
+    "usage": {
+      "completion_tokens": 45,
+      "prompt_cache_hit_tokens": 0,
+      "prompt_cache_miss_tokens": 511,
+      "prompt_tokens": 511,
+      "total_tokens": 556
+    }
+  },
+  "schema_version": "1.0.0"
+}

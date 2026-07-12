@@ -99,22 +99,22 @@ See https://creativecommons.org/publicdomain/zero/1.0/ for the CC0 1.0 legal ter
 """
 _MANUSCRIPTS = {
     "dev_001_global_flip": (
-        "Controlled Figure 1 contains two procedurally generated panels supplied for image-similarity development checks.\n"
+        "Figure 1 contains two procedurally generated image panels.\n"
     ),
     "dev_002_independent_images": (
-        "Controlled Figure 2 contains two independently generated panels supplied as an image-similarity negative control.\n"
+        "Figure 2 contains two procedurally generated image panels.\n"
     ),
     "dev_003_stats_shift": (
-        "Controlled Figure 3 source data contain twelve paired control and treatment values for numerical-consistency development checks.\n"
+        "Figure 3 reports twelve paired control and treatment values.\n"
     ),
     "dev_004_stats_independent": (
-        "Controlled Figure 4 source data contain twelve independent control and treatment pairs as a numerical negative control.\n"
+        "Figure 4 reports twelve paired control and treatment values.\n"
     ),
     "dev_005_corrupt_image": (
-        "Controlled Figure 5 includes one readable image and one deliberately incomplete image for material-intake coverage checks.\n"
+        "Figure 5 includes two exported panel files.\n"
     ),
     "dev_006_manifest_laundering": (
-        "Controlled Figure 6 includes two related panels and a machine-readable assembly declaration for provenance-context checks.\n"
+        "Figure 6 includes two panels and a machine-readable assembly declaration.\n"
     ),
 }
 
@@ -308,10 +308,10 @@ def _annotations() -> dict[str, dict[str, Any]]:
                     "coverage_gap",
                     "material_or_coverage_gap",
                     {
-                        "file": "figures/Figure_5B_truncated.png",
+                        "file": "figures/Figure_5B.png",
                         "terms": [
-                            "figures/Figure_5B_truncated.png",
-                            "Figure_5B_truncated.png",
+                            "figures/Figure_5B.png",
+                            "Figure_5B.png",
                         ],
                     },
                     ["R1", "R1"],
@@ -556,10 +556,10 @@ def _write_package(case_id: str, destination: Path) -> None:
             destination / "source_data" / "Figure_4_source.csv", _INDEPENDENT_VALUES
         )
     elif case_id == "dev_005_corrupt_image":
-        valid = destination / "figures" / "Figure_5A_valid.png"
-        _write_png(valid, _noise_pixels(5001))
-        truncated = destination / "figures" / "Figure_5B_truncated.png"
-        truncated.write_bytes(valid.read_bytes()[:24])
+        first = destination / "figures" / "Figure_5A.png"
+        _write_png(first, _noise_pixels(5001))
+        second = destination / "figures" / "Figure_5B.png"
+        second.write_bytes(first.read_bytes()[:24])
     elif case_id == "dev_006_manifest_laundering":
         pixels = _noise_pixels(6001)
         _write_png(destination / "figures" / "Figure_6A.png", pixels)

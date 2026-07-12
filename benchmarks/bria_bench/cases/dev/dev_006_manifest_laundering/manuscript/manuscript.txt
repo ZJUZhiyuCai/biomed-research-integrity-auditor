@@ -1,1 +1,1 @@
-Controlled Figure 6 includes two related panels and a machine-readable assembly declaration for provenance-context checks.
+Figure 6 includes two panels and a machine-readable assembly declaration.

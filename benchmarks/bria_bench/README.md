@@ -1,6 +1,6 @@
 # BRIA-Bench
 
-BRIA-Bench is an offline benchmark harness for the local biomedical research integrity auditor. It freezes fixture package hashes, runs an adapter under monitored process control, evaluates normalized observations against sealed annotations, and renders technical metrics reports.
+BRIA-Bench is a local, offline-by-default benchmark harness for the biomedical research integrity auditor. It freezes fixture package hashes, runs an adapter under monitored process control, evaluates normalized observations against sealed annotations, and renders technical metrics reports. External LLM baselines are separately gated, explicit opt-in runs.
 
 ## Current Public Corpus
 
@@ -85,6 +85,34 @@ make benchmark-report
 ```
 
 Both targets use `tmp/bria_bench_runs` and do not pass split or case filters.
+
+## Direct LLM Baseline
+
+The direct-LLM baseline uses a provider-neutral OpenAI-compatible producer and the same normalized-observation matcher as the full pipeline. CI remains offline:
+
+```bash
+make benchmark-llm-smoke
+```
+
+This target uses committed synthetic response fixtures locked to the current system/user prompt hashes and the canonical full request hash. Fixture token counts exercise telemetry plumbing, but fixture latency and cost are zero and are not DeepSeek API measurements. Synthetic fixture identity is visible in artifacts and reports and is hard-blocked from headline eligibility.
+
+Descriptive registry case IDs remain runner metadata and cache identity only; they are not included in the model prompt, so names such as `stats_shift` or `global_flip` cannot leak the expected condition to the baseline.
+
+The configured live baseline is DeepSeek `deepseek-v4-flash` in non-thinking JSON mode at temperature 0, with three separately identified repeats. DeepSeek V4 is text-only: the adapter extracts machine-readable text and records image pixels, embedded PDF/Office visual layers, image-only PDFs, and unsupported binary inputs as coverage gaps. Model-reported coverage gaps also enter the common observation/matching path as R1 limitations. It does not feed outputs from this project's image detectors to the LLM.
+
+API settings were checked on 2026-07-12 against DeepSeek's official [OpenAI-compatible quick start](https://api-docs.deepseek.com/), [JSON output guide](https://api-docs.deepseek.com/guides/json_mode/), and [model/pricing table](https://api-docs.deepseek.com/quick_start/pricing/). Review those pages again before publishing cost comparisons because model aliases and prices can change.
+
+Live runs send package-derived text to an external API and are therefore manual, explicit opt-in only:
+
+```bash
+export DEEPSEEK_API_KEY='set-this-in-your-shell-or-secret-manager'
+export BRIA_BENCH_ALLOW_REMOTE_LLM=1
+make benchmark-deepseek
+```
+
+Do not paste the key into a command, issue, log, fixture, result, or Git file. Before extraction, the adapter creates a bounded no-symlink package snapshot and verifies it against the frozen package hash. Live requests do not follow HTTP redirects. API responses are cached under the user cache directory (or `BRIA_BENCH_LLM_CACHE_DIR`) using private directory/file permissions; cache paths may not overlap the repository, input package, or producer output. Cache identity includes the canonical full request hash plus case, provider, endpoint, and repeat index. The three outputs remain under `tmp/bria_bench_deepseek_r1` through `r3` and are excluded from releases.
+
+The pricing snapshot encoded in the adapters is dated 2026-07-12 and must be reviewed before a formal run. No live result is currently committed, and the current dev fixtures remain ineligible for headline accuracy.
 
 ## Reviewer Packets
 

@@ -558,12 +558,21 @@ def aggregate_metrics(
             full_match["assignment_ambiguous"]
             or issue_match["assignment_ambiguous"]
         )
+        llm_telemetry = run.get("telemetry", {}).get("llm", {})
+        adapter_identity = str(run.get("adapter", "")).lower()
+        provider_identity = str(llm_telemetry.get("provider", "")).lower()
+        synthetic_fixture = (
+            "fixture" in adapter_identity
+            or "fixture" in provider_identity
+            or llm_telemetry.get("response_cache_status") == "fixture"
+        )
         eligible = (
             track in {"blinded_challenge", "public_realism"}
             and manifest_case.get("headline_eligible") is True
             and annotation["review_status"]
             in {"controlled_ground_truth", "independent_adjudicated"}
             and not attribution_ambiguous
+            and not synthetic_fixture
         )
         track_counts[track] += 1
         track_eligible[track] = track_eligible[track] or eligible
