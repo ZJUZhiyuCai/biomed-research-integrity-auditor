@@ -591,6 +591,52 @@ class ReviewerFormContractTests(unittest.TestCase):
 
 
 class ReviewerPacketLeakageTests(ReviewerPacketFixture):
+    def test_mapping_schema_only_fields_are_all_protected_markers(self) -> None:
+        from benchmarks.bria_bench.reviewer_packet import (
+            _EXPECTED_LABEL_MARKERS,
+            _MAPPING_ARTIFACT_MARKERS,
+            _MAPPING_ONLY_MARKERS,
+            _PROTECTED_TOKEN_MARKERS,
+        )
+
+        schema = json.loads(
+            (BRIA_BENCH_ROOT / "schemas" / "reviewer_mapping.schema.json").read_text(
+                encoding="utf-8"
+            )
+        )
+
+        def property_names(value: object) -> set[str]:
+            if isinstance(value, list):
+                return set().union(*(property_names(item) for item in value))
+            if not isinstance(value, dict):
+                return set()
+            names = set(value.get("properties", {}))
+            return names | set().union(
+                *(property_names(item) for item in value.values())
+            )
+
+        packet_facing_or_common = {
+            "algorithm",
+            "anonymization",
+            "cases",
+            "reviewer_case_id",
+            "schema_version",
+            "source_package_sha256",
+        }
+        mapping_only = property_names(schema) - packet_facing_or_common
+
+        self.assertEqual(mapping_only, set(_MAPPING_ONLY_MARKERS))
+        self.assertLessEqual(mapping_only, set(_PROTECTED_TOKEN_MARKERS))
+        self.assertLessEqual(
+            set(_EXPECTED_LABEL_MARKERS) | set(_MAPPING_ARTIFACT_MARKERS),
+            set(_PROTECTED_TOKEN_MARKERS),
+        )
+        self.assertTrue(
+            {"reviewer_case_id", "source_package_sha256"}.isdisjoint(
+                _PROTECTED_TOKEN_MARKERS
+            )
+        )
+
     def make_unicode_source_case(self, source_id: str = "\u6e90\u6848") -> Path:
         old_id = "source_alpha"
         package = self.cases_root / source_id
@@ -968,6 +1014,103 @@ class ReviewerPacketLeakageTests(ReviewerPacketFixture):
         )
         self.refreeze()
         self.assert_leak_rejected()
+
+    def test_rejects_complete_mapping_and_label_marker_set_across_encodings(
+        self,
+    ) -> None:
+        from benchmarks.bria_bench.reviewer_packet import ReviewerPacketError
+
+        markers = (
+            "source_case_id",
+            "source_annotation_sha256",
+            "packet_manifest_sha256",
+            "source_manifest_sha256",
+            "selection_sha256",
+            "seed_commitment_sha256",
+            "expected_label",
+            "expected_labels",
+            "reviewer_mapping",
+            "mapping_output",
+        )
+        encodings = (
+            "utf-8",
+            "utf-16-le",
+            "utf-16-be",
+            "utf-32-le",
+            "utf-32-be",
+        )
+        attack = self.cases_root / "source_alpha" / "encoded-marker.bin"
+
+        for marker_index, marker in enumerate(markers):
+            for encoding_index, encoding in enumerate(encodings):
+                nested = encoding_index % 2 == 1
+                index = marker_index * len(encodings) + encoding_index
+                with self.subTest(marker=marker, encoding=encoding, nested=nested):
+                    payload = f'{{"{marker}": "private"}}'.encode(encoding)
+                    if nested:
+                        with zipfile.ZipFile(
+                            attack,
+                            "w",
+                            compression=zipfile.ZIP_DEFLATED,
+                        ) as archive:
+                            archive.writestr("nested/document.xml", payload)
+                    else:
+                        attack.write_bytes(payload)
+                    self.refreeze()
+                    output = self.root / f"packet-marker-{index}"
+                    mapping = self.root / f"mapping-marker-{index}.json"
+
+                    with self.assertRaises(ReviewerPacketError) as caught:
+                        self.export(
+                            case_ids=["source_alpha"],
+                            output=output,
+                            mapping=mapping,
+                        )
+
+                    self.assertNotIn(marker, str(caught.exception))
+                    self.assertFalse(output.exists())
+                    self.assertFalse(mapping.exists())
+
+    def test_allows_sensitive_marker_substrings_inside_larger_tokens(self) -> None:
+        near_markers = (
+            "unexpected_observations_field",
+            "source_case_identifier",
+            "source_annotation_sha256_backup",
+            "packet_manifest_sha256sum",
+            "source_manifest_sha256_extra",
+            "selection_sha256_value",
+            "seed_commitment_sha256_digest",
+            "expected_labeling",
+            "expected_labels_extra",
+            "reviewer_mapping_notes",
+            "mapping_output_backup",
+            "reviewer_case_id",
+            "source_package_sha256",
+        )
+        attack = self.cases_root / "source_alpha" / "near-markers.bin"
+
+        encodings = (
+            "utf-8",
+            "utf-16-le",
+            "utf-16-be",
+            "utf-32-le",
+            "utf-32-be",
+        )
+        for index, encoding in enumerate(encodings):
+            with self.subTest(encoding=encoding):
+                attack.write_bytes(" ".join(near_markers).encode(encoding))
+                self.refreeze()
+                output = self.root / f"packet-near-marker-{index}"
+                mapping = self.root / f"mapping-near-marker-{index}.json"
+
+                self.export(
+                    case_ids=["source_alpha"],
+                    output=output,
+                    mapping=mapping,
+                )
+
+                self.assertTrue(output.is_dir())
+                self.assertTrue(mapping.is_file())
 
     def test_rejects_administrative_mapping_material(self) -> None:
         (self.cases_root / "source_alpha" / "mapping.json").write_text(

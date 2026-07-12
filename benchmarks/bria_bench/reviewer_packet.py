@@ -40,8 +40,8 @@ _HMAC_CONTEXT = b"BRIA-BENCH/REVIEWER-PACKET/1\0"
 _LICENSE_ALLOWLIST = frozenset({"MIT", "CC0-1.0"})
 _SEED_PATTERN = re.compile(rb"^[a-f0-9]{64}$")
 _SEMANTIC_VERSION = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$")
-_CASE_ID_CHARS = rb"A-Za-z0-9._-"
-_CASE_ID_TEXT_CHARS = frozenset(
+_TOKEN_CHARS = rb"A-Za-z0-9._-"
+_TOKEN_TEXT_CHARS = frozenset(
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-"
 )
 _ENCODED_TEXT_ENCODINGS = (
@@ -151,6 +151,24 @@ _SENSITIVE_MARKERS = frozenset(
         "text_overlap_screen",
         "unless_r4_requirement",
     }
+)
+_MAPPING_ONLY_MARKERS = frozenset(
+    {
+        "packet_manifest_sha256",
+        "seed_commitment_sha256",
+        "selection_sha256",
+        "source_annotation_sha256",
+        "source_case_id",
+        "source_manifest_sha256",
+    }
+)
+_EXPECTED_LABEL_MARKERS = frozenset({"expected_label", "expected_labels"})
+_MAPPING_ARTIFACT_MARKERS = frozenset({"mapping_output", "reviewer_mapping"})
+_PROTECTED_TOKEN_MARKERS = (
+    _SENSITIVE_MARKERS
+    | _MAPPING_ONLY_MARKERS
+    | _EXPECTED_LABEL_MARKERS
+    | _MAPPING_ARTIFACT_MARKERS
 )
 _PROHIBITED_FILE_NAMES = frozenset(
     {
@@ -265,7 +283,7 @@ class _SourceCase:
 
 
 @dataclass(frozen=True)
-class _EncodedIdentifierPattern:
+class _EncodedTokenPattern:
     encoding: str
     unit_width: int
     pattern: re.Pattern[bytes]
@@ -276,7 +294,8 @@ class _ScanPolicy:
     identifiers: tuple[str, ...]
     paths: tuple[str, ...]
     forbidden_bytes: tuple[bytes, ...]
-    encoded_identifier_patterns: tuple[_EncodedIdentifierPattern, ...]
+    encoded_identifier_patterns: tuple[_EncodedTokenPattern, ...]
+    encoded_sensitive_patterns: tuple[_EncodedTokenPattern, ...]
     encoded_forbidden_patterns: tuple[re.Pattern[bytes], ...]
 
 
@@ -899,22 +918,22 @@ def _prepare_source_cases(
     return prepared
 
 
-def _identifier_pattern(value: str) -> re.Pattern[str]:
+def _token_pattern(value: str) -> re.Pattern[str]:
     return re.compile(
         rf"(?<![A-Za-z0-9._-]){re.escape(value)}(?![A-Za-z0-9._-])",
         re.IGNORECASE,
     )
 
 
-def _identifier_bytes_pattern(value: str) -> re.Pattern[bytes]:
+def _token_bytes_pattern(value: str) -> re.Pattern[bytes]:
     encoded = re.escape(value.encode("utf-8"))
     return re.compile(
         rb"(?<!["
-        + _CASE_ID_CHARS
+        + _TOKEN_CHARS
         + rb"])(?:"
         + encoded
         + rb")(?!["
-        + _CASE_ID_CHARS
+        + _TOKEN_CHARS
         + rb"])",
         re.IGNORECASE,
     )
@@ -942,19 +961,19 @@ def _compile_literal_pattern(payloads: set[bytes]) -> re.Pattern[bytes] | None:
     return re.compile(b"|".join(re.escape(value) for value in alternatives))
 
 
-def _compile_encoded_identifier_patterns(
-    identifiers: tuple[str, ...],
-) -> tuple[_EncodedIdentifierPattern, ...]:
-    compiled: list[_EncodedIdentifierPattern] = []
+def _compile_encoded_token_patterns(
+    tokens: tuple[str, ...],
+) -> tuple[_EncodedTokenPattern, ...]:
+    compiled: list[_EncodedTokenPattern] = []
     for encoding, unit_width in _ENCODED_TEXT_ENCODINGS:
         payloads = {
             variant.encode(encoding, errors="strict")
-            for identifier in identifiers
-            for variant in _text_marker_variants(identifier)
+            for token in tokens
+            for variant in _text_marker_variants(token)
         }
         pattern = _compile_literal_pattern(payloads)
         if pattern is not None:
-            compiled.append(_EncodedIdentifierPattern(encoding, unit_width, pattern))
+            compiled.append(_EncodedTokenPattern(encoding, unit_width, pattern))
     return tuple(compiled)
 
 
@@ -981,7 +1000,7 @@ def _compile_encoded_forbidden_patterns(
     return tuple(compiled)
 
 
-def _encoded_unit_is_case_id_character(
+def _encoded_unit_is_token_character(
     unit: bytes,
     encoding: str,
     unit_width: int,
@@ -992,12 +1011,12 @@ def _encoded_unit_is_case_id_character(
         character = unit.decode(encoding, errors="strict")
     except UnicodeError:
         return False
-    return len(character) == 1 and character in _CASE_ID_TEXT_CHARS
+    return len(character) == 1 and character in _TOKEN_TEXT_CHARS
 
 
-def _encoded_identifier_present(
+def _encoded_token_present(
     data: bytes,
-    compiled: _EncodedIdentifierPattern,
+    compiled: _EncodedTokenPattern,
 ) -> bool:
     position = 0
     while True:
@@ -1006,11 +1025,11 @@ def _encoded_identifier_present(
             return False
         before = data[match.start() - compiled.unit_width : match.start()]
         after = data[match.end() : match.end() + compiled.unit_width]
-        if not _encoded_unit_is_case_id_character(
+        if not _encoded_unit_is_token_character(
             before,
             compiled.encoding,
             compiled.unit_width,
-        ) and not _encoded_unit_is_case_id_character(
+        ) and not _encoded_unit_is_token_character(
             after,
             compiled.encoding,
             compiled.unit_width,
@@ -1027,13 +1046,13 @@ def _scan_text(text: str, label: str, policy: _ScanPolicy) -> None:
     normalized = unicodedata.normalize("NFC", text)
     lowered = normalized.casefold()
     for identifier in policy.identifiers:
-        if _identifier_pattern(identifier).search(normalized):
+        if _token_pattern(identifier).search(normalized):
             _raise_leak(label, "an exact source identifier")
     for path in policy.paths:
         if path and path.casefold() in lowered:
             _raise_leak(label, "an exact source or private path")
-    for marker in _SENSITIVE_MARKERS:
-        if marker in lowered:
+    for marker in _PROTECTED_TOKEN_MARKERS:
+        if _token_pattern(marker).search(normalized):
             _raise_leak(label, "a sensitive annotation, rule, or analysis identifier")
     if _EMAIL_PATTERN.search(normalized):
         _raise_leak(label, "an email address")
@@ -1054,18 +1073,21 @@ def _scan_text(text: str, label: str, policy: _ScanPolicy) -> None:
 def _scan_raw_bytes(data: bytes, label: str, policy: _ScanPolicy) -> None:
     lowered = data.lower()
     for identifier in policy.identifiers:
-        if _identifier_bytes_pattern(identifier).search(data):
+        if _token_bytes_pattern(identifier).search(data):
             _raise_leak(label, "an exact source identifier")
     for compiled in policy.encoded_identifier_patterns:
-        if _encoded_identifier_present(data, compiled):
+        if _encoded_token_present(data, compiled):
             _raise_leak(label, "an exact source identifier")
     for path in policy.paths:
         encoded = path.encode("utf-8", errors="strict")
         if encoded and encoded.lower() in lowered:
             _raise_leak(label, "an exact source or private path")
-    for marker in _SENSITIVE_MARKERS:
-        if marker.encode("ascii") in lowered:
+    for marker in _PROTECTED_TOKEN_MARKERS:
+        if _token_bytes_pattern(marker).search(data):
             _raise_leak(label, "a sensitive annotation, rule, or analysis identifier")
+    for compiled in policy.encoded_sensitive_patterns:
+        if _encoded_token_present(data, compiled):
+            _raise_leak(label, "a sensitive encoded marker")
     for forbidden in policy.forbidden_bytes:
         if forbidden and forbidden in data:
             _raise_leak(label, "seed or external mapping bytes")
@@ -1648,11 +1670,16 @@ def _scan_staged_packet(
         include_case_variants=False,
     )
     mapping_policy = _ScanPolicy(
-        policy.identifiers,
-        policy.paths,
-        tuple(item for item in policy.forbidden_bytes + (mapping_bytes,) if item),
-        policy.encoded_identifier_patterns,
-        policy.encoded_forbidden_patterns + encoded_mapping_patterns,
+        identifiers=policy.identifiers,
+        paths=policy.paths,
+        forbidden_bytes=tuple(
+            item for item in policy.forbidden_bytes + (mapping_bytes,) if item
+        ),
+        encoded_identifier_patterns=policy.encoded_identifier_patterns,
+        encoded_sensitive_patterns=policy.encoded_sensitive_patterns,
+        encoded_forbidden_patterns=(
+            policy.encoded_forbidden_patterns + encoded_mapping_patterns
+        ),
     )
     _assert_no_xattrs(stage)
     for kind, relative in stage_inventory:
@@ -1725,17 +1752,21 @@ def _make_scan_policy(
     encoded_forbidden_values = tuple(
         sorted(
             set(path_values)
-            | set(_SENSITIVE_MARKERS)
             | set(_ENCODED_LOCAL_PATH_MARKERS)
             | {seed_text.decode("ascii", errors="strict")}
         )
     )
     return _ScanPolicy(
-        identifier_values,
-        path_values,
-        (seed, seed_text),
-        _compile_encoded_identifier_patterns(identifier_values),
-        _compile_encoded_forbidden_patterns(encoded_forbidden_values),
+        identifiers=identifier_values,
+        paths=path_values,
+        forbidden_bytes=(seed, seed_text),
+        encoded_identifier_patterns=_compile_encoded_token_patterns(identifier_values),
+        encoded_sensitive_patterns=_compile_encoded_token_patterns(
+            tuple(sorted(_PROTECTED_TOKEN_MARKERS))
+        ),
+        encoded_forbidden_patterns=_compile_encoded_forbidden_patterns(
+            encoded_forbidden_values
+        ),
     )
 
 
