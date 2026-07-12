@@ -25,8 +25,12 @@ from typing import Any, get_type_hints
 from unittest.mock import patch
 
 from jsonschema import Draft202012Validator
-import tomllib
 from PIL import Image
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python 3.10
+    import tomli as tomllib
 
 import benchmarks.bria_bench.generate_dev_cases as dev_cases_module
 import benchmarks.bria_bench.hashing as hashing_module

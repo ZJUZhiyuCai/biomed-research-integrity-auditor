@@ -10,7 +10,6 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import tomllib
 import unittest
 import zipfile
 import zlib
@@ -20,6 +19,11 @@ from xml.sax.saxutils import escape
 
 import yaml
 from PIL import Image, ImageDraw, ImageFilter
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python 3.10
+    import tomli as tomllib
 
 ROOT = Path(__file__).resolve().parents[1]
 PYTHON = sys.executable
