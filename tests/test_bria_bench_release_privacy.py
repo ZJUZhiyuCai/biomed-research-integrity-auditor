@@ -367,6 +367,10 @@ class BriaBenchReleasePrivacyTests(unittest.TestCase):
         )
         self.assertNotIn("rm -rf", "\n".join(target_lines("benchmark")))
 
+        release = target_lines("release-artifacts")
+        build_index = release.index("\trm -rf build *.egg-info")
+        self.assertLess(build_index, release.index("\t$(PYTHON) -m build"))
+
 
 if __name__ == "__main__":
     unittest.main()

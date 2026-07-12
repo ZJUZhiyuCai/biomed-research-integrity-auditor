@@ -38,6 +38,7 @@ release-artifacts:
 	cd webapp/frontend && npm ci
 	cd webapp/frontend && npm run build
 	$(PYTHON) -m pip install --upgrade build
+	rm -rf build *.egg-info
 	$(PYTHON) -m build
 	$(PYTHON) scripts/build_release_artifacts.py
 
