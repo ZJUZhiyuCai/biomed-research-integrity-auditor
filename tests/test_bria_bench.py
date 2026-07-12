@@ -90,6 +90,12 @@ SCHEMA_NAMES = (
     "reviewer_mapping.schema.json",
     "reviewer_form_template.schema.json",
     "reviewer_form_completed.schema.json",
+    "reviewer_form_independent_template.schema.json",
+    "reviewer_form_independent_completed.schema.json",
+    "reviewer_submission.schema.json",
+    "reviewer_comparison.schema.json",
+    "reviewer_adjudication.schema.json",
+    "reviewer_finalization.schema.json",
 )
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
@@ -329,8 +335,9 @@ def metric_bundle(
     negative: bool = False,
     status: str = "success",
     matched: bool = False,
-    track: str = "blinded_challenge",
+    track: str = "public_realism",
     review_status: str = "controlled_ground_truth",
+    review_proof_verified: bool = False,
     scope: str | None = None,
     profile: str = "quick",
 ) -> dict[str, object]:
@@ -378,6 +385,7 @@ def metric_bundle(
         "annotation": annotation,
         "run_result": run_result,
         "match_result": canonical_match,
+        "review_proof_verified": review_proof_verified,
     }
 
 
@@ -2450,6 +2458,20 @@ class BriaBenchContractTests(unittest.TestCase):
         manifest["cases"][0]["annotation_sha256"] = "e" * 64
         validate_contract("benchmark_manifest.schema.json", manifest)
 
+    def test_blinded_headline_manifest_requires_test_split_and_review_proof(self) -> None:
+        manifest = minimal_manifest()
+        manifest["cases"][0]["headline_eligible"] = True
+        with self.assertRaisesRegex(ContractError, "review_proof_path|test"):
+            validate_contract("benchmark_manifest.schema.json", manifest)
+
+        manifest["cases"][0].update(
+            {
+                "split": "test",
+                "review_proof_path": "review_proofs/review_proof_v1.json",
+            }
+        )
+        validate_contract("benchmark_manifest.schema.json", manifest)
+
     def test_manifest_rejects_invalid_frozen_at_format(self) -> None:
         manifest = minimal_manifest()
         manifest["frozen_at"] = "not-a-date"
@@ -4433,6 +4455,8 @@ class BriaBenchRuntimeTests(unittest.TestCase):
             [
                 "README.md",
                 "REVIEWER_GUIDE.md",
+                "INDEPENDENT_REVIEWER_GUIDE.md",
+                "INDEPENDENT_REVIEW_WORKFLOW.md",
                 "benchmark_manifest*.json",
                 "annotations/**/*.json",
                 "cases/**/*",
@@ -4443,9 +4467,15 @@ class BriaBenchRuntimeTests(unittest.TestCase):
                 "schemas/metrics.schema.json",
                 "schemas/observation.schema.json",
                 "schemas/reviewer_form_completed.schema.json",
+                "schemas/reviewer_form_independent_completed.schema.json",
+                "schemas/reviewer_form_independent_template.schema.json",
                 "schemas/reviewer_form_template.schema.json",
+                "schemas/reviewer_adjudication.schema.json",
+                "schemas/reviewer_comparison.schema.json",
+                "schemas/reviewer_finalization.schema.json",
                 "schemas/reviewer_mapping.schema.json",
                 "schemas/reviewer_packet_manifest.schema.json",
+                "schemas/reviewer_submission.schema.json",
                 "schemas/run_result.schema.json",
             ],
         )
@@ -6314,6 +6344,53 @@ class BriaBenchMetricAggregationTests(unittest.TestCase):
             )["headline_detection_eligible"]
         )
 
+    def test_blinded_headline_requires_verified_finalization_proof(self) -> None:
+        missing = metric_bundle(
+            "blind-missing-proof",
+            matched=True,
+            track="blinded_challenge",
+            review_status="independent_adjudicated",
+        )
+        missing["manifest_case"]["split"] = "test"
+        missing["manifest_case"]["review_proof_path"] = "review_proofs/missing.json"
+        verified = metric_bundle(
+            "blind-verified-proof",
+            matched=True,
+            track="blinded_challenge",
+            review_status="independent_adjudicated",
+            review_proof_verified=True,
+        )
+        verified["manifest_case"]["split"] = "test"
+        verified["manifest_case"]["review_proof_path"] = "review_proofs/verified.json"
+        controlled = metric_bundle(
+            "blind-controlled-label",
+            matched=True,
+            track="blinded_challenge",
+            review_status="controlled_ground_truth",
+            review_proof_verified=True,
+        )
+        controlled["manifest_case"]["split"] = "test"
+        controlled["manifest_case"]["review_proof_path"] = "review_proofs/controlled.json"
+
+        result = self.aggregate([missing, verified, controlled])
+
+        self.assertEqual(
+            result["detection"]["expected_finding_recall"],
+            {"numerator": 1, "denominator": 1, "value": 1.0},
+        )
+        eligibility = {
+            item["case_id"]: item["headline_detection_eligible"]
+            for item in result["case_results"]
+        }
+        self.assertEqual(
+            eligibility,
+            {
+                "blind-controlled-label": False,
+                "blind-missing-proof": False,
+                "blind-verified-proof": True,
+            },
+        )
+
     def test_failed_regression_assertions_remain_denominated_but_not_met(
         self,
     ) -> None:
@@ -6549,7 +6626,7 @@ class BriaBenchMetricAggregationTests(unittest.TestCase):
         )
         self.assertEqual(result["case_results"][0]["matched_label_count"], 1)
 
-    def test_issue_recall_is_separate_from_location_and_keeps_risk_denominator(
+    def test_headline_recall_requires_location_and_issue_only_match_is_diagnostic(
         self,
     ) -> None:
         case = metric_bundle("wrong-panel")
@@ -6568,7 +6645,7 @@ class BriaBenchMetricAggregationTests(unittest.TestCase):
 
         self.assertEqual(
             result["detection"]["expected_finding_recall"],
-            {"numerator": 1, "denominator": 1, "value": 1.0},
+            {"numerator": 0, "denominator": 1, "value": 0.0},
         )
         self.assertEqual(
             result["detection"]["location_match_rate"],
@@ -6576,7 +6653,7 @@ class BriaBenchMetricAggregationTests(unittest.TestCase):
         )
         self.assertEqual(
             result["detection"]["risk_band_agreement"],
-            {"numerator": 1, "denominator": 1, "value": 1.0},
+            {"numerator": 0, "denominator": 0, "value": None},
         )
 
     def test_public_concern_wrong_location_does_not_count_as_coverage(self) -> None:
@@ -6604,7 +6681,7 @@ class BriaBenchMetricAggregationTests(unittest.TestCase):
         )
 
     def test_issue_assignment_is_one_to_one_across_recall_and_coverage(self) -> None:
-        case = metric_bundle("mixed-issue-assignment")
+        case = metric_bundle("mixed-issue-assignment", matched=True)
         recall = case["annotation"]["expected_observations"][0]
         recall["observation_id"] = "a_recall"
         coverage = copy.deepcopy(recall)
@@ -7156,14 +7233,14 @@ class BriaBenchReportTests(unittest.TestCase):
             },
             {
                 "case_id": "case_b",
-                "track": "blinded_challenge",
+                "track": "public_realism",
                 "split": "dev",
                 "mode": "internal_presubmission",
                 "scan_profile": "quick",
             },
             {
                 "case_id": "case_c",
-                "track": "blinded_challenge",
+                "track": "public_realism",
                 "split": "dev",
                 "mode": "internal_presubmission",
                 "scan_profile": "deep",
@@ -7249,7 +7326,7 @@ class BriaBenchReportTests(unittest.TestCase):
         self.assertIn("| Output size | 3 | 1 KiB | 2 KiB | bytes (IEC) |", report)
         self.assertIn("| LLM input tokens | 3 | 20 | 30 | tokens |", report)
         self.assertIn("| LLM estimated cost | 3 | 0.02 | 0.03 | CNY |", report)
-        self.assertIn("| Blinded challenge | 2 | at least one case eligible |", report)
+        self.assertIn("| Public realism | 2 | at least one case eligible |", report)
         self.assertTrue(report.endswith("\n"))
         self.assertFalse(report.endswith("\n\n"))
 
@@ -7396,7 +7473,7 @@ class BriaBenchReportTests(unittest.TestCase):
         track_total["run_count"] = 4
 
         eligibility = self.metrics_fixture()
-        eligibility["tracks"]["blinded_challenge"][
+        eligibility["tracks"]["public_realism"][
             "headline_detection_eligible"
         ] = False
 
@@ -7543,7 +7620,7 @@ class BriaBenchReportTests(unittest.TestCase):
             [
                 {
                     "case_id": "identity_mismatch",
-                    "track": "blinded_challenge",
+                    "track": "public_realism",
                     "split": "dev",
                     "mode": "internal_presubmission",
                     "scan_profile": "quick",
@@ -7855,6 +7932,7 @@ class BriaBenchCliTests(unittest.TestCase):
         source["cases"][0].update(
             {
                 "case_id": "case_001",
+                "track": "public_realism",
                 "package_path": "package",
                 "annotation_path": "annotation.json",
                 "headline_eligible": True,
@@ -7890,6 +7968,10 @@ class BriaBenchCliTests(unittest.TestCase):
         relative_paths = [
             "results/task12_private_run_summary.json",
             "reviewer_packets/task12_packet/packet_manifest.json",
+            "locked_submissions/task12/submission.json",
+            "comparisons/task12/comparison.json",
+            "adjudications/task12/adjudication.json",
+            "finalizations/task12/finalization.json",
             "mappings/task12_mapping.json",
             "api_cache/task12_cache.json",
             "local_metrics/task12_metrics.json",
@@ -7900,6 +7982,10 @@ class BriaBenchCliTests(unittest.TestCase):
             "seed_task12.txt",
             "identity_task12.json",
             "reviewer_packet_task12.zip",
+            "comparison_task12.json",
+            "adjudication_task12.json",
+            "submission_task12.json",
+            "finalization_task12.json",
         ]
         created_dirs: set[Path] = set()
         for relative in relative_paths:
@@ -8250,7 +8336,10 @@ class BriaBenchCliTests(unittest.TestCase):
         )
         help_text = cli_module.build_parser().format_help()
         self.assertIn("Render a BRIA-Bench metrics report.", help_text)
-        self.assertIn("Export a workflow-demo reviewer packet.", help_text)
+        self.assertIn("Export a demo or sealed independent reviewer packet.", help_text)
+        self.assertIn("Immutably lock one completed independent reviewer", help_text)
+        self.assertIn("Compare two locked independent reviewer submissions.", help_text)
+        self.assertIn("Finalize independently reviewed labels", help_text)
         self.assertNotIn("Task 8", help_text)
         self.assertNotIn("Task 11", help_text)
         self.assertNotIn("when installed", help_text)
@@ -8332,6 +8421,26 @@ class BriaBenchCliTests(unittest.TestCase):
             self.assertTrue(
                 release_module.should_include(BRIA_BENCH_ROOT / relative),
                 relative,
+            )
+
+    def test_release_builder_rejects_symlink_and_hardlink_sources(self) -> None:
+        source = self.root / "private-source.json"
+        source.write_text("private reviewer material\n", encoding="utf-8")
+
+        symlink_root = self.root / "symlink-release"
+        symlink_root.mkdir()
+        (symlink_root / "innocent.json").symlink_to(source)
+        with self.assertRaisesRegex(ValueError, "linked|single-link"):
+            release_module._iter_directory_files(
+                symlink_root, apply_policy=False
+            )
+
+        hardlink_root = self.root / "hardlink-release"
+        hardlink_root.mkdir()
+        os.link(source, hardlink_root / "innocent.json")
+        with self.assertRaisesRegex(ValueError, "single-link"):
+            release_module._iter_directory_files(
+                hardlink_root, apply_policy=False
             )
 
     def test_public_bria_bench_docs_keep_current_claim_boundaries(self) -> None:
@@ -8501,6 +8610,7 @@ class BriaBenchCliTests(unittest.TestCase):
             source["cases"][0].update(
                 {
                     "case_id": "case_001",
+                    "track": "public_realism",
                     "package_path": "package",
                     "annotation_path": "annotation.json",
                     "headline_eligible": True,

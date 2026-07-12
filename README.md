@@ -344,6 +344,10 @@ make benchmark-llm-smoke  # offline DeepSeek-compatible response fixtures
 
 The current public BRIA-Bench corpus has 36 fixtures, no public test split, no completed independent blinded result, and zero headline-eligible cases. The 30 synthetic legacy cases are regression/reliability/performance fixtures only, and the 6 dev fixtures are controlled workflow cases; neither group measures real-manuscript validation. Read [`benchmarks/bria_bench/README.md`](benchmarks/bria_bench/README.md) before using the manual full benchmark targets.
 
+For a future sealed private `test` split, the CLI now supports two independently permuted packets, immutable form locking, mapping-free agreement comparison, disagreement-only adjudication, and final label generation. This is workflow readiness, not a completed blind result; coordinator instructions are in [`INDEPENDENT_REVIEW_WORKFLOW.md`](benchmarks/bria_bench/INDEPENDENT_REVIEW_WORKFLOW.md).
+
+Blinded headline metrics require a frozen review-proof file linked from the manifest; a boolean flag or hand-written review status is not enough. Headline finding recall also requires the expected location, not only a matching issue family.
+
 The optional live DeepSeek baseline is an explicit external-data transfer, not part of the local-first audit path. It requires both `DEEPSEEK_API_KEY` and `BRIA_BENCH_ALLOW_REMOTE_LLM=1`; the offline fixture does not make network requests. DeepSeek V4 is text-only, so image pixels are recorded as an unexecuted modality rather than silently treated as reviewed.
 
 ### Public-concern benchmark

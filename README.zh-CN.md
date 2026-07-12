@@ -344,6 +344,10 @@ make benchmark-llm-smoke  # 离线 DeepSeek 兼容响应 fixture
 
 当前公开语料有 36 个 fixture，没有公开 `test` split、没有完成独立盲测结果，可用于 headline accuracy 的 case 为 0。30 个 synthetic legacy case 只用于回归、可靠性和性能验证，6 个 dev fixture 只用于受控工作流验证；二者都不代表真实论文验证。
 
+面向后续仓库外封存的私有 `test` split，CLI 现已支持两份独立乱序盲包、不可覆盖的复核表锁定、不读取 mapping 的一致性比较、只对分歧进行第三人裁决，以及最终标签生成。这里只表示工作流已经可用，不表示独立盲测已经完成；协调者说明见 [`INDEPENDENT_REVIEW_WORKFLOW.md`](benchmarks/bria_bench/INDEPENDENT_REVIEW_WORKFLOW.md)。
+
+盲测 headline 指标还必须由 manifest 绑定冻结的 review-proof 文件；只设置一个布尔值或手写 review status 不能进入正式分母。Headline finding recall 同时要求问题类别和位置匹配，不能只靠类别相似得分。
+
 可选的真实 DeepSeek 基线会把从材料中提取的文本发送到外部 API，不属于 local-first 审计路径。它必须同时设置 `DEEPSEEK_API_KEY` 与 `BRIA_BENCH_ALLOW_REMOTE_LLM=1`；离线 fixture 不访问网络。DeepSeek V4 是文本模型，因此图片像素会被诚实记录为未执行模态，而不会被默认成“已经审过”。详情见 [`benchmarks/bria_bench/README.md`](benchmarks/bria_bench/README.md)。
 
 ### Public-concern benchmark

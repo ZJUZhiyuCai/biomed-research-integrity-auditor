@@ -59,6 +59,7 @@ _BUNDLE_KEYS = {
     "atomic_output_preserved",
     "previous_output_preserved",
     "over_budget",
+    "review_proof_verified",
 }
 _REPRODUCTION_PLACEHOLDERS = frozenset(
     {
@@ -521,6 +522,7 @@ def aggregate_metrics(
             "atomic_output_preserved",
             "previous_output_preserved",
             "over_budget",
+            "review_proof_verified",
         ):
             _require_bool(bundle, key)
         prepared.append((bundle, manifest_case, annotation, run, match))
@@ -552,8 +554,13 @@ def aggregate_metrics(
             require_location=False,
         ).to_dict()
         issue_rows = _match_rows(issue_match, require_location=False)
-        successful_rows = issue_rows if status == _SUCCESS else []
-        rows_by_label = {row["label_id"]: row for row in successful_rows}
+        full_rows = _match_rows(full_match, require_location=True)
+        successful_issue_rows = issue_rows if status == _SUCCESS else []
+        successful_full_rows = full_rows if status == _SUCCESS else []
+        issue_rows_by_label = {
+            row["label_id"]: row for row in successful_issue_rows
+        }
+        rows_by_label = {row["label_id"]: row for row in successful_full_rows}
         attribution_ambiguous = status == _SUCCESS and (
             full_match["assignment_ambiguous"]
             or issue_match["assignment_ambiguous"]
@@ -566,11 +573,19 @@ def aggregate_metrics(
             or "fixture" in provider_identity
             or llm_telemetry.get("response_cache_status") == "fixture"
         )
+        blinded_eligible = (
+            track == "blinded_challenge"
+            and manifest_case.get("split") == "test"
+            and annotation["review_status"] == "independent_adjudicated"
+            and bundle.get("review_proof_verified") is True
+        )
+        public_realism_eligible = (
+            track == "public_realism"
+            and annotation["review_status"] == "controlled_ground_truth"
+        )
         eligible = (
-            track in {"blinded_challenge", "public_realism"}
-            and manifest_case.get("headline_eligible") is True
-            and annotation["review_status"]
-            in {"controlled_ground_truth", "independent_adjudicated"}
+            manifest_case.get("headline_eligible") is True
+            and (blinded_eligible or public_realism_eligible)
             and not attribution_ambiguous
             and not synthetic_fixture
         )
@@ -592,11 +607,12 @@ def aggregate_metrics(
         matched_headline = sum(
             label["observation_id"] in rows_by_label for label in headline_labels
         )
+        issue_matched_headline = sum(
+            label["observation_id"] in issue_rows_by_label
+            for label in headline_labels
+        )
         matched_coverage = sum(
             label["observation_id"] in rows_by_label
-            and rows_by_label[label["observation_id"]]["compatibility"][
-                "location_compatible"
-            ]
             for label in coverage_labels
         )
 
@@ -609,15 +625,10 @@ def aggregate_metrics(
                 detection_counts["recall_numerator"] += matched_headline
                 detection_counts["recall_denominator"] += len(headline_labels)
                 detection_counts["location_numerator"] += sum(
-                    bool(
-                        rows_by_label[label["observation_id"]]["compatibility"][
-                            "location_compatible"
-                        ]
-                    )
+                    label["observation_id"] in rows_by_label
                     for label in headline_labels
-                    if label["observation_id"] in rows_by_label
                 )
-                detection_counts["location_denominator"] += matched_headline
+                detection_counts["location_denominator"] += issue_matched_headline
                 detection_counts["risk_numerator"] += sum(
                     bool(row["compatibility"]["risk_compatible"])
                     for row in rows_by_label.values()
@@ -713,7 +724,7 @@ def aggregate_metrics(
                 "status": status,
                 "adapter": run["adapter"],
                 "headline_detection_eligible": eligible,
-                "matched_label_count": len(successful_rows),
+                "matched_label_count": len(successful_full_rows),
                 "expected_label_count": len(evaluated_labels),
                 "false_alert_count": (
                     len(issue_match["unmatched_observation_ids"])

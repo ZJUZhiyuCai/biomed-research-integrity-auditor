@@ -13,7 +13,20 @@
       "$ref": "#/$defs/semanticVersion"
     },
     "packet_scope": {
-      "const": "workflow_demo_only"
+      "enum": [
+        "workflow_demo_only",
+        "independent_blinded"
+      ]
+    },
+    "review_round_id": {
+      "type": "string",
+      "pattern": "^BRIA-BLIND-[A-F0-9]{32}$"
+    },
+    "form_schema": {
+      "enum": [
+        "reviewer_form_completed.schema.json",
+        "reviewer_form_independent_completed.schema.json"
+      ]
     },
     "cases": {
       "type": "array",
@@ -23,6 +36,40 @@
       }
     }
   },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "packet_scope": {
+            "const": "workflow_demo_only"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "form_schema": {
+            "const": "reviewer_form_completed.schema.json"
+          }
+        },
+        "not": {
+          "required": [
+            "review_round_id"
+          ]
+        }
+      },
+      "else": {
+        "required": [
+          "review_round_id",
+          "form_schema"
+        ],
+        "properties": {
+          "form_schema": {
+            "const": "reviewer_form_independent_completed.schema.json"
+          }
+        }
+      }
+    }
+  ],
   "$defs": {
     "semanticVersion": {
       "type": "string",

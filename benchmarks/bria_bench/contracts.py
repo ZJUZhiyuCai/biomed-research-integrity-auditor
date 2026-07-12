@@ -21,9 +21,15 @@ _SCHEMA_NAMES = frozenset(
         "metrics.schema.json",
         "observation.schema.json",
         "reviewer_form_completed.schema.json",
+        "reviewer_form_independent_completed.schema.json",
+        "reviewer_form_independent_template.schema.json",
         "reviewer_form_template.schema.json",
+        "reviewer_adjudication.schema.json",
+        "reviewer_comparison.schema.json",
+        "reviewer_finalization.schema.json",
         "reviewer_mapping.schema.json",
         "reviewer_packet_manifest.schema.json",
+        "reviewer_submission.schema.json",
         "run_result.schema.json",
     }
 )
@@ -532,15 +538,211 @@ def _validate_reviewer_form_completed(
                 )
 
 
+def _validate_independent_reviewer_form_template(
+    name: str,
+    payload: list[dict[str, Any]],
+) -> None:
+    if len(payload) != 1:
+        _raise_contract_error(name, (), "must contain exactly one blank row")
+    row = payload[0]
+    expected_observation_id = f"{row['reviewer_case_id']}-O001"
+    if row["reviewer_observation_id"] != expected_observation_id:
+        _raise_contract_error(
+            name,
+            (0, "reviewer_observation_id"),
+            f"must be {expected_observation_id!r} for the blank template",
+        )
+
+
+def _validate_independent_reviewer_form_completed(
+    name: str,
+    payload: list[dict[str, Any]],
+) -> None:
+    reviewer_case_id = payload[0]["reviewer_case_id"]
+    seen_observation_ids: set[str] = set()
+    for index, row in enumerate(payload):
+        if row["reviewer_case_id"] != reviewer_case_id:
+            _raise_contract_error(
+                name,
+                (index, "reviewer_case_id"),
+                "must match every other row in the completed form",
+            )
+        observation_id = row["reviewer_observation_id"]
+        if not observation_id.startswith(f"{reviewer_case_id}-O"):
+            _raise_contract_error(
+                name,
+                (index, "reviewer_observation_id"),
+                "must use the reviewer case ID as its prefix",
+            )
+        if observation_id in seen_observation_ids:
+            _raise_contract_error(
+                name,
+                (index, "reviewer_observation_id"),
+                "must be unique within the completed form",
+            )
+        seen_observation_ids.add(observation_id)
+
+        presence = row["presence"]
+        if presence == "absent":
+            if len(payload) != 1:
+                _raise_contract_error(
+                    name,
+                    (index, "presence"),
+                    "absent must be the sole row in a completed form",
+                )
+            continue
+        risk_range = row["risk_range"]
+        if not isinstance(risk_range, list) or len(risk_range) != 2:
+            _raise_contract_error(
+                name,
+                (index, "risk_range"),
+                "must contain two risk levels for a reviewable observation",
+            )
+        lower = int(risk_range[0][1])
+        upper = int(risk_range[1][1])
+        if lower > upper:
+            _raise_contract_error(
+                name,
+                (index, "risk_range"),
+                "lower risk level must not exceed upper risk level",
+            )
+
+
+def _validate_reviewer_submission(name: str, payload: dict[str, Any]) -> None:
+    _require_unique(name, payload["cases"], "reviewer_case_id", ("cases",))
+    _require_unique(name, payload["cases"], "source_package_sha256", ("cases",))
+    _require_unique(name, payload["cases"], "form_path", ("cases",))
+    for index, case in enumerate(payload["cases"]):
+        expected = f"forms/{case['reviewer_case_id']}.json"
+        if case["form_path"] != expected:
+            _raise_contract_error(
+                name,
+                ("cases", index, "form_path"),
+                f"must be {expected!r}",
+            )
+
+
+def _validate_reviewer_comparison(name: str, payload: dict[str, Any]) -> None:
+    slots = [item["slot"] for item in payload["submissions"]]
+    if slots != ["a", "b"]:
+        _raise_contract_error(name, ("submissions",), "slots must be ordered a then b")
+    _require_unique(name, payload["submissions"], "reviewer_id", ("submissions",))
+    _require_unique(name, payload["cases"], "comparison_case_id", ("cases",))
+    _require_unique(name, payload["cases"], "source_package_sha256", ("cases",))
+    for metric_name, metric in payload["agreement"].items():
+        if metric_name.endswith("kappa"):
+            status = metric["status"]
+            if status == "defined" and metric["value"] is None:
+                _raise_contract_error(
+                    name,
+                    ("agreement", metric_name, "value"),
+                    "must be numeric when kappa is defined",
+                )
+            if status != "defined" and metric["value"] is not None:
+                _raise_contract_error(
+                    name,
+                    ("agreement", metric_name, "value"),
+                    "must be null when kappa is undefined",
+                )
+            continue
+        _validate_fraction(name, ("agreement", metric_name), metric)
+    for index, case in enumerate(payload["cases"]):
+        if case["status"] == "consensus":
+            if case["consensus_presence"] is None or case["disagreement_reasons"]:
+                _raise_contract_error(
+                    name,
+                    ("cases", index, "status"),
+                    "consensus requires a presence and no disagreement reasons",
+                )
+        elif case["consensus_presence"] is not None or not case["disagreement_reasons"]:
+            _raise_contract_error(
+                name,
+                ("cases", index, "status"),
+                "disagreement requires reasons and no consensus presence",
+            )
+
+
+def _validate_reviewer_adjudication(name: str, payload: dict[str, Any]) -> None:
+    _require_unique(name, payload["cases"], "comparison_case_id", ("cases",))
+    _require_unique(name, payload["cases"], "source_package_sha256", ("cases",))
+    if payload["status"] == "template":
+        for index, case in enumerate(payload["cases"]):
+            if (
+                case["resolution"] is not None
+                or case["final_presence"] is not None
+                or case["final_rows"]
+                or case["rationale"]
+            ):
+                _raise_contract_error(
+                    name,
+                    ("cases", index),
+                    "template cases must remain blank",
+                )
+
+
+def _validate_reviewer_finalization(name: str, payload: dict[str, Any]) -> None:
+    if [item["slot"] for item in payload["submissions"]] != ["a", "b"]:
+        _raise_contract_error(name, ("submissions",), "slots must be ordered a then b")
+    if (payload["adjudicator_id"] is None) != (payload["adjudication_sha256"] is None):
+        _raise_contract_error(
+            name,
+            ("adjudication_sha256",),
+            "must be present exactly when an adjudicator is recorded",
+        )
+    requires_adjudicator = any(
+        case["resolution_source"] in {"third_party_resolved", "ambiguous"}
+        for case in payload["cases"]
+    )
+    if requires_adjudicator != (payload["adjudicator_id"] is not None):
+        _raise_contract_error(
+            name,
+            ("adjudicator_id",),
+            "must be present exactly when a case required third-party adjudication",
+        )
+    _require_unique(name, payload["cases"], "source_case_id", ("cases",))
+    _require_unique(name, payload["cases"], "source_package_sha256", ("cases",))
+    _require_unique(name, payload["cases"], "annotation_path", ("cases",))
+    for index, case in enumerate(payload["cases"]):
+        eligible = case["eligible_for_manifest_promotion"]
+        expected = case["review_status"] == "independent_adjudicated"
+        if eligible != expected:
+            _raise_contract_error(
+                name,
+                ("cases", index, "eligible_for_manifest_promotion"),
+                "must reflect independent_adjudicated status",
+            )
+        if case["review_status"] == "ambiguous" and case["resolution_source"] != "ambiguous":
+            _raise_contract_error(
+                name,
+                ("cases", index, "resolution_source"),
+                "ambiguous review status requires ambiguous resolution source",
+            )
+        if (
+            case["review_status"] == "independent_adjudicated"
+            and case["resolution_source"] == "ambiguous"
+        ):
+            _raise_contract_error(
+                name,
+                ("cases", index, "resolution_source"),
+                "adjudicated review status cannot use ambiguous resolution source",
+            )
+
+
 _SEMANTIC_VALIDATORS = {
     "annotation.schema.json": _validate_annotation,
     "benchmark_manifest.schema.json": _validate_manifest,
     "metrics.schema.json": _validate_metrics,
     "observation.schema.json": _validate_normalized_observation,
     "reviewer_form_completed.schema.json": _validate_reviewer_form_completed,
+    "reviewer_form_independent_completed.schema.json": _validate_independent_reviewer_form_completed,
+    "reviewer_form_independent_template.schema.json": _validate_independent_reviewer_form_template,
     "reviewer_form_template.schema.json": _validate_reviewer_form_template,
+    "reviewer_adjudication.schema.json": _validate_reviewer_adjudication,
+    "reviewer_comparison.schema.json": _validate_reviewer_comparison,
+    "reviewer_finalization.schema.json": _validate_reviewer_finalization,
     "reviewer_mapping.schema.json": _validate_reviewer_mapping,
     "reviewer_packet_manifest.schema.json": _validate_reviewer_packet_manifest,
+    "reviewer_submission.schema.json": _validate_reviewer_submission,
     "run_result.schema.json": _validate_run_result,
 }
 

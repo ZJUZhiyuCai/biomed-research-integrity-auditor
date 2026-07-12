@@ -1,0 +1,454 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.org/bria-bench/schemas/reviewer_comparison.schema.json",
+  "title": "BRIA-Bench Independent Reviewer Comparison",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "packet_scope",
+    "review_round_id",
+    "compared_at",
+    "submissions",
+    "agreement",
+    "cases"
+  ],
+  "properties": {
+    "schema_version": {
+      "$ref": "#/$defs/semanticVersion"
+    },
+    "packet_scope": {
+      "const": "independent_blinded"
+    },
+    "review_round_id": {
+      "$ref": "#/$defs/reviewRoundId"
+    },
+    "compared_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "submissions": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "items": {
+        "$ref": "#/$defs/submission"
+      }
+    },
+    "agreement": {
+      "$ref": "#/$defs/agreement"
+    },
+    "cases": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/case"
+      }
+    }
+  },
+  "$defs": {
+    "semanticVersion": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "reviewRoundId": {
+      "type": "string",
+      "pattern": "^BRIA-BLIND-[A-F0-9]{32}$"
+    },
+    "reviewerId": {
+      "type": "string",
+      "pattern": "^BRIA-REV-[A-Z0-9]{8,32}$"
+    },
+    "comparisonCaseId": {
+      "type": "string",
+      "pattern": "^BRIA-C-[A-F0-9]{32}$"
+    },
+    "fraction": {
+      "type": "object",
+      "required": [
+        "numerator",
+        "denominator",
+        "value"
+      ],
+      "properties": {
+        "numerator": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "denominator": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "kappa": {
+      "type": "object",
+      "required": [
+        "status",
+        "value",
+        "observed_agreement",
+        "expected_agreement"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "defined",
+            "undefined_no_units",
+            "undefined_constant_marginals"
+          ]
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": -1,
+              "maximum": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "observed_agreement": {
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "expected_agreement": {
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "submission": {
+      "type": "object",
+      "required": [
+        "slot",
+        "reviewer_id",
+        "submission_manifest_sha256",
+        "packet_manifest_sha256"
+      ],
+      "properties": {
+        "slot": {
+          "enum": [
+            "a",
+            "b"
+          ]
+        },
+        "reviewer_id": {
+          "$ref": "#/$defs/reviewerId"
+        },
+        "submission_manifest_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "packet_manifest_sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      },
+      "additionalProperties": false
+    },
+    "agreement": {
+      "type": "object",
+      "required": [
+        "presence",
+        "presence_kappa",
+        "comment_class",
+        "comment_class_kappa",
+        "location",
+        "risk_range"
+      ],
+      "properties": {
+        "presence": {
+          "$ref": "#/$defs/fraction"
+        },
+        "presence_kappa": {
+          "$ref": "#/$defs/kappa"
+        },
+        "comment_class": {
+          "$ref": "#/$defs/fraction"
+        },
+        "comment_class_kappa": {
+          "$ref": "#/$defs/kappa"
+        },
+        "location": {
+          "$ref": "#/$defs/fraction"
+        },
+        "risk_range": {
+          "$ref": "#/$defs/fraction"
+        }
+      },
+      "additionalProperties": false
+    },
+    "case": {
+      "type": "object",
+      "required": [
+        "comparison_case_id",
+        "source_package_sha256",
+        "status",
+        "reviewer_a_case_id",
+        "reviewer_b_case_id",
+        "reviewer_a_presence",
+        "reviewer_b_presence",
+        "reviewer_a_rows",
+        "reviewer_b_rows",
+        "matches",
+        "consensus_presence",
+        "consensus_rows",
+        "disagreement_reasons"
+      ],
+      "properties": {
+        "comparison_case_id": {
+          "$ref": "#/$defs/comparisonCaseId"
+        },
+        "source_package_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "status": {
+          "enum": [
+            "consensus",
+            "disagreement"
+          ]
+        },
+        "reviewer_a_case_id": {
+          "type": "string",
+          "pattern": "^BRIA-R[0-9]{3,}$"
+        },
+        "reviewer_b_case_id": {
+          "type": "string",
+          "pattern": "^BRIA-R[0-9]{3,}$"
+        },
+        "reviewer_a_presence": {
+          "$ref": "#/$defs/presence"
+        },
+        "reviewer_b_presence": {
+          "$ref": "#/$defs/presence"
+        },
+        "reviewer_a_rows": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "reviewer_b_rows": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "matches": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/match"
+          }
+        },
+        "consensus_presence": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/presence"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "consensus_rows": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/finalRow"
+          }
+        },
+        "disagreement_reasons": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "presence": {
+      "enum": [
+        "present",
+        "absent",
+        "insufficient_materials"
+      ]
+    },
+    "match": {
+      "type": "object",
+      "required": [
+        "reviewer_a_observation_id",
+        "reviewer_b_observation_id",
+        "issue_family_agreement",
+        "comment_class_agreement",
+        "location_agreement",
+        "risk_range_agreement"
+      ],
+      "properties": {
+        "reviewer_a_observation_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "reviewer_b_observation_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "issue_family_agreement": {
+          "type": "boolean"
+        },
+        "comment_class_agreement": {
+          "type": "boolean"
+        },
+        "location_agreement": {
+          "type": "boolean"
+        },
+        "risk_range_agreement": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "finalRow": {
+      "type": "object",
+      "required": [
+        "final_observation_id",
+        "source_reviewer_observation_ids",
+        "presence",
+        "issue_family",
+        "comment_class",
+        "risk_range",
+        "locations",
+        "expected_fact",
+        "minimum_review_comment",
+        "scientific_relevance",
+        "benign_explanations",
+        "required_materials",
+        "recommended_action"
+      ],
+      "properties": {
+        "final_observation_id": {
+          "type": "string",
+          "pattern": "^FINAL-O[0-9]{3,}$"
+        },
+        "source_reviewer_observation_ids": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "pattern": "^BRIA-R[0-9]{3,}-O[0-9]{3,}$"
+          },
+          "uniqueItems": true
+        },
+        "presence": {
+          "enum": [
+            "present",
+            "insufficient_materials"
+          ]
+        },
+        "issue_family": {
+          "type": "string",
+          "minLength": 1
+        },
+        "comment_class": {
+          "enum": [
+            "major",
+            "minor",
+            "materials_request"
+          ]
+        },
+        "risk_range": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "R0",
+              "R1",
+              "R2",
+              "R3",
+              "R4"
+            ]
+          },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "locations": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        },
+        "expected_fact": {
+          "type": "string",
+          "minLength": 1
+        },
+        "minimum_review_comment": {
+          "type": "string",
+          "minLength": 1
+        },
+        "scientific_relevance": {
+          "type": "string",
+          "minLength": 1
+        },
+        "benign_explanations": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        },
+        "required_materials": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        },
+        "recommended_action": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

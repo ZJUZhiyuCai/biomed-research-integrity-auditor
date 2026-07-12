@@ -20,6 +20,11 @@ recursive-exclude benchmarks/bria_bench reviewer_packets/**
 recursive-exclude benchmarks/bria_bench reviewer-packets/**
 recursive-exclude benchmarks/bria_bench reviewer_packet/**
 recursive-exclude benchmarks/bria_bench reviewer-packet/**
+recursive-exclude benchmarks/bria_bench locked_submissions/**
+recursive-exclude benchmarks/bria_bench locked-submissions/**
+recursive-exclude benchmarks/bria_bench comparisons/**
+recursive-exclude benchmarks/bria_bench adjudications/**
+recursive-exclude benchmarks/bria_bench finalizations/**
 recursive-exclude benchmarks/bria_bench mappings/**
 recursive-exclude benchmarks/bria_bench reviewer_mappings/**
 recursive-exclude benchmarks/bria_bench reviewer-mappings/**
@@ -46,6 +51,7 @@ recursive-exclude benchmarks/bria_bench local_metrics*.json local-metrics*.json
 recursive-exclude benchmarks/bria_bench reviewer_mapping*.json reviewer-mapping*.json *_mapping.json *-mapping.json
 recursive-exclude benchmarks/bria_bench reviewer_packet*.json reviewer_packet*.zip
 recursive-exclude benchmarks/bria_bench reviewer-packet*.json reviewer-packet*.zip
+recursive-exclude benchmarks/bria_bench comparison*.json adjudication*.json submission*.json finalization*.json
 recursive-exclude benchmarks/bria_bench seed*.json seed*.txt
 recursive-exclude benchmarks/bria_bench *identity*.json
 recursive-exclude benchmarks/bria_bench *api_cache*.json *api-cache*.json
@@ -55,9 +61,15 @@ include benchmarks/bria_bench/schemas/benchmark_manifest.schema.json
 include benchmarks/bria_bench/schemas/metrics.schema.json
 include benchmarks/bria_bench/schemas/observation.schema.json
 include benchmarks/bria_bench/schemas/reviewer_form_completed.schema.json
+include benchmarks/bria_bench/schemas/reviewer_form_independent_completed.schema.json
+include benchmarks/bria_bench/schemas/reviewer_form_independent_template.schema.json
 include benchmarks/bria_bench/schemas/reviewer_form_template.schema.json
+include benchmarks/bria_bench/schemas/reviewer_adjudication.schema.json
+include benchmarks/bria_bench/schemas/reviewer_comparison.schema.json
+include benchmarks/bria_bench/schemas/reviewer_finalization.schema.json
 include benchmarks/bria_bench/schemas/reviewer_mapping.schema.json
 include benchmarks/bria_bench/schemas/reviewer_packet_manifest.schema.json
+include benchmarks/bria_bench/schemas/reviewer_submission.schema.json
 include benchmarks/bria_bench/schemas/run_result.schema.json
 prune evals/outputs
 prune evals/prompts

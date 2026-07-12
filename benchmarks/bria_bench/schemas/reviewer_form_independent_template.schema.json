@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.org/bria-bench/schemas/reviewer_form_independent_template.schema.json",
+  "title": "BRIA-Bench Blank Independent Reviewer Form",
+  "type": "array",
+  "minItems": 1,
+  "maxItems": 1,
+  "items": {
+    "$ref": "#/$defs/blankRow"
+  },
+  "$defs": {
+    "blankRow": {
+      "type": "object",
+      "required": [
+        "reviewer_case_id",
+        "reviewer_observation_id",
+        "presence",
+        "issue_family",
+        "comment_class",
+        "risk_range",
+        "locations",
+        "observation",
+        "minimum_review_comment",
+        "scientific_relevance",
+        "benign_explanations",
+        "required_materials",
+        "recommended_action"
+      ],
+      "properties": {
+        "reviewer_case_id": {
+          "$ref": "#/$defs/reviewerCaseId"
+        },
+        "reviewer_observation_id": {
+          "$ref": "#/$defs/reviewerObservationId"
+        },
+        "presence": {
+          "type": "null"
+        },
+        "issue_family": {
+          "type": "null"
+        },
+        "comment_class": {
+          "type": "null"
+        },
+        "risk_range": {
+          "type": "null"
+        },
+        "locations": {
+          "$ref": "#/$defs/emptyArray"
+        },
+        "observation": {
+          "$ref": "#/$defs/emptyString"
+        },
+        "minimum_review_comment": {
+          "$ref": "#/$defs/emptyString"
+        },
+        "scientific_relevance": {
+          "$ref": "#/$defs/emptyString"
+        },
+        "benign_explanations": {
+          "$ref": "#/$defs/emptyArray"
+        },
+        "required_materials": {
+          "$ref": "#/$defs/emptyArray"
+        },
+        "recommended_action": {
+          "$ref": "#/$defs/emptyString"
+        }
+      },
+      "additionalProperties": false
+    },
+    "reviewerCaseId": {
+      "type": "string",
+      "pattern": "^BRIA-R[0-9]{3,}$",
+      "not": {
+        "pattern": "[\\u0000-\\u001f\\u007f]"
+      }
+    },
+    "reviewerObservationId": {
+      "type": "string",
+      "pattern": "^BRIA-R[0-9]{3,}-O[0-9]{3,}$",
+      "not": {
+        "pattern": "[\\u0000-\\u001f\\u007f]"
+      }
+    },
+    "emptyArray": {
+      "type": "array",
+      "maxItems": 0
+    },
+    "emptyString": {
+      "type": "string",
+      "maxLength": 0
+    }
+  }
+}
