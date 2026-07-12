@@ -48,6 +48,7 @@ recursive-exclude benchmarks/bria_bench reviewer-packet*.json reviewer-packet*.z
 recursive-exclude benchmarks/bria_bench seed*.json seed*.txt
 recursive-exclude benchmarks/bria_bench *identity*.json
 recursive-exclude benchmarks/bria_bench *api_cache*.json *api-cache*.json
+include benchmarks/bria_bench/schemas/*.schema.json
 prune evals/outputs
 prune evals/prompts
 prune evals/scorecards

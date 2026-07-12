@@ -87,6 +87,9 @@ BRIA_BENCH_PRIVATE_FILE_PATTERNS = (
 BRIA_BENCH_RELEASE_SUMMARY = re.compile(
     r"results/(?:release_summary|public_summary)_[A-Za-z0-9._-]+\.json\Z"
 )
+BRIA_BENCH_PUBLIC_SCHEMA = re.compile(
+    r"schemas/[A-Za-z0-9._-]+\.schema\.json\Z"
+)
 
 
 def project_version() -> str:
@@ -129,7 +132,11 @@ def _is_bria_bench_private_artifact(rel: Path) -> bool:
     if not local_parts:
         return False
     local = Path(*local_parts).as_posix()
-    if local == "results/.gitkeep" or BRIA_BENCH_RELEASE_SUMMARY.fullmatch(local):
+    if (
+        local == "results/.gitkeep"
+        or BRIA_BENCH_RELEASE_SUMMARY.fullmatch(local)
+        or BRIA_BENCH_PUBLIC_SCHEMA.fullmatch(local)
+    ):
         return False
     if any(part in BRIA_BENCH_PRIVATE_DIRECTORIES for part in local_parts[:-1]):
         return True

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 import re
@@ -48,6 +49,22 @@ class BriaBenchReleasePrivacyTests(unittest.TestCase):
         self.token = re.sub(r"[^A-Za-z0-9_-]", "_", self.output_root.name)
         self.created_files: list[Path] = []
         self.created_directories: set[Path] = set()
+        committed_schemas = subprocess.run(
+            [
+                "git",
+                "ls-files",
+                "benchmarks/bria_bench/schemas/*reviewer*.schema.json",
+            ],
+            cwd=REPOSITORY_ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.splitlines()
+        self.reviewer_schema_paths = tuple(
+            Path(path).relative_to("benchmarks/bria_bench")
+            for path in committed_schemas
+        )
+        self.assertTrue(self.reviewer_schema_paths)
 
         marker_parent = (
             BRIA_BENCH_ROOT
@@ -77,8 +94,10 @@ class BriaBenchReleasePrivacyTests(unittest.TestCase):
             f"metrics-{self.token}.json",
             f"metrics_{self.token}.json",
             f"local_metrics_{self.token}.json",
+            "reviewer_mapping.json",
             f"reviewer_mapping_{self.token}.json",
             f"{self.token}_mapping.json",
+            "reviewer_packet_manifest.json",
             f"reviewer_packet_{self.token}.json",
             f"reviewer-packet_{self.token}.zip",
             f"seed_{self.token}.txt",
@@ -97,6 +116,13 @@ class BriaBenchReleasePrivacyTests(unittest.TestCase):
             annotation_parent / "reviewer_packets" / "packet_manifest.json"
         )
         self._create_file(annotation_parent / f"metrics-{self.token}.json")
+        self._create_file(annotation_parent / "reviewer_mapping.json")
+        self._create_file(annotation_parent / "reviewer_packet_manifest.json")
+
+        self._create_file(BRIA_BENCH_ROOT / "results" / "reviewer_mapping.json")
+        self._create_file(
+            BRIA_BENCH_ROOT / "results" / "reviewer_packet_manifest.json"
+        )
 
         self.allowed_paths = (
             Path("results") / f"release_summary_{self.token}.json",
@@ -150,6 +176,8 @@ class BriaBenchReleasePrivacyTests(unittest.TestCase):
         self.assertIn("benchmarks/bria_bench/README.md", members)
         self.assertIn("benchmarks/bria_bench/results/.gitkeep", members)
         self.assertIn("benchmarks/bria_bench/schemas/metrics.schema.json", members)
+        for relative in self.reviewer_schema_paths:
+            self.assertIn(f"benchmarks/bria_bench/{relative.as_posix()}", members)
         self.assertIn(
             "benchmarks/bria_bench/cases/dev/dev_001_global_flip/PACKAGE_NOTE.txt",
             members,
@@ -184,9 +212,25 @@ class BriaBenchReleasePrivacyTests(unittest.TestCase):
             )
             self.assertEqual(completed.returncode, 1, relative.as_posix())
 
+        for relative in self.reviewer_schema_paths:
+            completed = subprocess.run(
+                [
+                    "git",
+                    "check-ignore",
+                    "--no-index",
+                    "--quiet",
+                    "--",
+                    f"benchmarks/bria_bench/{relative.as_posix()}",
+                ],
+                cwd=REPOSITORY_ROOT,
+                check=False,
+            )
+            self.assertEqual(completed.returncode, 1, relative.as_posix())
+
     def test_sdist_wheel_and_release_zip_are_fail_closed(self) -> None:
         sdist_dir = self.output_root / "sdist"
         wheel_dir = self.output_root / "wheel"
+        site_dir = self.output_root / "site"
         sdist_dir.mkdir()
         wheel_dir.mkdir()
         subprocess.run(
@@ -229,6 +273,42 @@ class BriaBenchReleasePrivacyTests(unittest.TestCase):
         with zipfile.ZipFile(wheel) as archive:
             wheel_members = self._benchmark_members(set(archive.namelist()))
         self._assert_archive_privacy(wheel_members)
+        subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "pip",
+                "install",
+                "--no-deps",
+                "--target",
+                str(site_dir),
+                str(wheel),
+            ],
+            cwd=self.output_root,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        schema_names = [path.name for path in self.reviewer_schema_paths]
+        load_check = subprocess.run(
+            [
+                sys.executable,
+                "-I",
+                "-c",
+                "import json,sys; sys.path.insert(0,sys.argv[1]); "
+                "from benchmarks.bria_bench.contracts import load_schema; "
+                "from jsonschema import Draft202012Validator; "
+                "schemas=[load_schema(name) for name in json.loads(sys.argv[2])]; "
+                "[Draft202012Validator.check_schema(schema) for schema in schemas]",
+                str(site_dir),
+                json.dumps(schema_names),
+            ],
+            cwd=self.output_root,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(load_check.returncode, 0, load_check.stderr)
 
         release_zip = self.output_root / "release-source.zip"
         release_module.write_zip(

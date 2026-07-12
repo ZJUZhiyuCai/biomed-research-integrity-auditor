@@ -64,6 +64,7 @@ benchmarks/bria_bench/**/seed*.json
 benchmarks/bria_bench/**/*identity*.json
 benchmarks/bria_bench/**/*api_cache*.json
 benchmarks/bria_bench/**/*api-cache*.json
+!benchmarks/bria_bench/schemas/*.schema.json
 
 *.log
 tmp/
