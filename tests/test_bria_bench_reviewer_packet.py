@@ -852,6 +852,42 @@ class ReviewerPacketLeakageTests(ReviewerPacketFixture):
         self.refreeze()
         self.assert_leak_rejected("identity")
 
+    def test_rejects_compressed_pdf_text_after_bounded_leading_preamble(
+        self,
+    ) -> None:
+        import fitz
+
+        sensitive = (
+            "expected_observations",
+            "source_alpha",
+            "/Users/private/review.txt",
+        )
+        document = fitz.open()
+        page = document.new_page()
+        page.insert_text((72, 72), " ".join(sensitive))
+        pdf_bytes = document.tobytes(deflate=True, garbage=4)
+        document.close()
+        for value in sensitive:
+            self.assertNotIn(value.encode("utf-8"), pdf_bytes)
+        preamble = b"X" * 27
+        self.assertEqual(pdf_bytes.find(b"%PDF-"), 0)
+        prefixed = preamble + pdf_bytes
+        self.assertEqual(prefixed.find(b"%PDF-"), len(preamble))
+        (self.cases_root / "source_alpha" / "prefixed.bin").write_bytes(prefixed)
+        self.refreeze()
+        self.assert_leak_rejected(hidden_values=sensitive)
+
+    def test_allows_neutral_pdf_header_mention_without_pdf_trailer(self) -> None:
+        (self.cases_root / "source_alpha" / "header-mention.bin").write_bytes(
+            b"Neutral format note: %PDF-1.7 is a document signature.\n"
+        )
+        self.refreeze()
+        self.export(case_ids=["source_alpha"])
+        copied = (
+            self.output / "cases" / "BRIA-R001" / "materials" / "header-mention.bin"
+        )
+        self.assertTrue(copied.is_file())
+
     def test_rejects_credentials_and_administrative_artifacts(self) -> None:
         package = self.cases_root / "source_alpha"
         (package / "notes.txt").write_text(
@@ -1167,6 +1203,13 @@ class ReviewerPacketGuideAndCliTests(unittest.TestCase):
             "forms are locked",
             "external adjudicator",
             "do not infer intent",
+            "mapping-only",
+            "packet publication fails",
+            "retain",
+            "delete",
+            "new absent mapping path",
+            "never overwrites",
+            "rerun",
         ):
             self.assertIn(required, lowered)
         for forbidden in (

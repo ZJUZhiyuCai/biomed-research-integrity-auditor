@@ -47,6 +47,11 @@ _MAX_ARCHIVE_MEMBERS = 10_000
 _MAX_ARCHIVE_UNCOMPRESSED_BYTES = 512 * 1024 * 1024
 _MAX_EMBEDDED_TEXT_BYTES = 16 * 1024 * 1024
 _MAX_PDF_PAGES = 10_000
+_MAX_PDF_PREAMBLE_BYTES = 1024
+_MAX_PDF_TRAILER_SCAN_BYTES = 4096
+_PDF_HEADER_PATTERN = re.compile(
+    rb"%PDF-(?:1\.[0-9]|2\.0)(?=[\x00\x09\x0a\x0c\x0d\x20])"
+)
 _UNSUPPORTED_DIRECTORY_FSYNC_ERRNOS = frozenset(
     {
         errno.EINVAL,
@@ -1453,6 +1458,17 @@ def _scan_pdf(data: bytes, label: str, policy: _ScanPolicy, depth: int) -> None:
         document.close()
 
 
+def _has_prefixed_pdf_signature(data: bytes) -> bool:
+    prefix = data[: _MAX_PDF_PREAMBLE_BYTES + 16]
+    match = _PDF_HEADER_PATTERN.search(prefix)
+    if match is None or match.start() == 0 or match.start() > _MAX_PDF_PREAMBLE_BYTES:
+        return False
+    trailer = data[-_MAX_PDF_TRAILER_SCAN_BYTES:]
+    startxref = trailer.rfind(b"startxref")
+    eof = trailer.rfind(b"%%EOF")
+    return 0 <= startxref < eof
+
+
 def _scan_blob(
     data: bytes,
     label: str,
@@ -1460,7 +1476,7 @@ def _scan_blob(
     depth: int = 0,
 ) -> None:
     _scan_raw_bytes(data, label, policy)
-    if data.startswith(b"%PDF-"):
+    if data.startswith(b"%PDF-") or _has_prefixed_pdf_signature(data):
         _scan_pdf(data, label, policy, depth)
         return
     if data.startswith(b"\x89PNG\r\n\x1a\n"):
