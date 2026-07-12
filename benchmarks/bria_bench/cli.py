@@ -437,19 +437,6 @@ def _validated_run_result_artifact_sha256(
     return hashlib.sha256(data).hexdigest()
 
 
-def _manifest_order_selection(
-    manifest: Mapping[str, Any], selected: Sequence[Mapping[str, Any]]
-) -> list[Mapping[str, Any]]:
-    selected_ids = [str(case["case_id"]) for case in selected]
-    if len(selected_ids) != len(set(selected_ids)):
-        raise CliError("case selection contains duplicate case IDs")
-    requested = set(selected_ids)
-    ordered = [case for case in manifest["cases"] if case["case_id"] in requested]
-    if len(ordered) != len(selected_ids):
-        raise CliError("case selection contradicts the frozen manifest")
-    return ordered
-
-
 def _selection_filter_payload(
     *,
     case_ids: Sequence[str] | None,
@@ -469,22 +456,6 @@ def _selection_filter_payload(
     return {"case_ids": canonical_cases, "splits": canonical_splits}
 
 
-def _reproduction_selection_args(selection: Mapping[str, Any]) -> list[str]:
-    args: list[str] = []
-    for case_id in selection.get("case_ids") or []:
-        args.extend(["--case", str(case_id)])
-    for split in selection.get("splits") or []:
-        args.extend(["--split", str(split)])
-    return args
-
-
-def _render_reproduction_command(parts: Sequence[str]) -> str:
-    for part in parts:
-        if not part or re.search(r"[\r\n]", part):
-            raise CliError("reproduction command contains an unsafe argument")
-    return " ".join(parts)
-
-
 def _build_reproduction_record(
     *,
     manifest_sha: str,
@@ -495,6 +466,8 @@ def _build_reproduction_record(
     timeouts: set[float],
     case_hashes_by_id: Mapping[str, Mapping[str, Any]],
 ) -> dict[str, Any]:
+    from .metrics import canonical_reproduction_argv, render_reproduction_argv
+
     if len(adapters_seen) != 1:
         raise CliError("selected run results do not share one adapter identity")
     adapter_name, adapter_version = next(iter(adapters_seen))
@@ -513,48 +486,12 @@ def _build_reproduction_record(
         splits=splits,
         selected_cases=selected_cases,
     )
-    selection_args = _reproduction_selection_args(selection)
-    timeout_text = format(timeout_seconds, ".17g")
-    commands = {
-        "run": _render_reproduction_command(
-            [
-                "bria-bench",
-                "run",
-                "--manifest",
-                '"${BRIA_BENCH_MANIFEST_JSON}"',
-                "--runs-dir",
-                '"${BRIA_BENCH_RUNS_DIR}"',
-                *selection_args,
-                "--adapter",
-                adapter_name,
-                "--timeout-seconds",
-                timeout_text,
-            ]
-        ),
-        "evaluate": _render_reproduction_command(
-            [
-                "bria-bench",
-                "evaluate",
-                "--manifest",
-                '"${BRIA_BENCH_MANIFEST_JSON}"',
-                "--runs-dir",
-                '"${BRIA_BENCH_RUNS_DIR}"',
-                "--output",
-                '"${BRIA_BENCH_METRICS_JSON}"',
-                *selection_args,
-            ]
-        ),
-        "report": _render_reproduction_command(
-            [
-                "bria-bench",
-                "report",
-                "--metrics",
-                '"${BRIA_BENCH_METRICS_JSON}"',
-                "--output",
-                '"${BRIA_BENCH_REPORT_MD}"',
-            ]
-        ),
-    }
+    argv = canonical_reproduction_argv(
+        selection=selection,
+        adapter_name=adapter_name,
+        timeout_seconds=timeout_seconds,
+    )
+    commands = {key: render_reproduction_argv(parts) for key, parts in argv.items()}
     return {
         "schema_version": "1.0.0",
         "manifest_sha256": manifest_sha,
@@ -1549,7 +1486,6 @@ def evaluate_benchmark(
     manifest_file = Path(manifest_path)
     manifest = load_manifest(manifest_file, require_frozen=True, resolve_paths=False)
     selected = _select_cases(manifest, case_ids, splits)
-    selected_manifest_order = _manifest_order_selection(manifest, selected)
     registry = _adapter_registry(adapters)
     providers = dict(assertion_providers or {})
     manifest_sha = hashlib.sha256(manifest_file.read_bytes()).hexdigest()
@@ -1670,7 +1606,7 @@ def evaluate_benchmark(
 
     reproduction = _build_reproduction_record(
         manifest_sha=manifest_sha,
-        selected_cases=selected_manifest_order,
+        selected_cases=selected,
         case_ids=case_ids,
         splits=splits,
         adapters_seen=adapters_seen,

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import shlex
 import unicodedata
 from collections.abc import Iterator, Mapping
 from decimal import Context, Decimal, ROUND_HALF_UP, localcontext
@@ -12,6 +13,7 @@ from jsonschema import Draft202012Validator
 
 from . import contracts as _contracts
 from .contracts import ContractError
+from .metrics import canonical_reproduction_argv, render_reproduction_argv
 
 
 _SCHEMA_NAME = "metrics.schema.json"
@@ -501,7 +503,7 @@ def _validate_reproduction(
 ) -> None:
     reproduction = metrics.get("reproduction")
     if reproduction is None:
-        return
+        raise _contract_error("reproduction", "is required for report rendering")
 
     recorded_manifest = metrics.get("manifest_sha256")
     if (
@@ -530,12 +532,21 @@ def _validate_reproduction(
             "reproduction.selected_cases", "must contain exactly run_count rows"
         )
     if case_results is not None:
-        case_result_ids = [case["case_id"] for case in case_results]
+        case_results_by_id = {case["case_id"]: case for case in case_results}
+        case_result_ids = list(case_results_by_id)
         if set(case_result_ids) != set(selected_ids):
             raise _contract_error(
                 "reproduction.selected_cases",
                 "must match the case_results case_id set",
             )
+        for index, selected_case in enumerate(selected_cases):
+            case_result = case_results_by_id[selected_case["case_id"]]
+            for field in ("track", "split"):
+                if case_result.get(field) != selected_case[field]:
+                    raise _contract_error(
+                        f"reproduction.selected_cases.{index}.{field}",
+                        f"must match case_results.{field}",
+                    )
 
     selection = reproduction["selection"]
     selected_filter = selection.get("case_ids")
@@ -561,69 +572,30 @@ def _validate_reproduction(
             )
 
     adapter_name = reproduction["adapter"]["name"]
-    timeout_text = format(float(reproduction["timeout_seconds"]), ".17g")
     commands = reproduction["commands"]
-    expected_prefixes = {
-        "run": "bria-bench run ",
-        "evaluate": "bria-bench evaluate ",
-        "report": "bria-bench report ",
-    }
-    for key, prefix in expected_prefixes.items():
-        if not commands[key].startswith(prefix):
+    try:
+        expected_argv = canonical_reproduction_argv(
+            selection=selection,
+            adapter_name=adapter_name,
+            timeout_seconds=reproduction["timeout_seconds"],
+        )
+    except (OverflowError, TypeError, ValueError) as exc:
+        raise _contract_error(
+            "reproduction.timeout_seconds", "cannot form a canonical command"
+        ) from exc
+    for key, expected_parts in expected_argv.items():
+        path = f"reproduction.commands.{key}"
+        try:
+            actual_parts = tuple(shlex.split(commands[key], posix=True))
+        except ValueError as exc:
+            raise _contract_error(path, "must be valid shell token syntax") from exc
+        if actual_parts != expected_parts:
             raise _contract_error(
-                f"reproduction.commands.{key}", "must be a canonical bria-bench command"
+                path,
+                "must exactly match the canonical arguments derived from reproduction",
             )
-    if f"--adapter {adapter_name}" not in commands["run"]:
-        raise _contract_error(
-            "reproduction.commands.run", "must record the selected adapter"
-        )
-    if f"--timeout-seconds {timeout_text}" not in commands["run"]:
-        raise _contract_error(
-            "reproduction.commands.run", "must record the selected timeout"
-        )
-    if '"${BRIA_BENCH_MANIFEST_JSON}"' not in commands["run"]:
-        raise _contract_error(
-            "reproduction.commands.run", "must use the manifest placeholder"
-        )
-    for key in ("run", "evaluate"):
-        command = commands[key]
-        if '"${BRIA_BENCH_RUNS_DIR}"' not in command:
-            raise _contract_error(
-                f"reproduction.commands.{key}", "must use the runs-dir placeholder"
-            )
-        if selected_filter is None and "--case " in command:
-            raise _contract_error(
-                f"reproduction.commands.{key}", "must not add case filters"
-            )
-        if selected_filter is not None:
-            for case_id in selected_filter:
-                if f"--case {case_id}" not in command:
-                    raise _contract_error(
-                        f"reproduction.commands.{key}",
-                        "must include every selected case filter",
-                    )
-        if split_filter is None and "--split " in command:
-            raise _contract_error(
-                f"reproduction.commands.{key}", "must not add split filters"
-            )
-        if split_filter is not None:
-            for split in split_filter:
-                if f"--split {split}" not in command:
-                    raise _contract_error(
-                        f"reproduction.commands.{key}",
-                        "must include every selected split filter",
-                    )
-    if '"${BRIA_BENCH_METRICS_JSON}"' not in commands["evaluate"]:
-        raise _contract_error(
-            "reproduction.commands.evaluate", "must use the metrics placeholder"
-        )
-    if (
-        '"${BRIA_BENCH_METRICS_JSON}"' not in commands["report"]
-        or '"${BRIA_BENCH_REPORT_MD}"' not in commands["report"]
-    ):
-        raise _contract_error(
-            "reproduction.commands.report", "must use report placeholders"
-        )
+        if commands[key] != render_reproduction_argv(expected_parts):
+            raise _contract_error(path, "must use canonical shell serialization")
 
 
 def _validate_cross_fields(metrics: Mapping[str, Any]) -> None:
@@ -907,6 +879,7 @@ def _append_case_table(lines: list[str], cases: list[Mapping[str, Any]]) -> None
 
 
 def _append_reproduction_section(lines: list[str], metrics: Mapping[str, Any]) -> None:
+    reproduction = metrics["reproduction"]
     lines.extend(
         [
             "",
@@ -914,19 +887,9 @@ def _append_reproduction_section(lines: list[str], metrics: Mapping[str, Any]) -
             "",
             "| Artifact | Recorded value |",
             "| --- | --- |",
-            f"| Manifest SHA-256 | {_escape_markdown(metrics.get('manifest_sha256', 'unavailable'))} |",
+            f"| Manifest SHA-256 | {reproduction['manifest_sha256']} |",
         ]
     )
-    reproduction = metrics.get("reproduction")
-    if reproduction is None:
-        lines.extend(
-            [
-                "",
-                "Reproduction provenance is unavailable in this metrics artifact.",
-            ]
-        )
-        return
-
     adapter = reproduction["adapter"]
     lines.extend(
         [

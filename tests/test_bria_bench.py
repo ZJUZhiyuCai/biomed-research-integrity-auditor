@@ -6818,10 +6818,6 @@ class BriaBenchReportTests(unittest.TestCase):
             generated_at="2026-07-11T00:00:00Z",
         )
         metrics["performance"]["over_budget_rate"]["value"] = 0.3333333334
-        return metrics
-
-    def metrics_with_reproduction(self) -> dict[str, object]:
-        metrics = self.metrics_fixture()
         selected = [
             {
                 "case_id": "case_a",
@@ -6854,6 +6850,9 @@ class BriaBenchReportTests(unittest.TestCase):
             timeout_seconds=5.0,
         )
         return metrics
+
+    def metrics_with_reproduction(self) -> dict[str, object]:
+        return self.metrics_fixture()
 
     def assert_appears_in_order(self, text: str, values: list[str]) -> None:
         positions = [text.index(value) for value in values]
@@ -6960,6 +6959,25 @@ class BriaBenchReportTests(unittest.TestCase):
                     "values": [],
                 }
             },
+            "reproduction": minimal_reproduction(
+                [
+                    {
+                        "case_id": "sparse_a",
+                        "track": "regression",
+                        "split": "dev",
+                        "mode": "internal_presubmission",
+                        "scan_profile": "quick",
+                    },
+                    {
+                        "case_id": "sparse_b",
+                        "track": "public_realism",
+                        "split": "test",
+                        "mode": "external_public_material",
+                        "scan_profile": "standard",
+                    },
+                ],
+                case_filter=["sparse_a", "sparse_b"],
+            ),
         }
 
         report = render_metrics_report(sparse)
@@ -6982,23 +7000,34 @@ class BriaBenchReportTests(unittest.TestCase):
         self.assertIn(
             "Case-level results are unavailable in this metrics artifact.", report
         )
-        self.assertIn("| Manifest SHA-256 | unavailable |", report)
+        self.assertIn(f"| Manifest SHA-256 | {'a' * 64} |", report)
 
     def test_reordered_input_is_deterministic_pure_and_not_mutated(self) -> None:
         metrics = self.metrics_fixture()
         before = copy.deepcopy(metrics)
         expected = render_metrics_report(metrics)
 
-        def reordered(value: object) -> object:
+        def reordered(value: object, path: tuple[str, ...] = ()) -> object:
             if isinstance(value, dict):
                 return {
-                    key: reordered(value[key])
+                    key: reordered(value[key], (*path, key))
                     for key in reversed(list(value.keys()))
                 }
             if isinstance(value, list):
-                items = [reordered(item) for item in value]
-                if items and all(
-                    isinstance(item, dict) and "case_id" in item for item in items
+                items = [
+                    reordered(item, (*path, str(index)))
+                    for index, item in enumerate(value)
+                ]
+                if (
+                    path
+                    not in {
+                        ("reproduction", "selected_cases"),
+                        ("reproduction", "case_hashes"),
+                    }
+                    and items
+                    and all(
+                        isinstance(item, dict) and "case_id" in item for item in items
+                    )
                 ):
                     items.reverse()
                 return items
@@ -7182,6 +7211,18 @@ class BriaBenchReportTests(unittest.TestCase):
         )
         self.assertEqual(metrics["case_results"][0]["technical_failure_count"], 1)
         self.assertEqual(metrics["case_results"][0]["reported_failure_count"], 1)
+        metrics["reproduction"] = minimal_reproduction(
+            [
+                {
+                    "case_id": "identity_mismatch",
+                    "track": "blinded_challenge",
+                    "split": "dev",
+                    "mode": "internal_presubmission",
+                    "scan_profile": "quick",
+                }
+            ],
+            case_filter=["identity_mismatch"],
+        )
         report = render_metrics_report(metrics)
         self.assertIn("| Silent failure rate | 1 / 1 (100%) |", report)
 
@@ -7326,6 +7367,7 @@ class BriaBenchReportTests(unittest.TestCase):
                     "values": [huge_bytes],
                 },
             },
+            "reproduction": minimal_reproduction([]),
         }
         expected = render_metrics_report(metrics)
 
@@ -7393,13 +7435,12 @@ class BriaBenchReportTests(unittest.TestCase):
             self.assertNotIn(phrase, lowered)
         self.assertNotRegex(report, re.compile(r"\b(?:PASS|FAIL)\b", re.I))
 
-    def test_reproduction_uses_only_recorded_manifest_provenance(self) -> None:
-        report = render_metrics_report(self.metrics_fixture())
+    def test_missing_reproduction_fails_closed(self) -> None:
+        metrics = self.metrics_fixture()
+        del metrics["reproduction"]
 
-        self.assertIn(f"| Manifest SHA-256 | {'a' * 64} |", report)
-        self.assertIn("Reproduction provenance is unavailable", report)
-        self.assertNotIn("per-run hashes are not recorded", report)
-        self.assertNotIn(str(Path.home()), report)
+        with self.assertRaisesRegex(ContractError, "reproduction.*required"):
+            render_metrics_report(metrics)
 
     def test_reproduction_renders_commands_and_case_hashes(self) -> None:
         metrics = self.metrics_with_reproduction()
@@ -7451,11 +7492,21 @@ class BriaBenchReportTests(unittest.TestCase):
             "run"
         ] = 'bria-bench run --manifest "/Users/alice/manifest.json"'
 
+        appended_overrides = self.metrics_with_reproduction()
+        appended_overrides["reproduction"]["commands"]["run"] += (
+            " --adapter other --timeout-seconds 1 --case case_z --split test"
+        )
+
+        duplicate_flag = self.metrics_with_reproduction()
+        duplicate_flag["reproduction"]["commands"]["evaluate"] += " --case case_a"
+
         for name, payload in (
             ("missing", missing),
             ("duplicate", duplicate),
             ("reordered", reordered),
             ("unsafe-command", unsafe_command),
+            ("appended-overrides", appended_overrides),
+            ("duplicate-flag", duplicate_flag),
         ):
             with self.subTest(name=name), self.assertRaises(ContractError):
                 render_metrics_report(payload)
@@ -7548,14 +7599,16 @@ class BriaBenchCliTests(unittest.TestCase):
         self, metrics: dict[str, Any], runs: Path, summary: dict[str, Any]
     ) -> None:
         reproduction = metrics["reproduction"]
+        selected_ids = [case["case_id"] for case in reproduction["selected_cases"]]
         self.assertEqual(
-            [case["case_id"] for case in reproduction["selected_cases"]],
+            selected_ids,
             [row["case_id"] for row in reproduction["case_hashes"]],
         )
         self.assertEqual(
             len(reproduction["case_hashes"]),
             len({row["case_id"] for row in reproduction["case_hashes"]}),
         )
+        self.assertEqual(selected_ids, [row["case_id"] for row in summary["cases"]])
         summary_by_id = {row["case_id"]: row for row in summary["cases"]}
         for row in reproduction["case_hashes"]:
             path = runs / summary_by_id[row["case_id"]]["run_result"]
@@ -7972,6 +8025,7 @@ class BriaBenchCliTests(unittest.TestCase):
         metrics_path = self.root / "metrics.json"
         output_path = self.root / "REPORT.md"
         metrics = minimal_metrics()
+        metrics["reproduction"] = minimal_reproduction([])
         metrics_path.write_text(json.dumps(metrics), encoding="utf-8")
 
         self.assertEqual(
@@ -7990,6 +8044,25 @@ class BriaBenchCliTests(unittest.TestCase):
             output_path.read_text(encoding="utf-8"),
             render_metrics_report(metrics),
         )
+
+    def test_report_command_rejects_missing_reproduction(self) -> None:
+        metrics_path = self.root / "metrics-without-reproduction.json"
+        output_path = self.root / "REPORT.md"
+        metrics_path.write_text(json.dumps(minimal_metrics()), encoding="utf-8")
+
+        self.assertEqual(
+            bria_bench_main(
+                [
+                    "report",
+                    "--metrics",
+                    str(metrics_path),
+                    "--output",
+                    str(output_path),
+                ]
+            ),
+            2,
+        )
+        self.assertFalse(output_path.exists())
 
     def test_process_error_contract_errors_render_through_cli(self) -> None:
         code = (
@@ -8222,6 +8295,54 @@ class BriaBenchCliTests(unittest.TestCase):
         self.assertIn("--split test", test_metrics["reproduction"]["commands"]["run"])
         self.assertNotIn("--case", test_metrics["reproduction"]["commands"]["run"])
         self.assert_reproduction_matches_run_files(test_metrics, test_runs, test_summary)
+
+        ordered_runs = self.root / "explicit-order-runs"
+        requested_order = ["case_002", "case_001"]
+        ordered_summary = run_benchmark(
+            self.manifest,
+            ordered_runs,
+            case_ids=requested_order,
+            adapter_name="fake",
+            adapters={"fake": self.adapter},
+        )
+        ordered_metrics = evaluate_benchmark(
+            self.manifest,
+            ordered_runs,
+            self.root / "explicit-order-metrics.json",
+            case_ids=requested_order,
+            adapters={"fake": self.adapter},
+        )
+        self.assertEqual(
+            [item["case_id"] for item in ordered_summary["cases"]], requested_order
+        )
+        self.assertEqual(
+            ordered_metrics["reproduction"]["selection"]["case_ids"], requested_order
+        )
+        self.assertEqual(
+            [
+                item["case_id"]
+                for item in ordered_metrics["reproduction"]["selected_cases"]
+            ],
+            requested_order,
+        )
+        self.assertEqual(
+            [
+                item["case_id"]
+                for item in ordered_metrics["reproduction"]["case_hashes"]
+            ],
+            requested_order,
+        )
+        self.assertEqual(
+            [item["case_id"] for item in ordered_metrics["case_results"]],
+            sorted(requested_order),
+        )
+        self.assertIn(
+            "--case case_002 --case case_001",
+            ordered_metrics["reproduction"]["commands"]["run"],
+        )
+        self.assert_reproduction_matches_run_files(
+            ordered_metrics, ordered_runs, ordered_summary
+        )
 
         intersection_runs = self.root / "intersection-runs"
         intersection = run_benchmark(

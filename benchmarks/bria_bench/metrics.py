@@ -60,6 +60,73 @@ _BUNDLE_KEYS = {
     "previous_output_preserved",
     "over_budget",
 }
+_REPRODUCTION_PLACEHOLDERS = frozenset(
+    {
+        "${BRIA_BENCH_MANIFEST_JSON}",
+        "${BRIA_BENCH_RUNS_DIR}",
+        "${BRIA_BENCH_METRICS_JSON}",
+        "${BRIA_BENCH_REPORT_MD}",
+    }
+)
+
+
+def canonical_reproduction_argv(
+    *,
+    selection: Mapping[str, Any],
+    adapter_name: str,
+    timeout_seconds: float,
+) -> dict[str, tuple[str, ...]]:
+    """Build the sole accepted run/evaluate/report argument sequences."""
+
+    selection_args: list[str] = []
+    for case_id in selection.get("case_ids") or []:
+        selection_args.extend(("--case", str(case_id)))
+    for split in selection.get("splits") or []:
+        selection_args.extend(("--split", str(split)))
+    timeout_text = format(float(timeout_seconds), ".17g")
+    return {
+        "run": (
+            "bria-bench",
+            "run",
+            "--manifest",
+            "${BRIA_BENCH_MANIFEST_JSON}",
+            "--runs-dir",
+            "${BRIA_BENCH_RUNS_DIR}",
+            *selection_args,
+            "--adapter",
+            adapter_name,
+            "--timeout-seconds",
+            timeout_text,
+        ),
+        "evaluate": (
+            "bria-bench",
+            "evaluate",
+            "--manifest",
+            "${BRIA_BENCH_MANIFEST_JSON}",
+            "--runs-dir",
+            "${BRIA_BENCH_RUNS_DIR}",
+            "--output",
+            "${BRIA_BENCH_METRICS_JSON}",
+            *selection_args,
+        ),
+        "report": (
+            "bria-bench",
+            "report",
+            "--metrics",
+            "${BRIA_BENCH_METRICS_JSON}",
+            "--output",
+            "${BRIA_BENCH_REPORT_MD}",
+        ),
+    }
+
+
+def render_reproduction_argv(argv: Sequence[str]) -> str:
+    """Render canonical argv as a portable, shell-readable command."""
+
+    return " ".join(
+        f'"{argument}"' if argument in _REPRODUCTION_PLACEHOLDERS else argument
+        for argument in argv
+    )
 
 
 def _fraction(numerator: int, denominator: int) -> dict[str, int | float | None]:
