@@ -15,7 +15,8 @@ dependencies = [
   "openpyxl>=3.1,<4",
   "pypdf>=4.0,<7",
   "PyMuPDF>=1.24,<2",
-  "requests>=2.31,<3"
+  "requests>=2.31,<3",
+  "tomli>=2.0,<3; python_version < '3.11'"
 ]
 
 [project.optional-dependencies]
@@ -27,16 +28,21 @@ webapp = [
 ocr = [
   "pytesseract>=0.3,<0.4"
 ]
+benchmark = [
+  "psutil>=5.9,<8"
+]
 dev = [
   "httpx>=0.27,<1",
   "mypy>=1.0,<2",
   "pre-commit>=3.0,<5",
   "pytest>=8.0,<9",
   "ruff>=0.5,<1",
+  "setuptools>=77,<84",
   "types-PyYAML>=6.0,<7"
 ]
 
 [project.scripts]
+bria-bench = "benchmarks.bria_bench.cli:main"
 biomed-audit = "scripts.audit_package:main"
 biomed-audit-diff = "scripts.compare_audit_runs:main"
 biomed-audit-web = "webapp.__main__:main"
@@ -48,10 +54,27 @@ biomed-self-audit-webapp = "webapp.__main__:main"
 
 [tool.setuptools]
 include-package-data = true
-packages = ["calibrators", "detectors", "detectors.image", "detectors.stats", "detectors.text", "provenance", "schemas", "scripts", "scripts.pipeline", "skill", "webapp", "webapp.backend"]
+packages = ["benchmarks.bria_bench", "calibrators", "detectors", "detectors.image", "detectors.stats", "detectors.text", "provenance", "schemas", "scripts", "scripts.pipeline", "skill", "webapp", "webapp.backend"]
 
 [tool.setuptools.package-data]
 schemas = ["*.json", "*.yaml"]
+"benchmarks.bria_bench" = [
+  "README.md",
+  "REVIEWER_GUIDE.md",
+  "benchmark_manifest*.json",
+  "annotations/**/*.json",
+  "cases/**/*",
+  "results/.gitkeep",
+  "schemas/annotation.schema.json",
+  "schemas/benchmark_manifest.schema.json",
+  "schemas/metrics.schema.json",
+  "schemas/observation.schema.json",
+  "schemas/reviewer_form_completed.schema.json",
+  "schemas/reviewer_form_template.schema.json",
+  "schemas/reviewer_mapping.schema.json",
+  "schemas/reviewer_packet_manifest.schema.json",
+  "schemas/run_result.schema.json"
+]
 webapp = ["frontend/dist/*.html", "frontend/dist/assets/*"]
 skill = [
   "biomed-research-integrity-auditor/*.md",
@@ -65,8 +88,58 @@ skill = [
   "biomed-research-integrity-auditor/templates/reporting_checklists/*.yaml"
 ]
 
+[tool.setuptools.exclude-package-data]
+"benchmarks.bria_bench" = [
+  "runs/**", "**/runs/**",
+  "reviewer_packets/**", "**/reviewer_packets/**",
+  "reviewer-packets/**", "**/reviewer-packets/**",
+  "reviewer_packet/**", "**/reviewer_packet/**",
+  "reviewer-packet/**", "**/reviewer-packet/**",
+  "mappings/**", "**/mappings/**",
+  "reviewer_mappings/**", "**/reviewer_mappings/**",
+  "reviewer-mappings/**", "**/reviewer-mappings/**",
+  "api_cache/**", "**/api_cache/**",
+  "api-cache/**", "**/api-cache/**",
+  ".api_cache/**", "**/.api_cache/**",
+  ".api-cache/**", "**/.api-cache/**",
+  "cache/**", "**/cache/**",
+  ".cache/**", "**/.cache/**",
+  "metrics/**", "**/metrics/**",
+  "local_metrics/**", "**/local_metrics/**",
+  "local-metrics/**", "**/local-metrics/**",
+  "seeds/**", "**/seeds/**",
+  "identity/**", "**/identity/**",
+  "identities/**", "**/identities/**",
+  "**/results/**",
+  "run_summary.json", "**/run_summary.json",
+  "run-summary.json", "**/run-summary.json",
+  "metrics.json", "**/metrics.json",
+  "metrics-*.json", "**/metrics-*.json",
+  "metrics_*.json", "**/metrics_*.json",
+  "local_metrics*.json", "**/local_metrics*.json",
+  "local-metrics*.json", "**/local-metrics*.json",
+  "cases/reviewer_mapping*.json", "cases/**/reviewer_mapping*.json",
+  "annotations/reviewer_mapping*.json", "annotations/**/reviewer_mapping*.json",
+  "results/reviewer_mapping*.json",
+  "cases/reviewer-mapping*.json", "cases/**/reviewer-mapping*.json",
+  "annotations/reviewer-mapping*.json", "annotations/**/reviewer-mapping*.json",
+  "results/reviewer-mapping*.json",
+  "*_mapping.json", "**/*_mapping.json",
+  "*-mapping.json", "**/*-mapping.json",
+  "cases/reviewer_packet*.json", "cases/**/reviewer_packet*.json",
+  "annotations/reviewer_packet*.json", "annotations/**/reviewer_packet*.json",
+  "results/reviewer_packet*.json",
+  "reviewer_packet*.zip", "**/reviewer_packet*.zip",
+  "reviewer-packet*.json", "**/reviewer-packet*.json",
+  "reviewer-packet*.zip", "**/reviewer-packet*.zip",
+  "seed*.json", "**/seed*.json",
+  "seed*.txt", "**/seed*.txt",
+  "*identity*.json", "**/*identity*.json",
+  "*api_cache*.json", "**/*api_cache*.json",
+  "*api-cache*.json", "**/*api-cache*.json"
+]
+
 [tool.mypy]
-python_version = "3.10"
 ignore_missing_imports = true
 check_untyped_defs = true
 

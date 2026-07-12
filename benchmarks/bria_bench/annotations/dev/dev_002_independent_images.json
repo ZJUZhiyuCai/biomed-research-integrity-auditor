@@ -1,0 +1,38 @@
+{
+  "case_id": "dev_002_independent_images",
+  "expected_observations": [
+    {
+      "benign_explanations": [
+        "similar dimensions alone do not establish image reuse",
+        "independent procedural generation explains incidental hash proximity"
+      ],
+      "issue_family": "image_global_similarity",
+      "location": {
+        "file": "figures/Figure_2A.png",
+        "terms": [
+          "figures/Figure_2A.png",
+          "figures/Figure_2B.png",
+          "Figure 2A",
+          "Figure 2B"
+        ]
+      },
+      "observation_id": "dev_002_independent_images_001",
+      "presence": "absent",
+      "required_materials": [
+        "original image files",
+        "image acquisition metadata",
+        "figure assembly history"
+      ],
+      "risk_range": [
+        "R2",
+        "R4"
+      ],
+      "role": "negative_guardrail"
+    }
+  ],
+  "negative_control": true,
+  "notes": "First-party controlled development ground truth for detector and pipeline verification; excluded from public-realism and headline-accuracy reporting.",
+  "review_status": "controlled_ground_truth",
+  "schema_version": "1.0.0",
+  "source_annotation_path": "benchmarks/bria_bench/annotations/dev/dev_002_independent_images.json"
+}

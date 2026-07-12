@@ -1,0 +1,1 @@
+Controlled Figure 4 source data contain twelve independent control and treatment pairs as a numerical negative control.

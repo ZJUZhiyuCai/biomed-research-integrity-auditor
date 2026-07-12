@@ -1,0 +1,37 @@
+{
+  "case_id": "case_009",
+  "expected_observations": [],
+  "legacy_regression_contract": {
+    "audit_mode": "external_literature_triage",
+    "case_id": "case_009",
+    "case_type_hidden": "external_paper_public_pdf_only",
+    "expected_behavior": {
+      "max_overall_risk": "R3",
+      "min_overall_risk": "R1",
+      "misconduct_verdict_allowed": false
+    },
+    "forbidden_outputs": [
+      "misconduct confirmed",
+      "实锤",
+      "造假成立",
+      "学术不端成立"
+    ],
+    "required_findings": [],
+    "required_report_terms": [
+      "Mode: external_public_material",
+      "external_literature_search (europepmc)",
+      "Public or presentation-layer materials only"
+    ],
+    "risk_caps": {
+      "public_pdf_only_max": "R3",
+      "weak_statistics_only_max": "R2"
+    },
+    "source_label_path": "evals/ground_truth/case_009.expected.yaml",
+    "source_label_sha256": "0202701d9248f124d24fdb6ca00aa329798da6c5d10e03dc19ab3694dff48472"
+  },
+  "negative_control": false,
+  "notes": "Converted from a repository-authored procedural synthetic legacy label; regression-only and excluded from headline accuracy.",
+  "review_status": "controlled_ground_truth",
+  "schema_version": "1.0.0",
+  "source_annotation_path": "evals/ground_truth/case_009.expected.yaml"
+}

@@ -10,7 +10,6 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import tomllib
 import unittest
 import zipfile
 import zlib
@@ -20,6 +19,11 @@ from xml.sax.saxutils import escape
 
 import yaml
 from PIL import Image, ImageDraw, ImageFilter
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python 3.10
+    import tomli as tomllib
 
 ROOT = Path(__file__).resolve().parents[1]
 PYTHON = sys.executable
@@ -31,7 +35,11 @@ from detectors.image.image_io import iter_normalized_frames, normalized_rgb
 from provenance.panel_modality import normalize_modality, resolve_panel_modality_routing
 from scripts.pipeline.detector_registry import RESERVED_OUTPUT_PATHS, run_registered_detectors
 from scripts.pipeline.common import DetectorRunResult
-from scripts.pipeline.detectors import append_contextual_or_raw, run_detector
+from scripts.pipeline.detectors import (
+    append_contextual_or_raw,
+    intake_error_location,
+    run_detector,
+)
 from scripts.pipeline.orchestrator import RUN_ARTIFACTS, clean_previous_run_artifacts, validate_run_paths
 from scripts.pipeline.orchestrator import output_run_lock, run_pipeline
 from scripts.pipeline.guardrails import (
@@ -1046,6 +1054,90 @@ class ContractPipelineTests(unittest.TestCase):
             self.assertEqual(record["n_frames"], 2)
             self.assertTrue(record["microscopy_hints"]["possible_multichannel"])
             self.assertTrue(record["microscopy_hints"]["possible_z_stack"])
+
+    def test_intake_error_location_resolves_relative_paths_from_package(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            package = root / "package"
+            figures = package / "figures"
+            figures.mkdir(parents=True)
+            affected = figures / "Figure_5B_truncated.png"
+            affected.write_bytes(b"truncated")
+
+            self.assertEqual(
+                intake_error_location(
+                    package,
+                    "image_metadata.json",
+                    {"path": "figures/Figure_5B_truncated.png"},
+                ),
+                "figures/Figure_5B_truncated.png",
+            )
+            self.assertEqual(
+                intake_error_location(
+                    package, "image_metadata.json", {"path": str(affected)}
+                ),
+                "figures/Figure_5B_truncated.png",
+            )
+
+    def test_intake_error_location_preserves_containment_and_fallback(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            package = root / "package"
+            package.mkdir()
+            outside = root / "outside.png"
+            outside.write_bytes(b"outside")
+            fallback = "image_metadata.json"
+            for error in (
+                {"path": "../outside.png"},
+                {"path": str(outside)},
+                {"path": ""},
+                {"path": "   "},
+                {"path": "."},
+                {"path": "\x00"},
+                {"path": None},
+                {"path": ["figures", "panel.png"]},
+                {"path": {"file": "figures/panel.png"}},
+                "malformed",
+            ):
+                with self.subTest(error=error):
+                    self.assertEqual(
+                        intake_error_location(package, fallback, error), fallback
+                    )
+
+            link = package / "linked.png"
+            try:
+                link.symlink_to(outside)
+            except (NotImplementedError, OSError) as exc:
+                self.skipTest(f"symlink creation unavailable: {exc}")
+            self.assertEqual(
+                intake_error_location(package, fallback, {"path": "linked.png"}),
+                fallback,
+            )
+
+    def test_intake_error_location_falls_back_on_symlink_loop_runtime_error(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "package"
+            package.mkdir()
+            loop = package / "loop"
+            try:
+                loop.symlink_to("loop")
+            except (NotImplementedError, OSError) as exc:
+                self.skipTest(f"symlink creation unavailable: {exc}")
+
+            with mock.patch(
+                "scripts.pipeline.detectors.Path.resolve",
+                side_effect=RuntimeError("symlink loop"),
+            ):
+                self.assertEqual(
+                    intake_error_location(
+                        package,
+                        "image_metadata.json",
+                        {"path": "loop/panel.png"},
+                    ),
+                    "image_metadata.json",
+                )
 
     def test_pipeline_reports_image_metadata_intake_coverage(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -1,0 +1,1 @@
+Controlled Figure 1 contains two procedurally generated panels supplied for image-similarity development checks.

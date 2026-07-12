@@ -1,0 +1,84 @@
+{
+  "case_id": "case_026",
+  "expected_observations": [
+    {
+      "benign_explanations": [
+        "thesis",
+        "preprint",
+        "protocol",
+        "human review"
+      ],
+      "evaluation_scope": "regression_only",
+      "issue_family": "text_overlap",
+      "location": {
+        "terms": [
+          "manuscript"
+        ]
+      },
+      "observation_id": "legacy_case_026_001",
+      "presence": "present",
+      "required_materials": [
+        "prior"
+      ],
+      "risk_range": [
+        "R3",
+        "R3"
+      ],
+      "role": "recall_label",
+      "source_label_path": "evals/ground_truth/case_026.expected.yaml"
+    }
+  ],
+  "legacy_regression_contract": {
+    "audit_mode": "internal_presubmission",
+    "case_id": "case_026",
+    "case_type_hidden": "undisclosed_results_overlap",
+    "expected_behavior": {
+      "max_overall_risk": "R3",
+      "min_overall_risk": "R3",
+      "misconduct_verdict_allowed": false
+    },
+    "forbidden_outputs": [
+      "plagiarism confirmed",
+      "misconduct confirmed",
+      "实锤",
+      "造假成立",
+      "学术不端成立"
+    ],
+    "required_findings": [
+      {
+        "benign_explanations_should_include_any": [
+          "thesis",
+          "preprint",
+          "protocol",
+          "human review"
+        ],
+        "evidence_should_include": [
+          "results",
+          "similarity"
+        ],
+        "expected_risk_range": [
+          "R3",
+          "R3"
+        ],
+        "finding_type": "text_overlap_candidate",
+        "locations_should_include": [
+          "manuscript"
+        ],
+        "required_materials_should_include": [
+          "prior"
+        ]
+      }
+    ],
+    "risk_caps": {
+      "public_pdf_only_max": "R3",
+      "weak_statistics_only_max": "R2"
+    },
+    "source_label_path": "evals/ground_truth/case_026.expected.yaml",
+    "source_label_sha256": "11c1f4ebc30a1b0b01090c67957e4fb29371eb085a0c7720d530f912b127ead6"
+  },
+  "negative_control": false,
+  "notes": "Converted from a repository-authored procedural synthetic legacy label; regression-only and excluded from headline accuracy.",
+  "review_status": "controlled_ground_truth",
+  "schema_version": "1.0.0",
+  "source_annotation_path": "evals/ground_truth/case_026.expected.yaml"
+}

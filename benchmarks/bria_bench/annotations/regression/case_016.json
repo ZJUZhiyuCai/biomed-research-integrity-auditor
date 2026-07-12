@@ -1,0 +1,83 @@
+{
+  "case_id": "case_016",
+  "expected_observations": [
+    {
+      "benign_explanations": [
+        "normalization",
+        "formula",
+        "batch",
+        "preprocessing"
+      ],
+      "evaluation_scope": "regression_only",
+      "issue_family": "statistics_or_numeric",
+      "location": {
+        "terms": [
+          "Figure_3c_3d"
+        ]
+      },
+      "observation_id": "legacy_case_016_001",
+      "presence": "present",
+      "required_materials": [
+        "raw"
+      ],
+      "risk_range": [
+        "R1",
+        "R2"
+      ],
+      "role": "recall_label",
+      "source_label_path": "evals/ground_truth/case_016.expected.yaml"
+    }
+  ],
+  "legacy_regression_contract": {
+    "audit_mode": "internal_presubmission",
+    "case_id": "case_016",
+    "case_type_hidden": "weak_stats_forensic_time_stratified_shift_digit_preservation",
+    "expected_behavior": {
+      "max_overall_risk": "R2",
+      "min_overall_risk": "R2",
+      "misconduct_verdict_allowed": false
+    },
+    "forbidden_outputs": [
+      "misconduct confirmed",
+      "实锤",
+      "造假成立",
+      "学术不端成立"
+    ],
+    "required_findings": [
+      {
+        "benign_explanations_should_include_any": [
+          "normalization",
+          "formula",
+          "batch",
+          "preprocessing"
+        ],
+        "evidence_should_include": [
+          "timepoint_offsets",
+          "Digit positions"
+        ],
+        "expected_risk_range": [
+          "R1",
+          "R2"
+        ],
+        "finding_type": "Time-stratified",
+        "locations_should_include": [
+          "Figure_3c_3d"
+        ],
+        "required_materials_should_include": [
+          "raw"
+        ]
+      }
+    ],
+    "risk_caps": {
+      "public_pdf_only_max": "R3",
+      "weak_statistics_only_max": "R2"
+    },
+    "source_label_path": "evals/ground_truth/case_016.expected.yaml",
+    "source_label_sha256": "61e61166d2935b7ec529320ccaa49cdbade3510d05c438c25760fce0e33697be"
+  },
+  "negative_control": false,
+  "notes": "Converted from a repository-authored procedural synthetic legacy label; regression-only and excluded from headline accuracy.",
+  "review_status": "controlled_ground_truth",
+  "schema_version": "1.0.0",
+  "source_annotation_path": "evals/ground_truth/case_016.expected.yaml"
+}

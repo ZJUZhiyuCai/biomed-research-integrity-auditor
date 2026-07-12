@@ -1,0 +1,1 @@
+Only summary values are supplied; raw integer counts are not included.

@@ -1,0 +1,1 @@
+Summary table only; raw instrument export and spreadsheet formulas are not included.

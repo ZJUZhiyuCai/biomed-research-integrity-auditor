@@ -1,0 +1,80 @@
+{
+  "case_id": "case_027",
+  "expected_observations": [
+    {
+      "benign_explanations": [
+        "thesis",
+        "disclosed"
+      ],
+      "evaluation_scope": "regression_only",
+      "issue_family": "text_overlap",
+      "location": {
+        "terms": [
+          "thesis"
+        ]
+      },
+      "observation_id": "legacy_case_027_001",
+      "presence": "present",
+      "required_materials": [
+        "prior"
+      ],
+      "risk_range": [
+        "R1",
+        "R2"
+      ],
+      "role": "recall_label",
+      "source_label_path": "evals/ground_truth/case_027.expected.yaml"
+    }
+  ],
+  "legacy_regression_contract": {
+    "audit_mode": "internal_presubmission",
+    "case_id": "case_027",
+    "case_type_hidden": "thesis_derived_disclosed",
+    "expected_behavior": {
+      "max_overall_risk": "R2",
+      "min_overall_risk": "R1",
+      "misconduct_verdict_allowed": false
+    },
+    "forbidden_outputs": [
+      "plagiarism confirmed",
+      "misconduct confirmed",
+      "实锤",
+      "造假成立",
+      "学术不端成立"
+    ],
+    "required_findings": [
+      {
+        "benign_explanations_should_include_any": [
+          "thesis",
+          "disclosed"
+        ],
+        "evidence_should_include": [
+          "disclosed",
+          "thesis"
+        ],
+        "expected_risk_range": [
+          "R1",
+          "R2"
+        ],
+        "finding_type": "self_overlap_candidate",
+        "locations_should_include": [
+          "thesis"
+        ],
+        "required_materials_should_include": [
+          "prior"
+        ]
+      }
+    ],
+    "risk_caps": {
+      "public_pdf_only_max": "R3",
+      "weak_statistics_only_max": "R2"
+    },
+    "source_label_path": "evals/ground_truth/case_027.expected.yaml",
+    "source_label_sha256": "a3d7bf10a3c4b51262c59ed25f80e30326f542b6203ebf04a7f372591f24f661"
+  },
+  "negative_control": false,
+  "notes": "Converted from a repository-authored procedural synthetic legacy label; regression-only and excluded from headline accuracy.",
+  "review_status": "controlled_ground_truth",
+  "schema_version": "1.0.0",
+  "source_annotation_path": "evals/ground_truth/case_027.expected.yaml"
+}

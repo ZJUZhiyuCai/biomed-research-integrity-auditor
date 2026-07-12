@@ -1,0 +1,83 @@
+{
+  "case_id": "case_017",
+  "expected_observations": [
+    {
+      "benign_explanations": [
+        "instrument",
+        "rounding",
+        "export",
+        "format"
+      ],
+      "evaluation_scope": "regression_only",
+      "issue_family": "statistics_or_numeric",
+      "location": {
+        "terms": [
+          "Figure_10"
+        ]
+      },
+      "observation_id": "legacy_case_017_001",
+      "presence": "present",
+      "required_materials": [
+        "raw"
+      ],
+      "risk_range": [
+        "R1",
+        "R2"
+      ],
+      "role": "recall_label",
+      "source_label_path": "evals/ground_truth/case_017.expected.yaml"
+    }
+  ],
+  "legacy_regression_contract": {
+    "audit_mode": "internal_presubmission",
+    "case_id": "case_017",
+    "case_type_hidden": "weak_stats_forensic_precision_mixing",
+    "expected_behavior": {
+      "max_overall_risk": "R2",
+      "min_overall_risk": "R1",
+      "misconduct_verdict_allowed": false
+    },
+    "forbidden_outputs": [
+      "misconduct confirmed",
+      "实锤",
+      "造假成立",
+      "学术不端成立"
+    ],
+    "required_findings": [
+      {
+        "benign_explanations_should_include_any": [
+          "instrument",
+          "rounding",
+          "export",
+          "format"
+        ],
+        "evidence_should_include": [
+          "decimal_place_counts",
+          "precision"
+        ],
+        "expected_risk_range": [
+          "R1",
+          "R2"
+        ],
+        "finding_type": "precision",
+        "locations_should_include": [
+          "Figure_10"
+        ],
+        "required_materials_should_include": [
+          "raw"
+        ]
+      }
+    ],
+    "risk_caps": {
+      "public_pdf_only_max": "R3",
+      "weak_statistics_only_max": "R2"
+    },
+    "source_label_path": "evals/ground_truth/case_017.expected.yaml",
+    "source_label_sha256": "0aa7643cab17541e0b2bb5999806a310a92de80e9bf6620a0ac42d346238bc7b"
+  },
+  "negative_control": false,
+  "notes": "Converted from a repository-authored procedural synthetic legacy label; regression-only and excluded from headline accuracy.",
+  "review_status": "controlled_ground_truth",
+  "schema_version": "1.0.0",
+  "source_annotation_path": "evals/ground_truth/case_017.expected.yaml"
+}

@@ -1,0 +1,83 @@
+{
+  "case_id": "case_020",
+  "expected_observations": [
+    {
+      "benign_explanations": [
+        "same raw",
+        "channel",
+        "compression"
+      ],
+      "evaluation_scope": "regression_only",
+      "issue_family": "image_local_reuse",
+      "location": {
+        "terms": [
+          "Figure"
+        ]
+      },
+      "observation_id": "legacy_case_020_001",
+      "presence": "present",
+      "required_materials": [
+        "original",
+        "metadata"
+      ],
+      "risk_range": [
+        "R3",
+        "R3"
+      ],
+      "role": "recall_label",
+      "source_label_path": "evals/ground_truth/case_020.expected.yaml"
+    }
+  ],
+  "legacy_regression_contract": {
+    "audit_mode": "internal_presubmission",
+    "case_id": "case_020",
+    "case_type_hidden": "local_patch_clone",
+    "expected_behavior": {
+      "max_overall_risk": "R3",
+      "min_overall_risk": "R3",
+      "misconduct_verdict_allowed": false
+    },
+    "forbidden_outputs": [
+      "misconduct confirmed",
+      "实锤",
+      "造假成立",
+      "学术不端成立"
+    ],
+    "required_findings": [
+      {
+        "benign_explanations_should_include_any": [
+          "same raw",
+          "channel",
+          "compression"
+        ],
+        "evidence_should_include": [
+          "patch",
+          "region"
+        ],
+        "expected_risk_range": [
+          "R3",
+          "R3"
+        ],
+        "finding_type": "local_patch_reuse",
+        "locations_should_include": [
+          "Figure"
+        ],
+        "required_materials_should_include": [
+          "original",
+          "metadata"
+        ]
+      }
+    ],
+    "risk_caps": {
+      "public_pdf_only_max": "R3",
+      "weak_statistics_only_max": "R2"
+    },
+    "source_label_path": "evals/ground_truth/case_020.expected.yaml",
+    "source_label_sha256": "378d4cfa041f759e7b9ced422bd457574c80300c486de8b361d65ea0ea077dfc"
+  },
+  "negative_control": false,
+  "notes": "Converted from a repository-authored procedural synthetic legacy label; regression-only and excluded from headline accuracy.",
+  "review_status": "controlled_ground_truth",
+  "schema_version": "1.0.0",
+  "source_annotation_path": "evals/ground_truth/case_020.expected.yaml"
+}

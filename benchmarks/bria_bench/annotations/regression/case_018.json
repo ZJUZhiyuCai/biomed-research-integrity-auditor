@@ -1,0 +1,84 @@
+{
+  "case_id": "case_018",
+  "expected_observations": [
+    {
+      "benign_explanations": [
+        "shared",
+        "control",
+        "export",
+        "copy"
+      ],
+      "evaluation_scope": "regression_only",
+      "issue_family": "statistics_or_numeric",
+      "location": {
+        "terms": [
+          "cross"
+        ]
+      },
+      "observation_id": "legacy_case_018_001",
+      "presence": "present",
+      "required_materials": [
+        "analysis"
+      ],
+      "risk_range": [
+        "R1",
+        "R2"
+      ],
+      "role": "recall_label",
+      "source_label_path": "evals/ground_truth/case_018.expected.yaml"
+    }
+  ],
+  "legacy_regression_contract": {
+    "audit_mode": "internal_presubmission",
+    "case_id": "case_018",
+    "case_type_hidden": "weak_stats_forensic_cross_figure_sequence_reuse",
+    "expected_behavior": {
+      "max_overall_risk": "R2",
+      "min_overall_risk": "R2",
+      "misconduct_verdict_allowed": false
+    },
+    "forbidden_outputs": [
+      "misconduct confirmed",
+      "实锤",
+      "造假成立",
+      "学术不端成立"
+    ],
+    "required_findings": [
+      {
+        "benign_explanations_should_include_any": [
+          "shared",
+          "control",
+          "export",
+          "copy"
+        ],
+        "evidence_should_include": [
+          "multiple",
+          "files",
+          "sequence"
+        ],
+        "expected_risk_range": [
+          "R1",
+          "R2"
+        ],
+        "finding_type": "Identical numeric sequence",
+        "locations_should_include": [
+          "cross"
+        ],
+        "required_materials_should_include": [
+          "analysis"
+        ]
+      }
+    ],
+    "risk_caps": {
+      "public_pdf_only_max": "R3",
+      "weak_statistics_only_max": "R2"
+    },
+    "source_label_path": "evals/ground_truth/case_018.expected.yaml",
+    "source_label_sha256": "b744d0b6645f1ca9ada97c646eb3e27c579254d20ec615df0644c8afee450631"
+  },
+  "negative_control": false,
+  "notes": "Converted from a repository-authored procedural synthetic legacy label; regression-only and excluded from headline accuracy.",
+  "review_status": "controlled_ground_truth",
+  "schema_version": "1.0.0",
+  "source_annotation_path": "evals/ground_truth/case_018.expected.yaml"
+}

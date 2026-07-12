@@ -185,12 +185,21 @@ INTAKE_COVERAGE_ARTIFACTS = (
 def intake_error_location(package: Path, artifact_name: str, error: Any) -> str:
     if not isinstance(error, dict):
         return artifact_name
-    raw_path = str(error.get("path", "")).strip()
-    if not raw_path:
+    raw_path = error.get("path")
+    if not isinstance(raw_path, str):
+        return artifact_name
+    raw_path = raw_path.strip()
+    if not raw_path or "\x00" in raw_path:
         return artifact_name
     try:
-        return Path(raw_path).expanduser().resolve().relative_to(package.resolve()).as_posix()
-    except (OSError, ValueError):
+        candidate = Path(raw_path).expanduser()
+        if not candidate.is_absolute():
+            candidate = package / candidate
+        relative = candidate.resolve().relative_to(package.resolve())
+        if relative == Path("."):
+            return artifact_name
+        return relative.as_posix()
+    except (OSError, RuntimeError, ValueError):
         return artifact_name
 
 

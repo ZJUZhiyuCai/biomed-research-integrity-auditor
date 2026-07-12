@@ -1,0 +1,6 @@
+BRIA-Bench controlled development fixture
+
+This package is a first-party procedural fixture created for deterministic software testing.
+It describes no real paper, no real person, no real patient, and no private record.
+It contains no third-party asset. All included text, tables, and images were created for this fixture.
+The materials are controlled development data, not a public-realism sample or a headline-accuracy case.
