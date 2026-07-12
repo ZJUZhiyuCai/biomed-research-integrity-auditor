@@ -591,7 +591,12 @@ class ReviewerFormContractTests(unittest.TestCase):
 
 
 class ReviewerPacketLeakageTests(ReviewerPacketFixture):
-    def assert_leak_rejected(self, expected: str | None = None) -> None:
+    def assert_leak_rejected(
+        self,
+        expected: str | None = None,
+        *,
+        hidden_values: tuple[str, ...] = (),
+    ) -> None:
         from benchmarks.bria_bench.reviewer_packet import ReviewerPacketError
 
         context = (
@@ -599,8 +604,11 @@ class ReviewerPacketLeakageTests(ReviewerPacketFixture):
             if expected is not None
             else self.assertRaises(ReviewerPacketError)
         )
-        with context:
+        with context as caught:
             self.export(case_ids=["source_alpha"])
+        message = str(caught.exception)
+        for value in hidden_values:
+            self.assertNotIn(value, message)
         self.assertFalse(self.output.exists())
         self.assertFalse(self.mapping.exists())
         self.assertEqual(list(self.root.glob(".packet.stage-*")), [])
@@ -618,6 +626,67 @@ class ReviewerPacketLeakageTests(ReviewerPacketFixture):
         )
         self.refreeze()
         self.assert_leak_rejected()
+
+    def test_rejects_bomless_utf16_leakage_without_echoing_values(self) -> None:
+        sensitive = (
+            "source_alpha",
+            "expected_observations",
+            "/Users/private/review.txt",
+        )
+        text = " | ".join(sensitive)
+        (self.cases_root / "source_alpha" / "encoded.bin").write_bytes(
+            text.encode("utf-16-le")
+        )
+        self.refreeze()
+        self.assert_leak_rejected(hidden_values=sensitive)
+
+    def test_rejects_bom_tagged_utf16_and_utf32_leakage(self) -> None:
+        from benchmarks.bria_bench.reviewer_packet import ReviewerPacketError
+
+        sensitive = "expected_observations"
+        encodings = ("utf-16", "utf-16-be", "utf-32", "utf-32-be")
+        for index, encoding in enumerate(encodings):
+            with self.subTest(encoding=encoding):
+                output = self.root / f"packet-{index}"
+                mapping = self.root / f"mapping-{index}.json"
+                data = sensitive.encode(encoding)
+                if encoding.endswith("-be"):
+                    data = (
+                        b"\xfe\xff" if encoding == "utf-16-be" else b"\x00\x00\xfe\xff"
+                    ) + data
+                (self.cases_root / "source_alpha" / "encoded.bin").write_bytes(data)
+                self.refreeze()
+
+                with self.assertRaises(ReviewerPacketError) as caught:
+                    self.export(
+                        case_ids=["source_alpha"],
+                        output=output,
+                        mapping=mapping,
+                    )
+                self.assertNotIn(sensitive, str(caught.exception))
+                self.assertFalse(output.exists())
+                self.assertFalse(mapping.exists())
+
+    def test_rejects_utf16_in_deflated_docx_member_without_echoing_values(
+        self,
+    ) -> None:
+        sensitive = (
+            "source_alpha",
+            "expected_observations",
+            "/Users/private/review.txt",
+        )
+        archive_path = self.cases_root / "source_alpha" / "document.docx"
+        with zipfile.ZipFile(
+            archive_path,
+            "w",
+            compression=zipfile.ZIP_DEFLATED,
+        ) as archive:
+            archive.writestr(
+                "word/document.xml",
+                " | ".join(sensitive).encode("utf-16-be"),
+            )
+        self.refreeze()
+        self.assert_leak_rejected(hidden_values=sensitive)
 
     def test_rejects_zip_traversal_and_office_creator_metadata(self) -> None:
         archive_path = self.cases_root / "source_alpha" / "document.dat"
@@ -667,6 +736,20 @@ class ReviewerPacketLeakageTests(ReviewerPacketFixture):
         self.refreeze()
         self.assert_leak_rejected("identity")
 
+    def test_rejects_utf16_jpeg_user_comment_without_echoing_values(self) -> None:
+        sensitive = (
+            "source_alpha",
+            "expected_observations",
+            "/Users/private/review.txt",
+        )
+        image = Image.new("RGB", (4, 4), color="white")
+        exif = Image.Exif()
+        exif[37510] = b"UNICODE\x00" + " | ".join(sensitive).encode("utf-16-le")
+        path = self.cases_root / "source_alpha" / "image.dat"
+        image.save(path, format="JPEG", exif=exif)
+        self.refreeze()
+        self.assert_leak_rejected(hidden_values=sensitive)
+
     def test_rejects_real_pdf_metadata_and_text_without_trusting_suffix(self) -> None:
         import fitz
 
@@ -715,6 +798,10 @@ class ReviewerPacketLeakageTests(ReviewerPacketFixture):
 
 
 class ReviewerPacketPlacementAndAtomicityTests(ReviewerPacketFixture):
+    def assert_no_stage_artifacts(self) -> None:
+        stages = [path for path in self.root.rglob("*") if ".stage-" in path.name]
+        self.assertEqual(stages, [])
+
     def test_rejects_mapping_equal_beneath_or_ancestor_of_packet(self) -> None:
         from benchmarks.bria_bench.reviewer_packet import ReviewerPacketError
 
@@ -820,6 +907,156 @@ class ReviewerPacketPlacementAndAtomicityTests(ReviewerPacketFixture):
         self.assertEqual(stat.S_IMODE(self.mapping.stat().st_mode), 0o600)
         self.assertFalse(self.output.exists())
         self.assertEqual(list(self.root.glob(".packet.stage-*")), [])
+
+    def test_revalidates_packet_after_mapping_stage_and_before_packet_commit(
+        self,
+    ) -> None:
+        from benchmarks.bria_bench import reviewer_packet
+
+        real_validate = reviewer_packet._validate_staged_packet
+        validation_states: list[tuple[bool, bool]] = []
+
+        def record_validation(*args: object, **kwargs: object) -> None:
+            validation_states.append(
+                (
+                    bool(list(self.root.glob(".mapping.json.stage-*"))),
+                    self.mapping.exists(),
+                )
+            )
+            real_validate(*args, **kwargs)
+
+        with patch.object(
+            reviewer_packet,
+            "_validate_staged_packet",
+            side_effect=record_validation,
+        ):
+            self.export(case_ids=["source_alpha"])
+        self.assertEqual(
+            validation_states,
+            [(False, False), (True, False), (False, True)],
+        )
+
+    def test_hard_linked_mapping_in_packet_is_rejected_after_first_recheck(
+        self,
+    ) -> None:
+        from benchmarks.bria_bench import reviewer_packet
+        from benchmarks.bria_bench.reviewer_packet import ReviewerPacketError
+
+        real_recheck = reviewer_packet._recheck_before_mapping_publish
+
+        def inject_hard_link(placement: object) -> None:
+            real_recheck(placement)
+            packet_stage = next(self.root.glob(".packet.stage-*"))
+            mapping_stage = next(self.root.glob(".mapping.json.stage-*"))
+            os.link(mapping_stage, packet_stage / "forms" / "mapping-alias.bin")
+
+        with patch.object(
+            reviewer_packet,
+            "_recheck_before_mapping_publish",
+            side_effect=inject_hard_link,
+        ):
+            with self.assertRaises(ReviewerPacketError):
+                self.export(case_ids=["source_alpha"])
+        self.assertFalse(self.output.exists())
+        if self.mapping.exists():
+            mapping_stat = self.mapping.lstat()
+            self.assertEqual(stat.S_IMODE(mapping_stat.st_mode), 0o600)
+            self.assertEqual(mapping_stat.st_nlink, 1)
+        self.assert_no_stage_artifacts()
+
+    def test_published_mapping_hard_link_in_packet_leaves_clean_mapping_only(
+        self,
+    ) -> None:
+        from benchmarks.bria_bench import reviewer_packet
+        from benchmarks.bria_bench.reviewer_packet import ReviewerPacketError
+
+        real_recheck = reviewer_packet._recheck_before_packet_publish
+
+        def inject_hard_link(
+            placement: object,
+            mapping_identity: tuple[int, int],
+        ) -> None:
+            real_recheck(placement, mapping_identity)
+            packet_stage = next(self.root.glob(".packet.stage-*"))
+            os.link(self.mapping, packet_stage / "forms" / "mapping-alias.bin")
+
+        with patch.object(
+            reviewer_packet,
+            "_recheck_before_packet_publish",
+            side_effect=inject_hard_link,
+        ):
+            with self.assertRaises(ReviewerPacketError):
+                self.export(case_ids=["source_alpha"])
+        self.assertFalse(self.output.exists())
+        mapping_stat = self.mapping.lstat()
+        self.assertEqual(stat.S_IMODE(mapping_stat.st_mode), 0o600)
+        self.assertEqual(mapping_stat.st_nlink, 1)
+        self.assert_no_stage_artifacts()
+
+    def test_mapping_stage_cleanup_includes_xattr_verification_failures(self) -> None:
+        from benchmarks.bria_bench import reviewer_packet
+        from benchmarks.bria_bench.reviewer_packet import ReviewerPacketError
+
+        real_clear_xattrs = reviewer_packet._clear_xattrs
+
+        def fail_mapping_xattrs(path: Path) -> None:
+            if path.name.startswith(".mapping.json.stage-"):
+                raise OSError("mapping xattr fault")
+            real_clear_xattrs(path)
+
+        with patch.object(
+            reviewer_packet,
+            "_clear_xattrs",
+            side_effect=fail_mapping_xattrs,
+        ):
+            with self.assertRaises(ReviewerPacketError):
+                self.export(case_ids=["source_alpha"])
+        self.assertFalse(self.output.exists())
+        self.assertFalse(self.mapping.exists())
+        self.assert_no_stage_artifacts()
+
+    def test_keyboard_interrupt_during_recheck_cleans_unpublished_stages(self) -> None:
+        from benchmarks.bria_bench import reviewer_packet
+
+        with patch.object(
+            reviewer_packet,
+            "_recheck_before_mapping_publish",
+            side_effect=KeyboardInterrupt,
+        ):
+            with self.assertRaises(KeyboardInterrupt):
+                self.export(case_ids=["source_alpha"])
+        self.assertFalse(self.output.exists())
+        self.assertFalse(self.mapping.exists())
+        self.assert_no_stage_artifacts()
+
+    def test_keyboard_interrupt_before_packet_publish_leaves_clean_mapping_only(
+        self,
+    ) -> None:
+        from benchmarks.bria_bench import reviewer_packet
+
+        real_publish = reviewer_packet._publish_no_replace
+        calls = 0
+
+        def interrupt_second_publish(source: Path, target: Path) -> None:
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                raise KeyboardInterrupt
+            real_publish(source, target)
+
+        with patch.object(
+            reviewer_packet,
+            "_publish_no_replace",
+            side_effect=interrupt_second_publish,
+        ):
+            with self.assertRaises(KeyboardInterrupt):
+                self.export(case_ids=["source_alpha"])
+        self.assertEqual(calls, 2)
+        self.assertFalse(self.output.exists())
+        mapping_stat = self.mapping.lstat()
+        self.assertEqual(stat.S_IMODE(mapping_stat.st_mode), 0o600)
+        self.assertEqual(mapping_stat.st_nlink, 1)
+        self.assert_no_stage_artifacts()
 
 
 class ReviewerPacketGuideAndCliTests(unittest.TestCase):

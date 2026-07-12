@@ -402,6 +402,7 @@ def _recheck_before_packet_publish(
         or not stat.S_ISREG(mapping_stat.st_mode)
         or (mapping_stat.st_dev, mapping_stat.st_ino) != mapping_identity
         or stat.S_IMODE(mapping_stat.st_mode) != 0o600
+        or mapping_stat.st_nlink != 1
     ):
         raise ReviewerPacketError("Published mapping changed before packet commit")
 
@@ -948,6 +949,121 @@ def _scan_raw_bytes(data: bytes, label: str, policy: _ScanPolicy) -> None:
         _raise_leak(label, "a local absolute path")
 
 
+def _plausible_bomless_utf16(data: bytes, encoding: str) -> str | None:
+    if len(data) < 8 or len(data) % 2:
+        return None
+    units = len(data) // 2
+    even = data[0::2]
+    odd = data[1::2]
+    zero_lane, text_lane = (odd, even) if encoding == "utf-16-le" else (even, odd)
+    if zero_lane.count(0) * 4 < units * 3:
+        return None
+    if text_lane.count(0) * 10 > units:
+        return None
+    try:
+        text = data.decode(encoding, errors="strict")
+    except UnicodeError:
+        return None
+    ascii_text = sum(
+        character in "\t\r\n" or " " <= character <= "~" for character in text
+    )
+    if not text or ascii_text * 5 < len(text) * 4:
+        return None
+    return text
+
+
+def _decoded_text_candidates(data: bytes, label: str) -> tuple[str, ...]:
+    bom_encodings = (
+        (b"\xff\xfe\x00\x00", "utf-32-le"),
+        (b"\x00\x00\xfe\xff", "utf-32-be"),
+        (b"\xef\xbb\xbf", "utf-8"),
+        (b"\xff\xfe", "utf-16-le"),
+        (b"\xfe\xff", "utf-16-be"),
+    )
+    for bom, encoding in bom_encodings:
+        if not data.startswith(bom):
+            continue
+        try:
+            return (data[len(bom) :].decode(encoding, errors="strict"),)
+        except UnicodeError as exc:
+            raise ReviewerPacketError(
+                f"Could not inspect BOM-tagged text in {label}"
+            ) from exc
+
+    candidates: list[str] = []
+    try:
+        candidates.append(data.decode("utf-8", errors="strict"))
+    except UnicodeError:
+        pass
+    for encoding in ("utf-16-le", "utf-16-be"):
+        decoded = _plausible_bomless_utf16(data, encoding)
+        if decoded is not None and decoded not in candidates:
+            candidates.append(decoded)
+    return tuple(candidates)
+
+
+def _scan_decoded_value(text: str, label: str, policy: _ScanPolicy) -> None:
+    _scan_text(text, label, policy)
+    encoded = text.encode("utf-8", errors="strict")
+    for forbidden in policy.forbidden_bytes:
+        if forbidden and forbidden in encoded:
+            _raise_leak(label, "seed or external mapping bytes")
+
+
+def _scan_decoded_text(data: bytes, label: str, policy: _ScanPolicy) -> None:
+    for text in _decoded_text_candidates(data, label):
+        _scan_decoded_value(text, label, policy)
+
+
+def _scan_exif_user_comment(
+    value: bytes,
+    label: str,
+    policy: _ScanPolicy,
+) -> None:
+    prefix, body = value[:8], value[8:]
+    if prefix == b"ASCII\x00\x00\x00":
+        try:
+            text = body.decode("ascii", errors="strict")
+        except UnicodeError as exc:
+            raise ReviewerPacketError(
+                f"Could not inspect EXIF UserComment text in {label}"
+            ) from exc
+        _scan_decoded_value(text, label, policy)
+        return
+    if prefix == b"UNICODE\x00":
+        if body.startswith((b"\xff\xfe", b"\xfe\xff")):
+            _scan_decoded_text(body, label, policy)
+            return
+        decoded: list[str] = []
+        for encoding in ("utf-16-be", "utf-16-le"):
+            try:
+                text = body.decode(encoding, errors="strict")
+            except UnicodeError:
+                continue
+            if text not in decoded:
+                decoded.append(text)
+        if not decoded:
+            raise ReviewerPacketError(
+                f"Could not inspect EXIF UserComment text in {label}"
+            )
+        for text in decoded:
+            _scan_decoded_value(text, label, policy)
+        return
+    if prefix == b"JIS\x00\x00\x00\x00\x00":
+        for encoding in ("shift_jis", "iso2022_jp"):
+            try:
+                text = body.decode(encoding, errors="strict")
+            except UnicodeError:
+                continue
+            _scan_decoded_value(text, label, policy)
+            return
+        raise ReviewerPacketError(f"Could not inspect EXIF UserComment text in {label}")
+    if prefix == b"\x00" * 8:
+        _scan_decoded_text(body, label, policy)
+        return
+    _scan_decoded_text(value, label, policy)
+
+
 def _scan_metadata_value(
     key: str, value: object, label: str, policy: _ScanPolicy
 ) -> None:
@@ -958,13 +1074,12 @@ def _scan_metadata_value(
         _raise_leak(label, "reportable identity metadata")
     if isinstance(value, bytes):
         _scan_raw_bytes(value, label, policy)
-        try:
-            decoded = value.decode("utf-8")
-        except UnicodeError:
-            return
-        _scan_text(decoded, label, policy)
+        if normalized_key == "usercomment":
+            _scan_exif_user_comment(value, label, policy)
+        else:
+            _scan_decoded_text(value, label, policy)
     else:
-        _scan_text(str(value), label, policy)
+        _scan_decoded_value(str(value), label, policy)
 
 
 def _scan_exif(data: bytes, label: str, policy: _ScanPolicy) -> None:
@@ -1033,6 +1148,7 @@ def _scan_png(data: bytes, label: str, policy: _ScanPolicy) -> None:
                 )
             decoded_key = key.decode("latin-1", errors="replace")
             decoded_value = value.decode("latin-1", errors="replace")
+            _scan_metadata_value(decoded_key, value, f"{label} PNG text", policy)
             _scan_metadata_value(
                 decoded_key, decoded_value, f"{label} PNG text", policy
             )
@@ -1042,11 +1158,12 @@ def _scan_png(data: bytes, label: str, policy: _ScanPolicy) -> None:
                 raise ReviewerPacketError(
                     f"Could not inspect PNG compressed text in {label}"
                 )
-            decoded_value = _decompress_embedded_text(remainder[1:], label).decode(
-                "latin-1", errors="replace"
-            )
+            raw_value = _decompress_embedded_text(remainder[1:], label)
+            decoded_key = key.decode("latin-1", errors="replace")
+            _scan_metadata_value(decoded_key, raw_value, f"{label} PNG text", policy)
+            decoded_value = raw_value.decode("latin-1", errors="replace")
             _scan_metadata_value(
-                key.decode("latin-1", errors="replace"),
+                decoded_key,
                 decoded_value,
                 f"{label} PNG text",
                 policy,
@@ -1120,12 +1237,7 @@ def _scan_jpeg(data: bytes, label: str, policy: _ScanPolicy) -> None:
         payload = data[offset + 2 : offset + length]
         if marker in {0xE1, 0xED, 0xFE}:
             _scan_raw_bytes(payload, f"{label} JPEG metadata", policy)
-            try:
-                decoded = payload.decode("utf-8")
-            except UnicodeError:
-                decoded = ""
-            if decoded:
-                _scan_text(decoded, f"{label} JPEG metadata", policy)
+            _scan_decoded_text(payload, f"{label} JPEG metadata", policy)
         if marker == 0xE1 and payload.startswith(b"Exif\0\0"):
             saw_exif = True
         offset += length
@@ -1198,6 +1310,11 @@ def _scan_zip(data: bytes, label: str, policy: _ScanPolicy, depth: int) -> None:
             if info.extra:
                 _scan_raw_bytes(
                     info.extra, f"{label}:{info.filename} extra metadata", policy
+                )
+                _scan_decoded_text(
+                    info.extra,
+                    f"{label}:{info.filename} extra metadata",
+                    policy,
                 )
             if info.is_dir():
                 continue
@@ -1313,17 +1430,14 @@ def _scan_blob(
     if zipfile.is_zipfile(io.BytesIO(data)):
         _scan_zip(data, label, policy, depth)
         return
-    try:
-        text = data.decode("utf-8")
-    except UnicodeError:
-        return
-    _scan_text(text, label, policy)
+    _scan_decoded_text(data, label, policy)
 
 
 def _scan_staged_packet(
     stage: Path,
     policy: _ScanPolicy,
     mapping_bytes: bytes,
+    mapping_identity: tuple[int, int] | None = None,
 ) -> None:
     stage_inventory = _inventory_tree(stage, enforce_material_policy=False)
     mapping_policy = _ScanPolicy(
@@ -1337,7 +1451,36 @@ def _scan_staged_packet(
         _assert_no_xattrs(path)
         _scan_text(relative, f"packet path {relative}", mapping_policy)
         if kind == "file":
+            try:
+                before = path.lstat()
+            except (OSError, ValueError) as exc:
+                raise ReviewerPacketError(
+                    f"Could not inspect staged packet file {relative}"
+                ) from exc
+            identity = (before.st_dev, before.st_ino)
+            if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1:
+                raise ReviewerPacketError(
+                    f"Staged packet file is not single-link regular content: {relative}"
+                )
+            if mapping_identity is not None and identity == mapping_identity:
+                raise ReviewerPacketError(
+                    f"Staged packet file aliases the external mapping: {relative}"
+                )
             data = _read_regular_bytes(path, f"staged packet file {relative}")
+            try:
+                after = path.lstat()
+            except (OSError, ValueError) as exc:
+                raise ReviewerPacketError(
+                    f"Could not recheck staged packet file {relative}"
+                ) from exc
+            if (
+                (after.st_dev, after.st_ino) != identity
+                or not stat.S_ISREG(after.st_mode)
+                or after.st_nlink != 1
+            ):
+                raise ReviewerPacketError(
+                    f"Staged packet file changed during validation: {relative}"
+                )
             _scan_blob(data, f"packet file {relative}", mapping_policy)
 
 
@@ -1467,10 +1610,20 @@ def _validate_staged_packet(
     expected_manifest: dict[str, Any],
     policy: _ScanPolicy,
     mapping_bytes: bytes,
+    mapping_identity: tuple[int, int] | None = None,
 ) -> None:
     top_level = {path.name for path in stage.iterdir()}
     if top_level != {"REVIEWER_GUIDE.md", "packet_manifest.json", "cases", "forms"}:
         raise ReviewerPacketError("Staged packet has an unexpected top-level inventory")
+    expected_guide = _read_regular_bytes(
+        Path(__file__).with_name("REVIEWER_GUIDE.md"),
+        "reviewer guide",
+    )
+    if (
+        _read_regular_bytes(stage / "REVIEWER_GUIDE.md", "staged reviewer guide")
+        != expected_guide
+    ):
+        raise ReviewerPacketError("Staged reviewer guide changed after generation")
     reviewer_ids = [item.reviewer_case_id for item in prepared]
     if {path.name for path in (stage / "cases").iterdir()} != set(reviewer_ids):
         raise ReviewerPacketError("Staged packet case inventory is inconsistent")
@@ -1524,7 +1677,7 @@ def _validate_staged_packet(
             raise ReviewerPacketError(
                 f"Staged form is not blank for {item.reviewer_case_id}"
             )
-    _scan_staged_packet(stage, policy, mapping_bytes)
+    _scan_staged_packet(stage, policy, mapping_bytes, mapping_identity)
 
 
 def _fsync_directory(directory: Path) -> None:
@@ -1559,6 +1712,42 @@ def _fsync_tree(root: Path) -> None:
         _fsync_directory(directory)
 
 
+def _verify_mapping_file(
+    path: Path,
+    data: bytes,
+    label: str,
+) -> tuple[int, int]:
+    try:
+        before = path.lstat()
+    except (OSError, ValueError) as exc:
+        raise ReviewerPacketError(f"{label} disappeared") from exc
+    identity = (before.st_dev, before.st_ino)
+    if (
+        stat.S_ISLNK(before.st_mode)
+        or not stat.S_ISREG(before.st_mode)
+        or stat.S_IMODE(before.st_mode) != 0o600
+        or before.st_nlink != 1
+    ):
+        raise ReviewerPacketError(
+            f"{label} must be a single-link regular file with mode 0600"
+        )
+    _assert_no_xattrs(path)
+    if _read_regular_bytes(path, label.casefold()) != data:
+        raise ReviewerPacketError(f"{label} bytes changed")
+    try:
+        after = path.lstat()
+    except (OSError, ValueError) as exc:
+        raise ReviewerPacketError(f"{label} disappeared after verification") from exc
+    if (
+        (after.st_dev, after.st_ino) != identity
+        or not stat.S_ISREG(after.st_mode)
+        or stat.S_IMODE(after.st_mode) != 0o600
+        or after.st_nlink != 1
+    ):
+        raise ReviewerPacketError(f"{label} changed during verification")
+    return identity
+
+
 def _write_mapping_stage(target: Path, data: bytes) -> Path:
     descriptor = -1
     stage: Path | None = None
@@ -1577,31 +1766,36 @@ def _write_mapping_stage(target: Path, data: bytes) -> Path:
                 raise OSError("short mapping write")
             written += count
         os.fsync(descriptor)
-    except (OSError, ValueError) as exc:
+        os.close(descriptor)
+        descriptor = -1
+        _clear_xattrs(stage)
+        _verify_mapping_file(stage, data, "Staged mapping")
+        return stage
+    except BaseException as exc:
+        if descriptor != -1:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+            descriptor = -1
         if stage is not None:
             try:
                 stage.unlink()
             except OSError:
                 pass
-        raise ReviewerPacketError("Could not stage external reviewer mapping") from exc
+        if isinstance(exc, ReviewerPacketError):
+            raise
+        if isinstance(exc, Exception):
+            raise ReviewerPacketError(
+                "Could not stage external reviewer mapping"
+            ) from exc
+        raise
     finally:
         if descriptor != -1:
             try:
                 os.close(descriptor)
             except OSError:
                 pass
-    assert stage is not None
-    _clear_xattrs(stage)
-    try:
-        value = stage.lstat()
-    except OSError as exc:
-        raise ReviewerPacketError("Staged mapping disappeared") from exc
-    if not stat.S_ISREG(value.st_mode) or stat.S_IMODE(value.st_mode) != 0o600:
-        raise ReviewerPacketError("Staged mapping does not have mode 0600")
-    _assert_no_xattrs(stage)
-    if _read_regular_bytes(stage, "staged mapping") != data:
-        raise ReviewerPacketError("Staged mapping bytes changed")
-    return stage
 
 
 def _publish_no_replace(source: Path, target: Path) -> None:
@@ -1642,10 +1836,17 @@ def _publish_no_replace(source: Path, target: Path) -> None:
 
 
 def _cleanup_packet_stage(stage: Path | None) -> None:
-    if stage is None or not _lexists(stage):
+    if stage is None:
         return
     try:
-        shutil.rmtree(stage)
+        value = stage.lstat()
+    except (FileNotFoundError, OSError, ValueError):
+        return
+    try:
+        if stat.S_ISDIR(value.st_mode) and not stat.S_ISLNK(value.st_mode):
+            shutil.rmtree(stage)
+        else:
+            stage.unlink()
     except OSError:
         pass
 
@@ -1731,26 +1932,65 @@ def export_reviewer_packet(
         )
         _fsync_tree(packet_stage)
         mapping_stage = _write_mapping_stage(placement.mapping, mapping_bytes)
+        mapping_stage_identity = _verify_mapping_file(
+            mapping_stage,
+            mapping_bytes,
+            "Staged mapping",
+        )
+        _validate_staged_packet(
+            packet_stage,
+            prepared,
+            packet_manifest,
+            policy,
+            mapping_bytes,
+            mapping_stage_identity,
+        )
+        _fsync_tree(packet_stage)
 
         _recheck_before_mapping_publish(placement)
+        if (
+            _verify_mapping_file(mapping_stage, mapping_bytes, "Staged mapping")
+            != mapping_stage_identity
+        ):
+            raise ReviewerPacketError("Staged mapping identity changed")
         _publish_no_replace(mapping_stage, placement.mapping)
         mapping_stage = None
-        mapping_stat = placement.mapping.lstat()
-        mapping_identity = (mapping_stat.st_dev, mapping_stat.st_ino)
+        mapping_identity = _verify_mapping_file(
+            placement.mapping,
+            mapping_bytes,
+            "Published mapping",
+        )
         _fsync_directory(placement.mapping.parent)
 
         _recheck_before_packet_publish(placement, mapping_identity)
+        _validate_staged_packet(
+            packet_stage,
+            prepared,
+            packet_manifest,
+            policy,
+            mapping_bytes,
+            mapping_identity,
+        )
+        if (
+            _verify_mapping_file(
+                placement.mapping,
+                mapping_bytes,
+                "Published mapping",
+            )
+            != mapping_identity
+        ):
+            raise ReviewerPacketError("Published mapping identity changed")
         _publish_no_replace(packet_stage, placement.output)
         packet_stage = None
         _fsync_directory(placement.output.parent)
-    except ReviewerPacketError:
+    except BaseException as exc:
         _cleanup_mapping_stage(mapping_stage)
         _cleanup_packet_stage(packet_stage)
+        if isinstance(exc, ReviewerPacketError):
+            raise
+        if isinstance(exc, Exception):
+            raise ReviewerPacketError(f"Reviewer packet export failed: {exc}") from exc
         raise
-    except Exception as exc:
-        _cleanup_mapping_stage(mapping_stage)
-        _cleanup_packet_stage(packet_stage)
-        raise ReviewerPacketError(f"Reviewer packet export failed: {exc}") from exc
     return packet_manifest
 
 
