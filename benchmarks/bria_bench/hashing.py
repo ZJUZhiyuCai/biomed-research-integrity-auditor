@@ -246,18 +246,35 @@ def _open_directory_chain(
         opened = _fstat(current_fd, str(path), "after opening anchor")
         if not components:
             _ensure_directory(opened, str(path), "after opening anchor")
-            _ensure_stable(path_stat, opened, str(path), "between inspection and open")
+            if check_expected_metadata:
+                _ensure_stable(
+                    path_stat,
+                    opened,
+                    str(path),
+                    "between inspection and open",
+                )
+            elif not _same_identity(path_stat, opened):
+                raise HashingError(
+                    f"Package directory identity changed between inspection and open: {path}"
+                )
         for index, component in enumerate(components):
             relative = "/".join(components[: index + 1])
             next_fd, opened = _open_directory_component(
                 current_fd,
                 component,
                 relative,
-                check_expected_metadata=index == len(components) - 1,
+                check_expected_metadata=(
+                    check_expected_metadata and index == len(components) - 1
+                ),
             )
             descriptors.append(next_fd)
             current_fd = next_fd
-        _ensure_stable(path_stat, opened, str(path), "after open")
+        if check_expected_metadata:
+            _ensure_stable(path_stat, opened, str(path), "after open")
+        elif not _same_identity(path_stat, opened):
+            raise HashingError(
+                f"Package directory identity changed after open: {path}"
+            )
         if expected is not None and check_expected_metadata:
             _ensure_stable(expected, opened, str(path), "against expected snapshot")
         elif expected is not None and not _same_identity(expected, opened):
@@ -521,6 +538,15 @@ def _open_file_path(path: Path) -> tuple[int, list[int], int, os.stat_result]:
 def _hash_file_bytes(path: Path) -> str:
     file_fd, descriptors, parent_fd, path_stat = _open_file_path(path)
     try:
+        parent_stat = _fstat(parent_fd, str(path.parent), "before streaming")
+    except BaseException:
+        _close_fd(file_fd, f"annotation file {path}")
+        try:
+            _close_chain(descriptors, f"annotation path {path}")
+        except HashingError:
+            pass
+        raise
+    try:
         digest = hashlib.sha256()
         before_stream = _fstat(file_fd, str(path), "before streaming")
         _ensure_stable(path_stat, before_stream, str(path), "before streaming")
@@ -549,6 +575,15 @@ def _hash_file_bytes(path: Path) -> str:
             pass
         raise
     _close_chain(descriptors, f"annotation path {path}")
+    verification_descriptors, _, _ = _open_directory_chain(
+        path.parent,
+        parent_stat,
+        check_expected_metadata=False,
+    )
+    _close_chain(
+        verification_descriptors,
+        f"final annotation parent verification {path.parent}",
+    )
     return result
 
 

@@ -3201,6 +3201,67 @@ class BriaBenchRegistryTests(unittest.TestCase):
             side_effect=churn_before_component,
         ):
             self.assertEqual(hash_tree(package), hash_tree(package))
+        self.assertTrue(churned)
+
+    def test_hash_file_allows_unrelated_ancestor_directory_churn(self) -> None:
+        self.require_secure_hashing()
+        shared = self.root / "shared-file-ancestor"
+        annotation = shared / "stable" / "annotation.json"
+        annotation.parent.mkdir(parents=True)
+        annotation.write_bytes(b"sealed")
+        real_open = hashing_module.os.open
+        churned = False
+
+        def churn_before_component(
+            path: str | os.PathLike[str], *args: object, **kwargs: object
+        ) -> int:
+            nonlocal churned
+            if path == "shared-file-ancestor" and not churned:
+                (shared / "unrelated-sibling").mkdir()
+                churned = True
+            return real_open(path, *args, **kwargs)
+
+        with patch.object(
+            hashing_module.os,
+            "open",
+            side_effect=churn_before_component,
+        ):
+            self.assertEqual(
+                hash_file(annotation),
+                hashlib.sha256(b"sealed").hexdigest(),
+            )
+        self.assertTrue(churned)
+
+    def test_hash_file_rejects_parent_path_swap_during_streaming(self) -> None:
+        self.require_secure_hashing()
+        ancestor = self.root / "annotation-parent"
+        ancestor.mkdir()
+        annotation = ancestor / "annotation.json"
+        annotation.write_bytes(b"old annotation")
+        replacement = self.root / "annotation-parent-replacement"
+        replacement.mkdir()
+        (replacement / "annotation.json").write_bytes(b"new annotation")
+        moved = self.root / "annotation-parent-moved"
+        real_read = hashing_module.os.read
+        swapped = False
+
+        def swap_parent_on_read(descriptor: int, count: int) -> bytes:
+            nonlocal swapped
+            chunk = real_read(descriptor, count)
+            if chunk and not swapped:
+                os.rename(ancestor, moved)
+                os.replace(replacement, ancestor)
+                swapped = True
+            return chunk
+
+        with patch.object(
+            hashing_module.os,
+            "read",
+            side_effect=swap_parent_on_read,
+        ):
+            with self.assertRaisesRegex(HashingError, "identity changed"):
+                hash_file(annotation)
+        self.assertTrue(swapped)
 
     def test_tree_hash_bounds_file_descriptors_under_lowered_limit(self) -> None:
         self.require_secure_hashing()
