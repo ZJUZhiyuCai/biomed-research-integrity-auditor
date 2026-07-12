@@ -1,0 +1,155 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.org/bria-bench/schemas/reviewer_adjudication.schema.json",
+  "title": "BRIA-Bench Independent Review Adjudication",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "status",
+    "review_round_id",
+    "comparison_sha256",
+    "adjudicator_id",
+    "adjudicated_at",
+    "cases"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$"
+    },
+    "status": {
+      "enum": [
+        "template",
+        "completed"
+      ]
+    },
+    "review_round_id": {
+      "type": "string",
+      "pattern": "^BRIA-BLIND-[A-F0-9]{32}$"
+    },
+    "comparison_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "adjudicator_id": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^BRIA-ADJ-[A-Z0-9]{8,32}$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "adjudicated_at": {
+      "anyOf": [
+        {
+          "type": "string",
+          "format": "date-time"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "cases": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/case"
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "template"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "adjudicator_id": {
+            "type": "null"
+          },
+          "adjudicated_at": {
+            "type": "null"
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "adjudicator_id": {
+            "type": "string",
+            "pattern": "^BRIA-ADJ-[A-Z0-9]{8,32}$"
+          },
+          "adjudicated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "case": {
+      "type": "object",
+      "required": [
+        "comparison_case_id",
+        "source_package_sha256",
+        "disagreement_reasons",
+        "resolution",
+        "final_presence",
+        "final_rows",
+        "rationale"
+      ],
+      "properties": {
+        "comparison_case_id": {
+          "type": "string",
+          "pattern": "^BRIA-C-[A-F0-9]{32}$"
+        },
+        "source_package_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "disagreement_reasons": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        },
+        "resolution": {
+          "enum": [
+            "resolved",
+            "ambiguous",
+            null
+          ]
+        },
+        "final_presence": {
+          "enum": [
+            "present",
+            "absent",
+            "insufficient_materials",
+            null
+          ]
+        },
+        "final_rows": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "rationale": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

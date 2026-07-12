@@ -106,6 +106,13 @@
         "headline_eligible": {
           "type": "boolean"
         },
+        "review_proof_path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "review_proof_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
         "source": {
           "type": "string",
           "minLength": 1
@@ -114,6 +121,35 @@
           "type": "string"
         }
       },
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "track",
+              "split",
+              "headline_eligible"
+            ],
+            "properties": {
+              "track": {
+                "const": "blinded_challenge"
+              },
+              "headline_eligible": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "review_proof_path"
+            ],
+            "properties": {
+              "split": {
+                "const": "test"
+              }
+            }
+          }
+        }
+      ],
       "additionalProperties": false
     },
     "sha256": {

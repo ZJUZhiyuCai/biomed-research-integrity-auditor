@@ -3,6 +3,17 @@
 ## Unreleased
 
 ### Added
+- Formal BRIA-Bench `independent_blinded` review tooling: sealed-test eligibility gates, two
+  independently permuted reviewer packets, immutable private form locks, mapping-free agreement
+  comparison, presence/comment Cohen's kappa where defined, disagreement-only third-party
+  adjudication, ambiguity retention, and hash-bound final annotation generation. Public/demo cases,
+  prefilled answers, administrative cues, duplicate reviewer identities, and unadjudicated
+  disagreements fail closed; no independent result is claimed until human forms are completed.
+- Blinded headline metrics now require a frozen finalization proof bound to the package,
+  annotation, reviewer, resolution, and adjudication hashes. Headline finding recall now requires
+  location as well as issue compatibility; unmatched reviewer comments count against location and
+  risk-range agreement. Release artifact construction rejects symlink, hardlink, and unstable-file
+  inputs rather than following them into public archives.
 - Provider-neutral OpenAI-compatible BRIA-Bench direct-LLM baseline with a current DeepSeek
   `deepseek-v4-flash` configuration, three separately identified live repeats, prompt-locked
   offline fixtures, strict JSON parsing, private response caching, token/latency/cost telemetry,

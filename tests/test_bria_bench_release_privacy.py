@@ -51,10 +51,13 @@ class BriaBenchReleasePrivacyTests(unittest.TestCase):
         self.token = re.sub(r"[^A-Za-z0-9_-]", "_", self.output_root.name)
         self.created_files: list[Path] = []
         self.created_directories: set[Path] = set()
-        committed_schemas = subprocess.run(
+        source_schemas = subprocess.run(
             [
                 "git",
                 "ls-files",
+                "--cached",
+                "--others",
+                "--exclude-standard",
                 "benchmarks/bria_bench/schemas/*.schema.json",
             ],
             cwd=REPOSITORY_ROOT,
@@ -64,7 +67,7 @@ class BriaBenchReleasePrivacyTests(unittest.TestCase):
         ).stdout.splitlines()
         self.public_schema_paths = tuple(
             Path(path).relative_to("benchmarks/bria_bench")
-            for path in committed_schemas
+            for path in source_schemas
         )
         self.reviewer_schema_paths = tuple(
             path for path in self.public_schema_paths if "reviewer" in path.name

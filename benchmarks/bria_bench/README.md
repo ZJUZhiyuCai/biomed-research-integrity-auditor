@@ -118,4 +118,10 @@ The pricing snapshot encoded in the adapters is dated 2026-07-12 and must be rev
 
 Reviewer packets are currently `workflow_demo_only`. Public package hashes and reviewer-packet hashes are join keys to the public fixture tree, not sealed blinded identifiers. Use the packet flow to test mechanics and reviewer forms, not to claim independent evaluation.
 
+The repository now also contains a fail-closed `independent_blinded` workflow for a future private `test` split: two separately permuted packet exports, immutable completed-form locks, mapping-free reviewer comparison, raw agreement and categorical kappa, disagreement-only adjudication, and final annotation generation. It refuses public/demo cases, prefilled answer labels, administrative cues, duplicate reviewer identities, changed hashes, and finalization without required adjudication. The existence of this workflow is not a completed independent result.
+
+A blinded headline case must also bind `review_proof_path` and its frozen SHA-256. Evaluation rechecks the finalization record against the current package and annotation hashes; setting `headline_eligible: true` or hand-writing `independent_adjudicated` is insufficient. `expected_finding_recall` requires both issue-family and location compatibility; issue-only matches remain diagnostic for the separate localization denominator.
+
+Coordinator commands and the bilingual privacy boundary are documented in [`INDEPENDENT_REVIEW_WORKFLOW.md`](INDEPENDENT_REVIEW_WORKFLOW.md). Reviewers receive the bilingual [`INDEPENDENT_REVIEWER_GUIDE.md`](INDEPENDENT_REVIEWER_GUIDE.md) inside each sealed packet.
+
 Generated runs, reviewer packets, mapping files, API caches, local metrics, seeds, and identity artifacts are local/private outputs. They should remain ignored and outside source, wheel, and release archives unless an explicitly named release summary is intentionally added.

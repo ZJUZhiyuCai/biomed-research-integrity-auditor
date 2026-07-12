@@ -1704,7 +1704,13 @@ def evaluate_benchmark(
 
     from .matching import match_labels
     from .metrics import aggregate_metrics, select_evaluation_labels
-    from .registry import load_manifest, resolve_case_paths, verify_frozen_case
+    from .registry import (
+        RegistryError,
+        load_manifest,
+        resolve_case_paths,
+        verify_frozen_case,
+        verify_independent_review_proof,
+    )
 
     manifest_file = Path(manifest_path)
     manifest = load_manifest(manifest_file, require_frozen=True, resolve_paths=False)
@@ -1726,6 +1732,20 @@ def evaluate_benchmark(
     for case in selected:
         case_id = str(case["case_id"])
         _, annotation = _verified_annotation(manifest_file, case)
+        review_proof_verified = False
+        if case.get("track") == "blinded_challenge" and case.get(
+            "headline_eligible"
+        ) is True:
+            try:
+                review_proof_verified = verify_independent_review_proof(
+                    manifest_file.parent,
+                    dict(case),
+                    annotation,
+                )
+            except RegistryError as exc:
+                raise CliError(
+                    f"Independent review proof failed for case {case_id!r}: {exc}"
+                ) from exc
         summary_case = summary_by_id[case_id]
         result_path = _inside_runs(runs, summary_case["run_result"])
         raw_run = _load_attempt_contract(result_path, runs=runs, case_id=case_id)
@@ -1828,6 +1848,7 @@ def evaluate_benchmark(
                 "run_result": run,
                 "match_result": match,
                 "regression_assertions": list(assertions),
+                "review_proof_verified": review_proof_verified,
             }
         )
 
@@ -1878,13 +1899,45 @@ def build_parser() -> argparse.ArgumentParser:
     report.add_argument("--metrics", required=True, type=Path)
     report.add_argument("--output", required=True, type=Path)
     packet = commands.add_parser(
-        "reviewer-packet", help="Export a workflow-demo reviewer packet."
+        "reviewer-packet", help="Export a demo or sealed independent reviewer packet."
     )
     packet.add_argument("--manifest", required=True, type=Path)
     packet.add_argument("--case", action="append", dest="case_ids", required=True)
     packet.add_argument("--output-dir", required=True, type=Path)
     packet.add_argument("--mapping-output", required=True, type=Path)
     packet.add_argument("--seed-file", required=True, type=Path)
+    packet.add_argument(
+        "--packet-scope",
+        choices=("workflow_demo_only", "independent_blinded"),
+        default="workflow_demo_only",
+    )
+    reviewer_lock = commands.add_parser(
+        "reviewer-lock", help="Immutably lock one completed independent reviewer packet."
+    )
+    reviewer_lock.add_argument("--packet-dir", required=True, type=Path)
+    reviewer_lock.add_argument("--reviewer-id-file", required=True, type=Path)
+    reviewer_lock.add_argument("--output-dir", required=True, type=Path)
+    reviewer_lock.add_argument("--locked-at", required=True)
+    reviewer_compare = commands.add_parser(
+        "reviewer-compare", help="Compare two locked independent reviewer submissions."
+    )
+    reviewer_compare.add_argument("--submission-a", required=True, type=Path)
+    reviewer_compare.add_argument("--submission-b", required=True, type=Path)
+    reviewer_compare.add_argument("--output-dir", required=True, type=Path)
+    reviewer_compare.add_argument("--compared-at", required=True)
+    reviewer_finalize = commands.add_parser(
+        "reviewer-finalize", help="Finalize independently reviewed labels and ambiguity states."
+    )
+    reviewer_finalize.add_argument("--comparison", required=True, type=Path)
+    reviewer_finalize.add_argument("--submission-a", required=True, type=Path)
+    reviewer_finalize.add_argument("--mapping-a", required=True, type=Path)
+    reviewer_finalize.add_argument("--submission-b", required=True, type=Path)
+    reviewer_finalize.add_argument("--mapping-b", required=True, type=Path)
+    reviewer_finalize.add_argument("--manifest", required=True, type=Path)
+    reviewer_finalize.add_argument("--output-dir", required=True, type=Path)
+    reviewer_finalize.add_argument("--frozen-at", required=True)
+    reviewer_finalize.add_argument("--benchmark-version", required=True)
+    reviewer_finalize.add_argument("--adjudication", type=Path)
     return parser
 
 
@@ -1954,6 +2007,49 @@ def _dispatch(args: argparse.Namespace) -> int:
             args.output_dir,
             args.mapping_output,
             args.seed_file,
+            packet_scope=args.packet_scope,
+        )
+        return 0
+    if args.command in {"reviewer-lock", "reviewer-compare", "reviewer-finalize"}:
+        try:
+            from .reviewer_workflow import (
+                compare_reviewer_submissions,
+                finalize_reviewer_labels,
+                lock_reviewer_submission,
+            )
+        except ModuleNotFoundError as exc:
+            if exc.name == "benchmarks.bria_bench.reviewer_workflow":
+                raise CliError(
+                    "The independent reviewer workflow is unavailable because reviewer_workflow.py could not be imported"
+                ) from exc
+            raise
+        if args.command == "reviewer-lock":
+            lock_reviewer_submission(
+                args.packet_dir,
+                args.reviewer_id_file,
+                args.output_dir,
+                locked_at=args.locked_at,
+            )
+            return 0
+        if args.command == "reviewer-compare":
+            compare_reviewer_submissions(
+                args.submission_a,
+                args.submission_b,
+                args.output_dir,
+                compared_at=args.compared_at,
+            )
+            return 0
+        finalize_reviewer_labels(
+            args.comparison,
+            args.submission_a,
+            args.mapping_a,
+            args.submission_b,
+            args.mapping_b,
+            args.manifest,
+            args.output_dir,
+            frozen_at=args.frozen_at,
+            benchmark_version=args.benchmark_version,
+            adjudication_path=args.adjudication,
         )
         return 0
     raise CliError(f"Unsupported command: {args.command}")

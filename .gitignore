@@ -63,6 +63,15 @@ benchmarks/bria_bench/**/reviewer_packet*.zip
 benchmarks/bria_bench/**/reviewer_packet*.json
 benchmarks/bria_bench/**/reviewer-packet*.zip
 benchmarks/bria_bench/**/reviewer-packet*.json
+benchmarks/bria_bench/**/locked_submissions/
+benchmarks/bria_bench/**/locked-submissions/
+benchmarks/bria_bench/**/comparisons/
+benchmarks/bria_bench/**/adjudications/
+benchmarks/bria_bench/**/finalizations/
+benchmarks/bria_bench/**/comparison*.json
+benchmarks/bria_bench/**/adjudication*.json
+benchmarks/bria_bench/**/submission*.json
+benchmarks/bria_bench/**/finalization*.json
 benchmarks/bria_bench/**/seed*.txt
 benchmarks/bria_bench/**/seed*.json
 benchmarks/bria_bench/**/*identity*.json
@@ -74,9 +83,15 @@ benchmarks/bria_bench/schemas/*
 !benchmarks/bria_bench/schemas/metrics.schema.json
 !benchmarks/bria_bench/schemas/observation.schema.json
 !benchmarks/bria_bench/schemas/reviewer_form_completed.schema.json
+!benchmarks/bria_bench/schemas/reviewer_form_independent_completed.schema.json
+!benchmarks/bria_bench/schemas/reviewer_form_independent_template.schema.json
 !benchmarks/bria_bench/schemas/reviewer_form_template.schema.json
+!benchmarks/bria_bench/schemas/reviewer_adjudication.schema.json
+!benchmarks/bria_bench/schemas/reviewer_comparison.schema.json
+!benchmarks/bria_bench/schemas/reviewer_finalization.schema.json
 !benchmarks/bria_bench/schemas/reviewer_mapping.schema.json
 !benchmarks/bria_bench/schemas/reviewer_packet_manifest.schema.json
+!benchmarks/bria_bench/schemas/reviewer_submission.schema.json
 !benchmarks/bria_bench/schemas/run_result.schema.json
 
 *.log

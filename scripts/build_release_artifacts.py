@@ -65,6 +65,11 @@ BRIA_BENCH_PRIVATE_DIRECTORIES = frozenset(
         "reviewer-packets",
         "reviewer_packet",
         "reviewer-packet",
+        "locked_submissions",
+        "locked-submissions",
+        "comparisons",
+        "adjudications",
+        "finalizations",
         "mappings",
         "reviewer_mappings",
         "reviewer-mappings",
@@ -89,6 +94,10 @@ BRIA_BENCH_PRIVATE_FILE_PATTERNS = (
     re.compile(r"reviewer[-_]mapping.*\.json\Z"),
     re.compile(r".*[-_]mapping\.json\Z"),
     re.compile(r"reviewer[-_]packet.*\.(?:json|zip)\Z"),
+    re.compile(r"comparison.*\.json\Z"),
+    re.compile(r"adjudication.*\.json\Z"),
+    re.compile(r"submission.*\.json\Z"),
+    re.compile(r"finalization.*\.json\Z"),
     re.compile(r"seed.*\.(?:json|txt)\Z"),
     re.compile(r".*identity.*\.json\Z"),
     re.compile(r".*api[-_]cache.*\.json\Z"),
@@ -103,9 +112,15 @@ BRIA_BENCH_PUBLIC_SCHEMAS = frozenset(
         "schemas/metrics.schema.json",
         "schemas/observation.schema.json",
         "schemas/reviewer_form_completed.schema.json",
+        "schemas/reviewer_form_independent_completed.schema.json",
+        "schemas/reviewer_form_independent_template.schema.json",
         "schemas/reviewer_form_template.schema.json",
+        "schemas/reviewer_adjudication.schema.json",
+        "schemas/reviewer_comparison.schema.json",
+        "schemas/reviewer_finalization.schema.json",
         "schemas/reviewer_mapping.schema.json",
         "schemas/reviewer_packet_manifest.schema.json",
+        "schemas/reviewer_submission.schema.json",
         "schemas/run_result.schema.json",
     }
 )
@@ -167,18 +182,86 @@ def _is_bria_bench_private_artifact(rel: Path) -> bool:
     )
 
 
-def _iter_directory_files(path: Path) -> list[Path]:
+def _regular_file_bytes(path: Path, label: str) -> tuple[bytes, os.stat_result]:
+    descriptor = -1
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        before = path.lstat()
+        if (
+            stat.S_ISLNK(before.st_mode)
+            or not stat.S_ISREG(before.st_mode)
+            or before.st_nlink != 1
+        ):
+            raise ValueError(f"{label} must be a single-link regular file: {path}")
+        descriptor = os.open(path, flags)
+        opened = os.fstat(descriptor)
+        identity = (
+            opened.st_dev,
+            opened.st_ino,
+            opened.st_size,
+            getattr(opened, "st_mtime_ns", None),
+            getattr(opened, "st_ctime_ns", None),
+        )
+        if identity != (
+            before.st_dev,
+            before.st_ino,
+            before.st_size,
+            getattr(before, "st_mtime_ns", None),
+            getattr(before, "st_ctime_ns", None),
+        ):
+            raise ValueError(f"{label} changed while it was opened: {path}")
+        chunks: list[bytes] = []
+        while True:
+            chunk = os.read(descriptor, 1024 * 1024)
+            if not chunk:
+                break
+            chunks.append(chunk)
+        after = os.fstat(descriptor)
+        after_path = path.lstat()
+        for value in (after, after_path):
+            if (
+                value.st_dev,
+                value.st_ino,
+                value.st_size,
+                getattr(value, "st_mtime_ns", None),
+                getattr(value, "st_ctime_ns", None),
+            ) != identity:
+                raise ValueError(f"{label} changed while it was read: {path}")
+        data = b"".join(chunks)
+        if len(data) != opened.st_size:
+            raise ValueError(f"{label} was not read completely: {path}")
+        return data, opened
+    finally:
+        if descriptor != -1:
+            os.close(descriptor)
+
+
+def _iter_directory_files(path: Path, *, apply_policy: bool = True) -> list[Path]:
+    root_metadata = path.lstat()
+    if stat.S_ISLNK(root_metadata.st_mode) or not stat.S_ISDIR(root_metadata.st_mode):
+        raise ValueError(f"Release source root must be an actual directory: {path}")
     files: list[Path] = []
     for current, directory_names, file_names in os.walk(path, topdown=True):
         current_path = Path(current)
-        directory_names[:] = sorted(
-            name
-            for name in directory_names
-            if not should_prune_directory(current_path / name)
-        )
+        retained: list[str] = []
+        for name in sorted(directory_names):
+            child = current_path / name
+            metadata = child.lstat()
+            if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
+                raise ValueError(f"Release source contains a linked directory: {child}")
+            if not apply_policy or not should_prune_directory(child):
+                retained.append(name)
+        directory_names[:] = retained
         for name in sorted(file_names):
             child = current_path / name
-            if child.is_file() and should_include(child):
+            metadata = child.lstat()
+            if (
+                stat.S_ISLNK(metadata.st_mode)
+                or not stat.S_ISREG(metadata.st_mode)
+                or metadata.st_nlink != 1
+            ):
+                raise ValueError(f"Release source is not a single-link file: {child}")
+            if not apply_policy or should_include(child):
                 files.append(child)
     return sorted(files)
 
@@ -187,21 +270,24 @@ def iter_source_files() -> list[Path]:
     files: list[Path] = []
     for item in INCLUDE_PATHS:
         path = ROOT / item
-        if not path.exists():
+        try:
+            metadata = path.lstat()
+        except FileNotFoundError:
             continue
-        if path.is_file() and should_include(path):
+        if stat.S_ISLNK(metadata.st_mode):
+            raise ValueError(f"Release include path must not be a symlink: {path}")
+        if stat.S_ISREG(metadata.st_mode) and metadata.st_nlink == 1 and should_include(path):
             files.append(path)
             continue
+        if not stat.S_ISDIR(metadata.st_mode):
+            raise ValueError(f"Release include path has unsupported type: {path}")
         files.extend(_iter_directory_files(path))
     return files
 
 
 def sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+    data, _ = _regular_file_bytes(path, "release artifact")
+    return hashlib.sha256(data).hexdigest()
 
 
 def _write_normalized_zip_member(
@@ -209,12 +295,13 @@ def _write_normalized_zip_member(
     source: Path,
     archive_name: str,
 ) -> None:
+    data, metadata = _regular_file_bytes(source, "release source")
     info = zipfile.ZipInfo(archive_name, date_time=NORMALIZED_ZIP_TIMESTAMP)
     info.compress_type = zipfile.ZIP_DEFLATED
     info.create_system = 3
-    mode = 0o755 if source.stat().st_mode & 0o111 else 0o644
+    mode = 0o755 if metadata.st_mode & 0o111 else 0o644
     info.external_attr = (stat.S_IFREG | mode) << 16
-    archive.writestr(info, source.read_bytes())
+    archive.writestr(info, data)
 
 
 def _normalize_zip_archive(source: Path, target: Path) -> None:
@@ -229,6 +316,9 @@ def _normalize_zip_archive(source: Path, target: Path) -> None:
     ):
         for source_info in sorted(input_archive.infolist(), key=lambda item: item.filename):
             is_directory = source_info.is_dir()
+            source_type = (source_info.external_attr >> 16) & 0o170000
+            if source_type not in {0, stat.S_IFREG, stat.S_IFDIR}:
+                raise ValueError(f"Wheel contains a linked or special member: {source_info.filename}")
             filename = source_info.filename.rstrip("/") + "/" if is_directory else source_info.filename
             target_info = zipfile.ZipInfo(filename, date_time=NORMALIZED_ZIP_TIMESTAMP)
             target_info.compress_type = zipfile.ZIP_STORED if is_directory else zipfile.ZIP_DEFLATED
@@ -258,6 +348,8 @@ def _normalize_tar_gz_archive(source: Path, target: Path) -> None:
         ) as output_archive,
     ):
         for source_info in sorted(input_archive.getmembers(), key=lambda item: item.name):
+            if not (source_info.isfile() or source_info.isdir()):
+                raise ValueError(f"Sdist contains a linked or special member: {source_info.name}")
             target_info = tarfile.TarInfo(source_info.name)
             target_info.type = source_info.type
             target_info.linkname = source_info.linkname
@@ -306,7 +398,11 @@ def copy_dist_artifacts(output_dir: Path) -> list[Path]:
     candidates = [dist_dir / f"{prefix}.tar.gz"]
     candidates.extend(sorted(dist_dir.glob(f"{prefix}-*.whl")))
     for artifact in candidates:
-        if artifact.is_file():
+        try:
+            metadata = artifact.lstat()
+        except FileNotFoundError:
+            continue
+        if stat.S_ISREG(metadata.st_mode) and metadata.st_nlink == 1:
             target = output_dir / artifact.name
             if artifact.suffix == ".whl":
                 _normalize_zip_archive(artifact, target)
@@ -320,7 +416,7 @@ def write_frontend_zip(output_dir: Path, version: str) -> Path | None:
     dist = ROOT / "webapp" / "frontend" / "dist"
     if not dist.exists():
         return None
-    files = [path for path in sorted(dist.rglob("*")) if path.is_file()]
+    files = _iter_directory_files(dist, apply_policy=False)
     output = output_dir / f"biomed-research-integrity-auditor-webapp-dist-{version}.zip"
     with zipfile.ZipFile(
         output,

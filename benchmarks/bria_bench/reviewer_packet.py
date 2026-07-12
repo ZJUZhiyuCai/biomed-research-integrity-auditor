@@ -34,7 +34,10 @@ from .registry import (
 
 
 SCHEMA_VERSION = "1.0.0"
-PACKET_SCOPE = "workflow_demo_only"
+WORKFLOW_DEMO_SCOPE = "workflow_demo_only"
+INDEPENDENT_BLINDED_SCOPE = "independent_blinded"
+PACKET_SCOPE = WORKFLOW_DEMO_SCOPE
+PACKET_SCOPES = frozenset({WORKFLOW_DEMO_SCOPE, INDEPENDENT_BLINDED_SCOPE})
 ANONYMIZATION_ALGORITHM = "hmac-sha256-ranked-permutation-v1"
 _HMAC_CONTEXT = b"BRIA-BENCH/REVIEWER-PACKET/1\0"
 _LICENSE_ALLOWLIST = frozenset({"MIT", "CC0-1.0"})
@@ -278,6 +281,7 @@ class _SourceCase:
     case: dict[str, Any]
     package: Path
     annotation: Path
+    annotation_payload: dict[str, Any]
     annotation_schema_version: str
     inventory: tuple[tuple[str, str], ...]
 
@@ -294,6 +298,7 @@ class _ScanPolicy:
     identifiers: tuple[str, ...]
     paths: tuple[str, ...]
     forbidden_bytes: tuple[bytes, ...]
+    sensitive_markers: tuple[str, ...]
     encoded_identifier_patterns: tuple[_EncodedTokenPattern, ...]
     encoded_sensitive_patterns: tuple[_EncodedTokenPattern, ...]
     encoded_forbidden_patterns: tuple[re.Pattern[bytes], ...]
@@ -408,6 +413,37 @@ def _resolve_placement(
         output_parent_identity,
         mapping_parent_identity,
     )
+
+
+def _require_private_parent(path: Path, label: str) -> None:
+    try:
+        metadata = path.stat()
+    except (OSError, ValueError) as exc:
+        raise ReviewerPacketError(f"Could not inspect {label} parent") from exc
+    if stat.S_IMODE(metadata.st_mode) & 0o077:
+        raise ReviewerPacketError(
+            f"{label} parent must not grant group or other permissions"
+        )
+    if hasattr(os, "geteuid") and metadata.st_uid != os.geteuid():
+        raise ReviewerPacketError(f"{label} parent must be owned by this user")
+
+
+def _require_private_seed(path: Path) -> None:
+    try:
+        metadata = path.lstat()
+    except (OSError, ValueError) as exc:
+        raise ReviewerPacketError("Could not inspect independent seed file") from exc
+    if (
+        stat.S_ISLNK(metadata.st_mode)
+        or not stat.S_ISREG(metadata.st_mode)
+        or stat.S_IMODE(metadata.st_mode) != 0o600
+        or metadata.st_nlink != 1
+    ):
+        raise ReviewerPacketError(
+            "Independent seed must be a single-link regular file with mode 0600"
+        )
+    if hasattr(os, "geteuid") and metadata.st_uid != os.geteuid():
+        raise ReviewerPacketError("Independent seed must be owned by this user")
 
 
 def _parent_identity(path: Path, label: str) -> tuple[int, int]:
@@ -844,11 +880,31 @@ def _blank_form(reviewer_case_id: str) -> list[dict[str, Any]]:
     ]
 
 
+def _independent_blank_form(reviewer_case_id: str) -> list[dict[str, Any]]:
+    return [
+        {
+            "reviewer_case_id": reviewer_case_id,
+            "reviewer_observation_id": f"{reviewer_case_id}-O001",
+            "presence": None,
+            "issue_family": None,
+            "comment_class": None,
+            "risk_range": None,
+            "locations": [],
+            "observation": "",
+            "minimum_review_comment": "",
+            "scientific_relevance": "",
+            "benign_explanations": [],
+            "required_materials": [],
+            "recommended_action": "",
+        }
+    ]
+
+
 def _annotation_version(
     annotation_path: Path,
     source_case_id: str,
     expected_sha256: str,
-) -> str:
+) -> tuple[str, dict[str, Any]]:
     raw = _read_regular_bytes(annotation_path, f"annotation for {source_case_id}")
     actual_sha256 = hashlib.sha256(raw).hexdigest()
     if actual_sha256 != expected_sha256:
@@ -872,12 +928,59 @@ def _annotation_version(
         raise ReviewerPacketError(
             f"Selected case {source_case_id!r} annotation requires a schema_version"
         )
-    return version
+    return version, payload
+
+
+def _validate_scope_eligibility(
+    case: dict[str, Any],
+    annotation: dict[str, Any],
+    packet_scope: str,
+) -> None:
+    if packet_scope == WORKFLOW_DEMO_SCOPE:
+        return
+    source_case_id = case["case_id"]
+    required = {
+        "track": "blinded_challenge",
+        "split": "test",
+        "headline_eligible": False,
+    }
+    for field, expected in required.items():
+        if case.get(field) != expected:
+            raise ReviewerPacketError(
+                f"Independent blinded case {source_case_id!r} requires "
+                f"{field}={expected!r}"
+            )
+    if annotation.get("review_status") != "independent_pending":
+        raise ReviewerPacketError(
+            f"Independent blinded case {source_case_id!r} must be independent_pending"
+        )
+    if annotation.get("expected_observations") != []:
+        raise ReviewerPacketError(
+            f"Independent blinded case {source_case_id!r} must not contain answer labels"
+        )
+    for field in ("reviewer_ids", "adjudicator_id", "legacy_regression_contract"):
+        if field in annotation:
+            raise ReviewerPacketError(
+                f"Independent blinded case {source_case_id!r} contains pre-review metadata"
+            )
+
+
+def _reject_independent_material_cues(
+    source_case_id: str,
+    inventory: tuple[tuple[str, str], ...],
+) -> None:
+    for _, relative in inventory:
+        basename = PurePosixPath(relative).name.casefold()
+        if basename.startswith("package_note") or "reviewer_answer" in basename:
+            raise ReviewerPacketError(
+                f"Independent blinded case {source_case_id!r} contains an administrative cue: {relative}"
+            )
 
 
 def _prepare_source_cases(
     manifest_root: Path,
     ranked: list[tuple[str, dict[str, Any]]],
+    packet_scope: str,
 ) -> list[_SourceCase]:
     prepared: list[_SourceCase] = []
     for index, (normalized_case_id, case) in enumerate(ranked, start=1):
@@ -898,12 +1001,15 @@ def _prepare_source_cases(
             raise ReviewerPacketError(
                 f"Selected case {source_case_id!r} frozen hash verification failed: {exc}"
             ) from exc
-        annotation_version = _annotation_version(
+        annotation_version, annotation_payload = _annotation_version(
             annotation,
             source_case_id,
             case["annotation_sha256"],
         )
+        _validate_scope_eligibility(case, annotation_payload, packet_scope)
         inventory = _inventory_tree(package)
+        if packet_scope == INDEPENDENT_BLINDED_SCOPE:
+            _reject_independent_material_cues(source_case_id, inventory)
         prepared.append(
             _SourceCase(
                 reviewer_case_id=f"BRIA-R{index:03d}",
@@ -911,6 +1017,7 @@ def _prepare_source_cases(
                 case=case,
                 package=package,
                 annotation=annotation,
+                annotation_payload=annotation_payload,
                 annotation_schema_version=annotation_version,
                 inventory=inventory,
             )
@@ -1051,7 +1158,7 @@ def _scan_text(text: str, label: str, policy: _ScanPolicy) -> None:
     for path in policy.paths:
         if path and path.casefold() in lowered:
             _raise_leak(label, "an exact source or private path")
-    for marker in _PROTECTED_TOKEN_MARKERS:
+    for marker in policy.sensitive_markers:
         if _token_pattern(marker).search(normalized):
             _raise_leak(label, "a sensitive annotation, rule, or analysis identifier")
     if _EMAIL_PATTERN.search(normalized):
@@ -1082,7 +1189,7 @@ def _scan_raw_bytes(data: bytes, label: str, policy: _ScanPolicy) -> None:
         encoded = path.encode("utf-8", errors="strict")
         if encoded and encoded.lower() in lowered:
             _raise_leak(label, "an exact source or private path")
-    for marker in _PROTECTED_TOKEN_MARKERS:
+    for marker in policy.sensitive_markers:
         if _token_bytes_pattern(marker).search(data):
             _raise_leak(label, "a sensitive annotation, rule, or analysis identifier")
     for compiled in policy.encoded_sensitive_patterns:
@@ -1675,6 +1782,7 @@ def _scan_staged_packet(
         forbidden_bytes=tuple(
             item for item in policy.forbidden_bytes + (mapping_bytes,) if item
         ),
+        sensitive_markers=policy.sensitive_markers,
         encoded_identifier_patterns=policy.encoded_identifier_patterns,
         encoded_sensitive_patterns=policy.encoded_sensitive_patterns,
         encoded_forbidden_patterns=(
@@ -1728,6 +1836,7 @@ def _make_scan_policy(
     seed_text: bytes,
     mapping_output: Path,
     seed_file: Path,
+    packet_scope: str,
 ) -> _ScanPolicy:
     identifiers: set[str] = set()
     paths: set[str] = set()
@@ -1756,13 +1865,17 @@ def _make_scan_policy(
             | {seed_text.decode("ascii", errors="strict")}
         )
     )
+    protected_markers = _PROTECTED_TOKEN_MARKERS
+    if packet_scope == INDEPENDENT_BLINDED_SCOPE:
+        protected_markers = protected_markers - {"issue_family", "risk_range"}
     return _ScanPolicy(
         identifiers=identifier_values,
         paths=path_values,
         forbidden_bytes=(seed, seed_text),
+        sensitive_markers=tuple(sorted(protected_markers)),
         encoded_identifier_patterns=_compile_encoded_token_patterns(identifier_values),
         encoded_sensitive_patterns=_compile_encoded_token_patterns(
-            tuple(sorted(_PROTECTED_TOKEN_MARKERS))
+            tuple(sorted(protected_markers))
         ),
         encoded_forbidden_patterns=_compile_encoded_forbidden_patterns(
             encoded_forbidden_values
@@ -1770,10 +1883,23 @@ def _make_scan_policy(
     )
 
 
-def _packet_manifest(prepared: list[_SourceCase]) -> dict[str, Any]:
-    return {
+def _review_round_id(manifest_digest: bytes, selection_digest: bytes) -> str:
+    digest = hashlib.sha256(
+        b"BRIA-BENCH/INDEPENDENT-REVIEW/1\0"
+        + manifest_digest
+        + selection_digest
+    ).hexdigest()[:32].upper()
+    return f"BRIA-BLIND-{digest}"
+
+
+def _packet_manifest(
+    prepared: list[_SourceCase],
+    packet_scope: str,
+    review_round_id: str | None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
-        "packet_scope": PACKET_SCOPE,
+        "packet_scope": packet_scope,
         "cases": [
             {
                 "reviewer_case_id": item.reviewer_case_id,
@@ -1783,6 +1909,36 @@ def _packet_manifest(prepared: list[_SourceCase]) -> dict[str, Any]:
             for item in prepared
         ],
     }
+    if packet_scope == INDEPENDENT_BLINDED_SCOPE:
+        if review_round_id is None:
+            raise ReviewerPacketError("Independent packet requires a review round ID")
+        payload["review_round_id"] = review_round_id
+        payload["form_schema"] = "reviewer_form_independent_completed.schema.json"
+    return payload
+
+
+def _packet_guide_path(packet_scope: str) -> Path:
+    name = (
+        "INDEPENDENT_REVIEWER_GUIDE.md"
+        if packet_scope == INDEPENDENT_BLINDED_SCOPE
+        else "REVIEWER_GUIDE.md"
+    )
+    return Path(__file__).with_name(name)
+
+
+def _blank_form_contract(packet_scope: str) -> str:
+    if packet_scope == INDEPENDENT_BLINDED_SCOPE:
+        return "reviewer_form_independent_template.schema.json"
+    return "reviewer_form_template.schema.json"
+
+
+def _blank_form_for_scope(
+    reviewer_case_id: str,
+    packet_scope: str,
+) -> list[dict[str, Any]]:
+    if packet_scope == INDEPENDENT_BLINDED_SCOPE:
+        return _independent_blank_form(reviewer_case_id)
+    return _blank_form(reviewer_case_id)
 
 
 def _mapping_contract(
@@ -1817,8 +1973,9 @@ def _build_staged_packet(
     stage: Path,
     prepared: list[_SourceCase],
     packet_manifest: dict[str, Any],
+    packet_scope: str,
 ) -> bytes:
-    guide_path = Path(__file__).with_name("REVIEWER_GUIDE.md")
+    guide_path = _packet_guide_path(packet_scope)
     guide_bytes = _read_regular_bytes(guide_path, "reviewer guide")
     _write_bytes(stage / "REVIEWER_GUIDE.md", guide_bytes)
 
@@ -1830,9 +1987,9 @@ def _build_staged_packet(
         reviewer_dir = cases_dir / item.reviewer_case_id
         _make_directory(reviewer_dir)
         _copy_materials(item.package, reviewer_dir / "materials", item.inventory)
-        form = _blank_form(item.reviewer_case_id)
+        form = _blank_form_for_scope(item.reviewer_case_id, packet_scope)
         try:
-            validate_contract("reviewer_form_template.schema.json", form)
+            validate_contract(_blank_form_contract(packet_scope), form)
         except ContractError as exc:
             raise ReviewerPacketError(
                 "Generated reviewer form template is invalid"
@@ -1862,13 +2019,14 @@ def _validate_staged_packet(
     expected_manifest: dict[str, Any],
     policy: _ScanPolicy,
     mapping_bytes: bytes,
+    packet_scope: str,
     mapping_identity: tuple[int, int] | None = None,
 ) -> None:
     top_level = {path.name for path in stage.iterdir()}
     if top_level != {"REVIEWER_GUIDE.md", "packet_manifest.json", "cases", "forms"}:
         raise ReviewerPacketError("Staged packet has an unexpected top-level inventory")
     expected_guide = _read_regular_bytes(
-        Path(__file__).with_name("REVIEWER_GUIDE.md"),
+        _packet_guide_path(packet_scope),
         "reviewer guide",
     )
     if (
@@ -1920,12 +2078,12 @@ def _validate_staged_packet(
             f"form for {item.reviewer_case_id}",
         )
         try:
-            validate_contract("reviewer_form_template.schema.json", form)
+            validate_contract(_blank_form_contract(packet_scope), form)
         except ContractError as exc:
             raise ReviewerPacketError(
                 f"Staged form is invalid for {item.reviewer_case_id}"
             ) from exc
-        if form != _blank_form(item.reviewer_case_id):
+        if form != _blank_form_for_scope(item.reviewer_case_id, packet_scope):
             raise ReviewerPacketError(
                 f"Staged form is not blank for {item.reviewer_case_id}"
             )
@@ -2120,18 +2278,32 @@ def export_reviewer_packet(
     output_dir: Path | str,
     mapping_output: Path | str,
     seed_file: Path | str,
+    *,
+    packet_scope: str = PACKET_SCOPE,
 ) -> dict[str, Any]:
     """Export one deterministic reviewer packet and its external source mapping."""
 
+    if packet_scope not in PACKET_SCOPES:
+        raise ReviewerPacketError(f"Unsupported packet scope: {packet_scope!r}")
     manifest_file = _as_path(manifest_path, "manifest path")
     seed_path = _as_path(seed_file, "seed file")
     placement = _resolve_placement(output_dir, mapping_output)
+    if packet_scope == INDEPENDENT_BLINDED_SCOPE:
+        manifest_file = Path(os.path.abspath(os.fspath(manifest_file)))
+        seed_path = Path(os.path.abspath(os.fspath(seed_path)))
+        _reject_symlink_components(manifest_file, "independent manifest")
+        _reject_symlink_components(seed_path, "independent seed")
+        _require_private_parent(manifest_file.parent, "manifest file")
+        _require_private_parent(placement.output.parent, "packet output")
+        _require_private_parent(placement.mapping.parent, "mapping output")
+        _require_private_parent(seed_path.parent, "seed file")
+        _require_private_seed(seed_path)
     manifest, raw_manifest = _load_frozen_manifest(manifest_file)
     seed, seed_text = _read_seed(seed_path)
     selected = _select_cases(manifest, case_ids)
     manifest_digest = hashlib.sha256(raw_manifest).digest()
     ranked, selection_digest = _rank_cases(selected, seed, manifest_digest)
-    prepared = _prepare_source_cases(manifest_file.parent, ranked)
+    prepared = _prepare_source_cases(manifest_file.parent, ranked, packet_scope)
     policy = _make_scan_policy(
         manifest_file,
         manifest,
@@ -2140,8 +2312,14 @@ def export_reviewer_packet(
         seed_text,
         placement.mapping,
         seed_path,
+        packet_scope,
     )
-    packet_manifest = _packet_manifest(prepared)
+    review_round_id = (
+        _review_round_id(manifest_digest, selection_digest)
+        if packet_scope == INDEPENDENT_BLINDED_SCOPE
+        else None
+    )
+    packet_manifest = _packet_manifest(prepared, packet_scope, review_round_id)
 
     packet_stage: Path | None = None
     mapping_stage: Path | None = None
@@ -2158,6 +2336,7 @@ def export_reviewer_packet(
             packet_stage,
             prepared,
             packet_manifest,
+            packet_scope,
         )
         mapping = _mapping_contract(
             prepared,
@@ -2181,6 +2360,7 @@ def export_reviewer_packet(
             packet_manifest,
             policy,
             mapping_bytes,
+            packet_scope,
         )
         _fsync_tree(packet_stage)
         mapping_stage = _write_mapping_stage(placement.mapping, mapping_bytes)
@@ -2195,6 +2375,7 @@ def export_reviewer_packet(
             packet_manifest,
             policy,
             mapping_bytes,
+            packet_scope,
             mapping_stage_identity,
         )
         _fsync_tree(packet_stage)
@@ -2221,6 +2402,7 @@ def export_reviewer_packet(
             packet_manifest,
             policy,
             mapping_bytes,
+            packet_scope,
             mapping_identity,
         )
         if (
@@ -2246,4 +2428,11 @@ def export_reviewer_packet(
     return packet_manifest
 
 
-__all__ = ["ReviewerPacketError", "export_reviewer_packet"]
+__all__ = [
+    "INDEPENDENT_BLINDED_SCOPE",
+    "PACKET_SCOPE",
+    "PACKET_SCOPES",
+    "ReviewerPacketError",
+    "WORKFLOW_DEMO_SCOPE",
+    "export_reviewer_packet",
+]

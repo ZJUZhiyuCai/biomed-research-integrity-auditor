@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import errno
+import hashlib
 import json
 import os
 import re
@@ -35,6 +36,13 @@ class RegistryError(ValueError):
 class ResolvedCasePaths(NamedTuple):
     package_path: Path
     annotation_path: Path
+
+
+def _requires_independent_review_proof(case: dict[str, Any]) -> bool:
+    return (
+        case.get("track") == "blinded_challenge"
+        and case.get("headline_eligible") is True
+    )
 
 
 def _as_path(value: Path | str, *, label: str) -> Path:
@@ -136,11 +144,47 @@ def resolve_case_paths(root: Path | str, case: dict[str, Any]) -> ResolvedCasePa
     return ResolvedCasePaths(package, annotation)
 
 
-def _validated_manifest(path: Path) -> dict[str, Any]:
+def resolve_review_proof_path(root: Path | str, case: dict[str, Any]) -> Path:
+    """Resolve and type-check a case's independent-review proof file."""
+
+    case_id = case.get("case_id", "<unknown>") if isinstance(case, dict) else "<unknown>"
+    if not isinstance(case, dict) or "review_proof_path" not in case:
+        raise RegistryError(f"Case {case_id!r} requires review_proof_path")
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
+        proof = resolve_inside(root, case["review_proof_path"])
+        metadata = proof.lstat()
+    except (RegistryError, OSError, ValueError) as exc:
+        raise RegistryError(
+            f"Case {case_id!r} review proof is unavailable"
+        ) from exc
+    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
+        raise RegistryError(f"Case {case_id!r} review proof must be a file")
+    return proof
+
+
+def _strict_json_object(path: Path, label: str) -> tuple[dict[str, Any], bytes]:
+    def reject_duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, value in pairs:
+            if key in result:
+                raise RegistryError(f"{label} repeats JSON key {key!r}")
+            result[key] = value
+        return result
+
+    try:
+        raw = path.read_bytes()
+        payload = json.loads(
+            raw.decode("utf-8"), object_pairs_hook=reject_duplicates
+        )
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
-        raise RegistryError(f"Could not read manifest: {path}") from exc
+        raise RegistryError(f"Could not read {label}: {path}") from exc
+    if not isinstance(payload, dict):
+        raise RegistryError(f"{label} must contain a JSON object")
+    return payload, raw
+
+
+def _validated_manifest(path: Path) -> dict[str, Any]:
+    payload, _ = _strict_json_object(path, "manifest")
     try:
         validate_contract(MANIFEST_SCHEMA, payload)
     except ContractError as exc:
@@ -169,6 +213,16 @@ def load_manifest(
                     raise RegistryError(
                         f"Frozen case {case['case_id']!r} requires {field}"
                     )
+            if _requires_independent_review_proof(case):
+                if case.get("split") != "test":
+                    raise RegistryError(
+                        f"Frozen blinded headline case {case['case_id']!r} must use the test split"
+                    )
+                for field in ("review_proof_path", "review_proof_sha256"):
+                    if field not in case:
+                        raise RegistryError(
+                            f"Frozen blinded headline case {case['case_id']!r} requires {field}"
+                        )
         if resolve_paths:
             resolve_case_paths(root, case)
     return manifest
@@ -301,6 +355,12 @@ def freeze_manifest(
         raise RegistryError("Frozen output must be a distinct file from the source manifest")
 
     resolved_cases = [resolve_case_paths(source.parent, case) for case in source_manifest["cases"]]
+    resolved_proofs = [
+        resolve_review_proof_path(source.parent, case)
+        if "review_proof_path" in case
+        else None
+        for case in source_manifest["cases"]
+    ]
     for case, (package, annotation) in zip(source_manifest["cases"], resolved_cases):
         if output_resolved == annotation:
             raise RegistryError(
@@ -328,11 +388,38 @@ def freeze_manifest(
             raise RegistryError(
                 f"Could not freeze case {case.get('case_id', '<unknown>')!r}: {exc}"
             ) from exc
+    for case, proof in zip(frozen["cases"], resolved_proofs):
+        if proof is None:
+            continue
+        if output_resolved == proof:
+            raise RegistryError(
+                f"Frozen output must not equal case {case['case_id']!r} review proof"
+            )
+        try:
+            case["review_proof_sha256"] = hash_file(proof)
+        except HashingError as exc:
+            raise RegistryError(
+                f"Could not freeze review proof for case {case['case_id']!r}: {exc}"
+            ) from exc
 
     try:
         validate_contract(MANIFEST_SCHEMA, frozen)
     except ContractError as exc:
         raise RegistryError(f"Frozen manifest is invalid: {exc}") from exc
+    for case, (_, annotation_path) in zip(frozen["cases"], resolved_cases):
+        if not _requires_independent_review_proof(case):
+            continue
+        annotation, _ = _strict_json_object(
+            annotation_path,
+            f"annotation for case {case['case_id']!r}",
+        )
+        try:
+            validate_contract("annotation.schema.json", annotation)
+            verify_independent_review_proof(source.parent, case, annotation)
+        except (ContractError, RegistryError) as exc:
+            raise RegistryError(
+                f"Could not verify independent review proof for case {case['case_id']!r}: {exc}"
+            ) from exc
     _publish_manifest(output_resolved, frozen)
     return frozen
 
@@ -370,4 +457,76 @@ def verify_frozen_case(root: Path | str, case: dict[str, Any]) -> str:
             f"Case ID {case_id} annotation hash mismatch: expected {expected_annotation}, "
             f"actual {actual_annotation}"
         )
+    if _requires_independent_review_proof(case):
+        expected_proof = case.get("review_proof_sha256")
+        if not isinstance(expected_proof, str) or SHA256_PATTERN.fullmatch(expected_proof) is None:
+            raise RegistryError(f"Case ID {case_id} requires review_proof_sha256")
+        try:
+            proof = resolve_review_proof_path(root, case)
+            actual_proof = hash_file(proof)
+        except (HashingError, RegistryError) as exc:
+            raise RegistryError(f"Could not verify case ID {case_id} review proof: {exc}") from exc
+        if actual_proof != expected_proof:
+            raise RegistryError(
+                f"Case ID {case_id} review proof hash mismatch: expected {expected_proof}, "
+                f"actual {actual_proof}"
+            )
     return actual_package
+
+
+def verify_independent_review_proof(
+    root: Path | str,
+    case: dict[str, Any],
+    annotation: dict[str, Any],
+) -> bool:
+    """Verify that a blinded headline case derives from a frozen finalization."""
+
+    if not _requires_independent_review_proof(case):
+        return False
+    case_id = case.get("case_id", "<unknown>")
+    if case.get("split") != "test":
+        raise RegistryError(f"Case ID {case_id} must use test split for headline metrics")
+    if annotation.get("review_status") != "independent_adjudicated":
+        raise RegistryError(
+            f"Case ID {case_id} requires independent_adjudicated annotation status"
+        )
+    proof = resolve_review_proof_path(root, case)
+
+    try:
+        payload, raw = _strict_json_object(
+            proof, f"Case ID {case_id} review proof"
+        )
+        validate_contract("reviewer_finalization.schema.json", payload)
+    except RegistryError:
+        raise
+    except (OSError, UnicodeError, json.JSONDecodeError, ContractError) as exc:
+        raise RegistryError(f"Case ID {case_id} review proof is invalid") from exc
+    expected_proof = case.get("review_proof_sha256")
+    actual_proof = hashlib.sha256(raw).hexdigest()
+    if actual_proof != expected_proof:
+        raise RegistryError(f"Case ID {case_id} review proof hash mismatch")
+    records = [item for item in payload["cases"] if item["source_case_id"] == case_id]
+    if len(records) != 1:
+        raise RegistryError(f"Case ID {case_id} review proof must contain one case record")
+    record = records[0]
+    if (
+        record["source_package_sha256"] != case.get("expected_sha256")
+        or record["annotation_sha256"] != case.get("annotation_sha256")
+        or record["review_status"] != "independent_adjudicated"
+        or record["eligible_for_manifest_promotion"] is not True
+    ):
+        raise RegistryError(f"Case ID {case_id} review proof does not bind current hashes")
+    if sorted(annotation.get("reviewer_ids", [])) != sorted(payload["reviewer_ids"]):
+        raise RegistryError(f"Case ID {case_id} reviewer IDs do not match review proof")
+    if annotation.get("frozen_at") != payload["frozen_at"]:
+        raise RegistryError(f"Case ID {case_id} freeze time does not match review proof")
+    resolution_source = record.get("resolution_source")
+    if resolution_source == "third_party_resolved":
+        if annotation.get("adjudicator_id") != payload.get("adjudicator_id"):
+            raise RegistryError(f"Case ID {case_id} adjudicator does not match review proof")
+    elif resolution_source == "consensus":
+        if "adjudicator_id" in annotation:
+            raise RegistryError(f"Case ID {case_id} consensus annotation must not name an adjudicator")
+    else:
+        raise RegistryError(f"Case ID {case_id} has invalid final resolution source")
+    return True

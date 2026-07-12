@@ -1,0 +1,171 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.org/bria-bench/schemas/reviewer_finalization.schema.json",
+  "title": "BRIA-Bench Independent Review Finalization",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "review_round_id",
+    "benchmark_version",
+    "frozen_at",
+    "source_manifest_sha256",
+    "comparison_sha256",
+    "submissions",
+    "adjudication_sha256",
+    "reviewer_ids",
+    "adjudicator_id",
+    "agreement",
+    "cases"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$"
+    },
+    "review_round_id": {
+      "type": "string",
+      "pattern": "^BRIA-BLIND-[A-F0-9]{32}$"
+    },
+    "benchmark_version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$"
+    },
+    "frozen_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "source_manifest_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "comparison_sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "submissions": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "items": {
+        "$ref": "#/$defs/submission"
+      }
+    },
+    "adjudication_sha256": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "reviewer_ids": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "items": {
+        "type": "string",
+        "pattern": "^BRIA-REV-[A-Z0-9]{8,32}$"
+      },
+      "uniqueItems": true
+    },
+    "adjudicator_id": {
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^BRIA-ADJ-[A-Z0-9]{8,32}$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "agreement": {
+      "type": "object"
+    },
+    "cases": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/case"
+      }
+    }
+  },
+  "$defs": {
+    "submission": {
+      "type": "object",
+      "required": [
+        "slot",
+        "submission_manifest_sha256",
+        "packet_manifest_sha256"
+      ],
+      "properties": {
+        "slot": {
+          "enum": [
+            "a",
+            "b"
+          ]
+        },
+        "submission_manifest_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "packet_manifest_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      },
+      "additionalProperties": false
+    },
+    "case": {
+      "type": "object",
+      "required": [
+        "source_case_id",
+        "source_package_sha256",
+        "review_status",
+        "resolution_source",
+        "annotation_path",
+        "annotation_sha256",
+        "eligible_for_manifest_promotion"
+      ],
+      "properties": {
+        "source_case_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_package_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "review_status": {
+          "enum": [
+            "independent_adjudicated",
+            "ambiguous"
+          ]
+        },
+        "resolution_source": {
+          "enum": [
+            "consensus",
+            "third_party_resolved",
+            "ambiguous"
+          ]
+        },
+        "annotation_path": {
+          "type": "string",
+          "pattern": "^annotations/annotation-[a-f0-9]{20}\\.json$"
+        },
+        "annotation_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "eligible_for_manifest_promotion": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
