@@ -464,8 +464,10 @@ def _hash_file_record(
         _ensure_stable(record.initial_stat, streamed, record.relative, "during streaming")
         if byte_count != record.initial_stat.st_size or byte_count != streamed.st_size:
             raise HashingError(f"Package file byte count changed during streaming: {record.relative}")
-    finally:
-        _close_fd(file_fd, f"package file {record.relative}")
+    except BaseException:
+        _close_fd_quietly(file_fd)
+        raise
+    _close_fd(file_fd, f"package file {record.relative}")
     after = _stat_at(parent_fd, record.name, record.relative)
     _ensure_regular(after, record.relative, "after close")
     _ensure_stable(record.initial_stat, after, record.relative, "after close")
@@ -710,7 +712,13 @@ def hash_tree(root: Path | str) -> str:
         )
         try:
             _hash_file_record(digest, record, file_fd, parent_fd)
-        finally:
+        except BaseException:
+            try:
+                _close_chain(descriptors, f"file path {record.relative}")
+            except HashingError:
+                pass
+            raise
+        else:
             _close_chain(descriptors, f"file path {record.relative}")
 
     for record in sorted(files, key=lambda item: item.relative):

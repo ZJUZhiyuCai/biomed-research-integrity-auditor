@@ -41,7 +41,7 @@ python -m pip install -e ".[webapp,ocr]"
 make preflight PYTHON=.venv/bin/python
 ```
 
-如果只用 CLI，`python -m pip install -e .` 即可。按需添加 extras：`.[webapp]` 用于本地 Web UI，`.[ocr]` 用于 scanned-PDF OCR 的 Python 依赖，`.[dev]` 用于贡献者工具。日常开发和 Python 3.10-3.12 CI 风格安装请用 `requirements.txt`；需要复现 bug 或做部署审计时，用 `requirements-lock.txt` 获得 Python 3.11 可复现安装。
+如果只用 CLI，`python -m pip install -e .` 即可。按需添加 extras：`.[webapp]` 用于本地 Web UI，`.[ocr]` 用于 scanned-PDF OCR 的 Python 依赖，`.[benchmark]` 用于 BRIA-Bench 进程监测，`.[dev]` 用于贡献者工具。日常开发和 Python 3.10-3.12 CI 风格安装请用 `requirements.txt`；需要复现 bug 或做部署审计时，用 `requirements-lock.txt` 获得 Python 3.11 可复现安装。
 
 如果想一键部署并把命令链接到 `~/.local/bin`：
 
@@ -387,7 +387,7 @@ make release-artifacts
 
 构建前端、Python wheel/sdist、源码 bundle 和 SHA-256 manifest，写入 `dist/release/`。GitHub Actions 模板在 `packaging/github-workflows/`；启用需要 maintainer token。PyPI 与 Homebrew 发布需要维护者凭据；详见 [`packaging/README.md`](packaging/README.md)。
 
-当前启用的验证 workflow 在 [`.github/workflows/validate.yml`](.github/workflows/validate.yml)：安装 Python、Node、OCR runtime 和前端依赖，然后运行 `make validate` 与关键 synthetic audit 回归。
+当前启用的验证 workflow 在 [`.github/workflows/validate.yml`](.github/workflows/validate.yml)：安装 Python、OCR runtime 与 `.[benchmark]`，通过 `make validate` 安装前端依赖并完成主验证，再以 10 分钟上限独立运行 `make benchmark-smoke`、scanned-PDF OCR 门禁及关键 synthetic audit 回归。
 
 ### 安装为 Codex Skill
 

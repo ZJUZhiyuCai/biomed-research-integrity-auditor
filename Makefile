@@ -7,6 +7,7 @@ BRIA_BENCH_SOURCE_MANIFEST := $(BRIA_BENCH_DIR)/benchmark_manifest.source.json
 BRIA_BENCH_SMOKE_DIR := tmp/bria_bench_smoke
 BRIA_BENCH_RUNS_DIR := tmp/bria_bench_runs
 BENCHMARK_FROZEN_AT ?= 2026-07-11T00:00:00Z
+RELEASE_SOURCE_DATE_EPOCH ?= 1783728000
 
 .PHONY: run preflight validate install-local frontend-smoke release-artifacts regenerate-evals prompts score true-pdf-benchmark scanned-pdf-benchmark real-image-benchmark pppr-public-smoke benchmark-freeze benchmark-smoke benchmark benchmark-report
 
@@ -41,7 +42,7 @@ release-artifacts:
 	$(PYTHON) -m pip install --upgrade build
 	rm -rf build *.egg-info dist/release
 	rm -f dist/biomed_research_integrity_auditor-*.whl dist/biomed_research_integrity_auditor-*.tar.gz
-	$(PYTHON) -m build
+	SOURCE_DATE_EPOCH=$(RELEASE_SOURCE_DATE_EPOCH) $(PYTHON) -m build
 	$(PYTHON) scripts/build_release_artifacts.py
 
 regenerate-evals:

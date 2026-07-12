@@ -3827,6 +3827,64 @@ class BriaBenchRegistryTests(unittest.TestCase):
         self.assertTrue(file_close_failed)
         self.assertTrue(chain_attempted)
 
+    def test_tree_streaming_failure_is_not_masked_by_strict_close_failure(self) -> None:
+        self.require_secure_hashing()
+        package = self.root / "streaming-close-failure"
+        package.mkdir()
+        (package / "payload.bin").write_bytes(b"payload")
+
+        with (
+            patch.object(
+                hashing_module,
+                "_stream_fd",
+                side_effect=HashingError("injected streaming validation failure"),
+            ),
+            patch.object(
+                hashing_module,
+                "_close_fd",
+                side_effect=HashingError("injected strict close failure"),
+            ),
+        ):
+            with self.assertRaisesRegex(
+                HashingError,
+                "injected streaming validation failure",
+            ):
+                hash_tree(package)
+
+    def test_tree_streaming_failure_is_not_masked_by_chain_close_failure(self) -> None:
+        self.require_secure_hashing()
+        package = self.root / "streaming-chain-close-failure"
+        package.mkdir()
+        (package / "payload.bin").write_bytes(b"payload")
+        real_close_chain = hashing_module._close_chain
+        chain_close_failed = False
+
+        def close_then_fail(descriptors: list[int], label: str) -> None:
+            nonlocal chain_close_failed
+            real_close_chain(descriptors, label)
+            if label.startswith("file path") and not chain_close_failed:
+                chain_close_failed = True
+                raise HashingError("injected chain close failure")
+
+        with (
+            patch.object(
+                hashing_module,
+                "_stream_fd",
+                side_effect=HashingError("injected streaming validation failure"),
+            ),
+            patch.object(
+                hashing_module,
+                "_close_chain",
+                side_effect=close_then_fail,
+            ),
+        ):
+            with self.assertRaisesRegex(
+                HashingError,
+                "injected streaming validation failure",
+            ):
+                hash_tree(package)
+        self.assertTrue(chain_close_failed)
+
     def test_post_open_failure_cleans_directory_chain_when_file_close_fails(
         self,
     ) -> None:

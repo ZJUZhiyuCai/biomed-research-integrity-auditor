@@ -49,12 +49,16 @@ benchmarks/bria_bench/results/*
 !benchmarks/bria_bench/results/release_summary_*.json
 !benchmarks/bria_bench/results/public_summary_*.json
 benchmarks/bria_bench/**/run_summary.json
+benchmarks/bria_bench/**/run-summary.json
 benchmarks/bria_bench/**/metrics.json
 benchmarks/bria_bench/**/metrics-*.json
 benchmarks/bria_bench/**/metrics_*.json
 benchmarks/bria_bench/**/local_metrics*.json
+benchmarks/bria_bench/**/local-metrics*.json
 benchmarks/bria_bench/**/reviewer_mapping*.json
+benchmarks/bria_bench/**/reviewer-mapping*.json
 benchmarks/bria_bench/**/*_mapping.json
+benchmarks/bria_bench/**/*-mapping.json
 benchmarks/bria_bench/**/reviewer_packet*.zip
 benchmarks/bria_bench/**/reviewer_packet*.json
 benchmarks/bria_bench/**/reviewer-packet*.zip

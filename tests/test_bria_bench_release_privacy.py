@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import io
 import os
 from pathlib import Path
 import re
@@ -104,12 +105,17 @@ class BriaBenchReleasePrivacyTests(unittest.TestCase):
         )
         private_filenames = (
             "run_summary.json",
+            "run-summary.json",
             f"metrics-{self.token}.json",
             f"metrics_{self.token}.json",
             f"local_metrics_{self.token}.json",
+            f"local-metrics-{self.token}.json",
             "reviewer_mapping.json",
             f"reviewer_mapping_{self.token}.json",
+            "reviewer-mapping.json",
+            f"reviewer-mapping-{self.token}.json",
             f"{self.token}_mapping.json",
+            f"{self.token}-mapping.json",
             "reviewer_packet_manifest.json",
             f"reviewer_packet_{self.token}.json",
             f"reviewer-packet_{self.token}.zip",
@@ -172,8 +178,8 @@ class BriaBenchReleasePrivacyTests(unittest.TestCase):
         path.write_text('{"task12": "private fixture"}\n', encoding="utf-8")
         self.created_files.append(path)
 
-    def _copy_project_source(self) -> Path:
-        source_root = self.output_root / "source"
+    def _copy_project_source(self, name: str = "source") -> Path:
+        source_root = self.output_root / name
         shutil.copytree(
             REPOSITORY_ROOT,
             source_root,
@@ -385,7 +391,16 @@ class BriaBenchReleasePrivacyTests(unittest.TestCase):
             "biomed_research_integrity_auditor-0.0.0.tar.gz",
             "biomed_research_integrity_auditor-0.0.0-py3-none-any.whl",
         }:
-            (dist_dir / name).write_bytes(name.encode("ascii"))
+            artifact = dist_dir / name
+            if artifact.suffix == ".whl":
+                with zipfile.ZipFile(artifact, "w") as archive:
+                    archive.writestr("payload.txt", name)
+            else:
+                payload = name.encode("ascii")
+                info = tarfile.TarInfo("payload.txt")
+                info.size = len(payload)
+                with tarfile.open(artifact, "w:gz") as archive:
+                    archive.addfile(info, io.BytesIO(payload))
         output = self.output_root / "copied-dist"
         output.mkdir()
 
@@ -394,6 +409,116 @@ class BriaBenchReleasePrivacyTests(unittest.TestCase):
 
         self.assertEqual({path.name for path in copied}, expected)
         self.assertEqual({path.name for path in output.iterdir()}, expected)
+
+    def test_release_zip_is_reproducible_when_source_mtime_changes(self) -> None:
+        source_root = self._copy_project_source()
+        source = source_root / "README.md"
+        executable = source_root / "scripts" / "build_release_artifacts.py"
+        first_zip = self.output_root / "first.zip"
+        second_zip = self.output_root / "second.zip"
+
+        with patch.object(release_module, "ROOT", source_root):
+            release_module.write_zip(
+                first_zip,
+                [source, executable],
+                "release-source",
+            )
+            current = source.stat()
+            os.utime(
+                source,
+                ns=(current.st_atime_ns, current.st_mtime_ns + 10_000_000_000),
+            )
+            release_module.write_zip(
+                second_zip,
+                [source, executable],
+                "release-source",
+            )
+
+        self.assertEqual(first_zip.read_bytes(), second_zip.read_bytes())
+        with zipfile.ZipFile(first_zip) as archive:
+            member = archive.getinfo("release-source/README.md")
+        self.assertEqual(member.date_time, (1980, 1, 1, 0, 0, 0))
+        self.assertEqual((member.external_attr >> 16) & 0o777, 0o644)
+        with zipfile.ZipFile(first_zip) as archive:
+            executable_member = archive.getinfo(
+                "release-source/scripts/build_release_artifacts.py"
+            )
+        self.assertEqual((executable_member.external_attr >> 16) & 0o777, 0o755)
+
+    def test_python_distributions_use_a_reproducible_build_epoch(self) -> None:
+        first_source = self._copy_project_source("first-source")
+        second_source = self._copy_project_source("second-source")
+        first_dist = first_source / "dist"
+        second_dist = second_source / "dist"
+        first_output = self.output_root / "first-release"
+        second_output = self.output_root / "second-release"
+        first_dist.mkdir()
+        second_dist.mkdir()
+        first_output.mkdir()
+        second_output.mkdir()
+        current = (second_source / "README.md").stat()
+        os.utime(
+            second_source / "README.md",
+            ns=(current.st_atime_ns, current.st_mtime_ns + 10_000_000_000),
+        )
+        environment = os.environ.copy()
+        environment["SOURCE_DATE_EPOCH"] = "1783728000"
+        build_command = (
+            "import sys; from setuptools.build_meta import build_sdist; "
+            "build_sdist(sys.argv[1])"
+        )
+
+        for source, output in (
+            (first_source, first_dist),
+            (second_source, second_dist),
+        ):
+            subprocess.run(
+                [sys.executable, "-c", build_command, str(output)],
+                cwd=source,
+                env=environment,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "pip",
+                    "wheel",
+                    "--no-build-isolation",
+                    "--no-deps",
+                    "--wheel-dir",
+                    str(output),
+                    str(source),
+                ],
+                cwd=source,
+                env=environment,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+
+        with patch.object(release_module, "ROOT", first_source):
+            first_copied = release_module.copy_dist_artifacts(first_output)
+        with patch.object(release_module, "ROOT", second_source):
+            second_copied = release_module.copy_dist_artifacts(second_output)
+
+        self.assertEqual(
+            len(first_copied),
+            2,
+            sorted(path.name for path in first_dist.iterdir()),
+        )
+        self.assertEqual(
+            len(second_copied),
+            2,
+            sorted(path.name for path in second_dist.iterdir()),
+        )
+
+        for pattern in ("*.tar.gz", "*.whl"):
+            first = next(first_output.glob(pattern))
+            second = next(second_output.glob(pattern))
+            self.assertEqual(first.read_bytes(), second.read_bytes(), pattern)
 
     def test_smoke_target_cleans_before_run_and_keeps_manual_resumability(self) -> None:
         makefile = (REPOSITORY_ROOT / "Makefile").read_text(encoding="utf-8")
@@ -411,6 +536,7 @@ class BriaBenchReleasePrivacyTests(unittest.TestCase):
             "BENCHMARK_FROZEN_AT ?= 2026-07-11T00:00:00Z",
             makefile,
         )
+        self.assertIn("RELEASE_SOURCE_DATE_EPOCH ?= 1783728000", makefile)
         self.assertIn(
             "--frozen-at $(BENCHMARK_FROZEN_AT)",
             "\n".join(target_lines("benchmark-freeze")),
@@ -434,13 +560,17 @@ class BriaBenchReleasePrivacyTests(unittest.TestCase):
         self.assertNotIn("rm -rf", "\n".join(target_lines("benchmark")))
 
         release = target_lines("release-artifacts")
+        python_build = (
+            "\tSOURCE_DATE_EPOCH=$(RELEASE_SOURCE_DATE_EPOCH) $(PYTHON) -m build"
+        )
+        self.assertIn(python_build, release)
         build_index = release.index("\trm -rf build *.egg-info dist/release")
-        self.assertLess(build_index, release.index("\t$(PYTHON) -m build"))
+        self.assertLess(build_index, release.index(python_build))
         dist_index = release.index(
             "\trm -f dist/biomed_research_integrity_auditor-*.whl "
             "dist/biomed_research_integrity_auditor-*.tar.gz"
         )
-        self.assertLess(dist_index, release.index("\t$(PYTHON) -m build"))
+        self.assertLess(dist_index, release.index(python_build))
 
 
 if __name__ == "__main__":

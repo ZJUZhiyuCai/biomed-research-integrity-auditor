@@ -40,9 +40,10 @@ include benchmarks/bria_bench/results/.gitkeep
 include benchmarks/bria_bench/results/release_summary_*.json
 include benchmarks/bria_bench/results/public_summary_*.json
 recursive-exclude benchmarks/bria_bench run_summary.json
+recursive-exclude benchmarks/bria_bench run-summary.json
 recursive-exclude benchmarks/bria_bench metrics.json metrics-*.json metrics_*.json
-recursive-exclude benchmarks/bria_bench local_metrics*.json
-recursive-exclude benchmarks/bria_bench reviewer_mapping*.json *_mapping.json
+recursive-exclude benchmarks/bria_bench local_metrics*.json local-metrics*.json
+recursive-exclude benchmarks/bria_bench reviewer_mapping*.json reviewer-mapping*.json *_mapping.json *-mapping.json
 recursive-exclude benchmarks/bria_bench reviewer_packet*.json reviewer_packet*.zip
 recursive-exclude benchmarks/bria_bench reviewer-packet*.json reviewer-packet*.zip
 recursive-exclude benchmarks/bria_bench seed*.json seed*.txt
