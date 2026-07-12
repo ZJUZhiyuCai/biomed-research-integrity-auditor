@@ -640,6 +640,75 @@ class ReviewerPacketLeakageTests(ReviewerPacketFixture):
         self.refreeze()
         self.assert_leak_rejected(hidden_values=sensitive)
 
+    def test_rejects_bomless_utf16_le_with_non_ascii_prose(self) -> None:
+        sensitive = (
+            "source_alpha",
+            "expected_observations",
+            "/Users/reviewer/labels.json",
+        )
+        text = " ".join(sensitive) + " " + "\u6c49" * 100
+        (self.cases_root / "source_alpha" / "mixed-le.bin").write_bytes(
+            text.encode("utf-16-le")
+        )
+        self.refreeze()
+        self.assert_leak_rejected(hidden_values=sensitive)
+
+    def test_rejects_bomless_utf16_be_with_mixed_non_ascii_prose(self) -> None:
+        sensitive = (
+            "source_alpha",
+            "expected_observations",
+            "/Users/reviewer/labels.json",
+        )
+        text = (
+            "\u7814\u7a76\u6570\u636e" * 60
+            + " "
+            + " ".join(sensitive)
+            + " "
+            + "\u5b9e\u9a8c" * 60
+        )
+        (self.cases_root / "source_alpha" / "mixed-be.bin").write_bytes(
+            text.encode("utf-16-be")
+        )
+        self.refreeze()
+        self.assert_leak_rejected(hidden_values=sensitive)
+
+    def test_rejects_bomless_utf32_with_mixed_non_ascii_prose(self) -> None:
+        from benchmarks.bria_bench.reviewer_packet import ReviewerPacketError
+
+        sensitive = (
+            "source_alpha",
+            "expected_observations",
+            "/Users/reviewer/labels.json",
+        )
+        text = (
+            "\u6c49\u5b57" * 40 + " " + " ".join(sensitive) + " " + "\u7814\u7a76" * 40
+        )
+        path = self.cases_root / "source_alpha" / "mixed-utf32.bin"
+        for index, encoding in enumerate(("utf-32-le", "utf-32-be")):
+            with self.subTest(encoding=encoding):
+                path.write_bytes(text.encode(encoding))
+                self.refreeze()
+                output = self.root / f"packet-utf32-{index}"
+                mapping = self.root / f"mapping-utf32-{index}.json"
+                with self.assertRaises(ReviewerPacketError) as caught:
+                    self.export(
+                        case_ids=["source_alpha"],
+                        output=output,
+                        mapping=mapping,
+                    )
+                for value in sensitive:
+                    self.assertNotIn(value, str(caught.exception))
+                self.assertFalse(output.exists())
+                self.assertFalse(mapping.exists())
+
+    def test_bomless_probe_does_not_classify_control_heavy_binary(self) -> None:
+        from benchmarks.bria_bench.reviewer_packet import _decoded_text_candidates
+
+        binary = b"".join(
+            bytes((value, 0)) for _ in range(32) for value in range(0x80, 0xA0)
+        )
+        self.assertEqual(_decoded_text_candidates(binary, "opaque binary"), ())
+
     def test_rejects_bom_tagged_utf16_and_utf32_leakage(self) -> None:
         from benchmarks.bria_bench.reviewer_packet import ReviewerPacketError
 
@@ -685,6 +754,23 @@ class ReviewerPacketLeakageTests(ReviewerPacketFixture):
                 "word/document.xml",
                 " | ".join(sensitive).encode("utf-16-be"),
             )
+        self.refreeze()
+        self.assert_leak_rejected(hidden_values=sensitive)
+
+    def test_rejects_mixed_non_ascii_utf16_in_deflated_docx_member(self) -> None:
+        sensitive = (
+            "source_alpha",
+            "expected_observations",
+            "/Users/reviewer/labels.json",
+        )
+        text = "\u6c49" * 100 + " " + " ".join(sensitive) + " " + "\u5b57" * 100
+        archive_path = self.cases_root / "source_alpha" / "mixed.docx"
+        with zipfile.ZipFile(
+            archive_path,
+            "w",
+            compression=zipfile.ZIP_DEFLATED,
+        ) as archive:
+            archive.writestr("word/document.xml", text.encode("utf-16-le"))
         self.refreeze()
         self.assert_leak_rejected(hidden_values=sensitive)
 
@@ -744,7 +830,10 @@ class ReviewerPacketLeakageTests(ReviewerPacketFixture):
         )
         image = Image.new("RGB", (4, 4), color="white")
         exif = Image.Exif()
-        exif[37510] = b"UNICODE\x00" + " | ".join(sensitive).encode("utf-16-le")
+        comment = (
+            "\u6c49" * 100 + " | " + " | ".join(sensitive) + " | " + "\u5b57" * 100
+        )
+        exif[37510] = b"UNICODE\x00" + comment.encode("utf-16-le")
         path = self.cases_root / "source_alpha" / "image.dat"
         image.save(path, format="JPEG", exif=exif)
         self.refreeze()

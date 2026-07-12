@@ -949,6 +949,21 @@ def _scan_raw_bytes(data: bytes, label: str, policy: _ScanPolicy) -> None:
         _raise_leak(label, "a local absolute path")
 
 
+def _plausible_unicode_text(text: str) -> bool:
+    candidate = text.rstrip("\x00")
+    if not candidate:
+        return False
+    readable = sum(
+        character.isprintable() or character in "\t\r\n" for character in candidate
+    )
+    if readable * 20 < len(candidate) * 19:
+        return False
+    return any(
+        unicodedata.category(character)[0] in {"L", "M", "N", "P", "S"}
+        for character in candidate
+    )
+
+
 def _plausible_bomless_utf16(data: bytes, encoding: str) -> str | None:
     if len(data) < 8 or len(data) % 2:
         return None
@@ -956,18 +971,41 @@ def _plausible_bomless_utf16(data: bytes, encoding: str) -> str | None:
     even = data[0::2]
     odd = data[1::2]
     zero_lane, text_lane = (odd, even) if encoding == "utf-16-le" else (even, odd)
-    if zero_lane.count(0) * 4 < units * 3:
-        return None
-    if text_lane.count(0) * 10 > units:
+    zero_count = zero_lane.count(0)
+    text_zero_count = text_lane.count(0)
+    has_local_zero_run = b"\x00" * 8 in zero_lane
+    has_asymmetric_zero_lane = (
+        zero_count >= 4
+        and zero_count * 8 >= units
+        and zero_count >= (text_zero_count + 1) * 4
+    )
+    if not has_local_zero_run and not has_asymmetric_zero_lane:
         return None
     try:
         text = data.decode(encoding, errors="strict")
     except UnicodeError:
         return None
-    ascii_text = sum(
-        character in "\t\r\n" or " " <= character <= "~" for character in text
-    )
-    if not text or ascii_text * 5 < len(text) * 4:
+    if not _plausible_unicode_text(text):
+        return None
+    return text
+
+
+def _plausible_bomless_utf32(data: bytes, encoding: str) -> str | None:
+    if len(data) < 16 or len(data) % 4:
+        return None
+    if encoding == "utf-32-le":
+        upper_lane = data[2::4]
+        high_lane = data[3::4]
+    else:
+        high_lane = data[0::4]
+        upper_lane = data[1::4]
+    if high_lane.count(0) != len(high_lane) or max(upper_lane, default=0) > 0x10:
+        return None
+    try:
+        text = data.decode(encoding, errors="strict")
+    except UnicodeError:
+        return None
+    if not _plausible_unicode_text(text):
         return None
     return text
 
@@ -997,6 +1035,10 @@ def _decoded_text_candidates(data: bytes, label: str) -> tuple[str, ...]:
         pass
     for encoding in ("utf-16-le", "utf-16-be"):
         decoded = _plausible_bomless_utf16(data, encoding)
+        if decoded is not None and decoded not in candidates:
+            candidates.append(decoded)
+    for encoding in ("utf-32-le", "utf-32-be"):
+        decoded = _plausible_bomless_utf32(data, encoding)
         if decoded is not None and decoded not in candidates:
             candidates.append(decoded)
     return tuple(candidates)
