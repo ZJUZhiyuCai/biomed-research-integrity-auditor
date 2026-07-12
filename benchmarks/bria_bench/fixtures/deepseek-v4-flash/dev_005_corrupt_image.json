@@ -1,0 +1,33 @@
+{
+  "base_url": "https://api.deepseek.com",
+  "case_id": "dev_005_corrupt_image",
+  "model": "deepseek-v4-flash",
+  "prompt_sha256": "1c56a09d05fb727604c2b5afad10560d8ff1ff05291d4693b749b92a221ef186",
+  "provider": "deepseek",
+  "request_sha256": "f7f24b20d49299cfaf7628f2130bc0414395609411c7dd7b756e19b97a4a2ace",
+  "response": {
+    "choices": [
+      {
+        "finish_reason": "stop",
+        "index": 0,
+        "message": {
+          "content": "{\"observations\":[],\"coverage_gaps\":[{\"location\":\"figures/Figure_5B.png\",\"message\":\"The image was unavailable for pixel review and its metadata could not be decoded.\",\"recommended_action\":\"Replace the damaged file with the original export before image-integrity review.\"}],\"scope_note\":\"Limited direct text review; source records and human review remain required.\"}",
+          "role": "assistant"
+        }
+      }
+    ],
+    "created": 0,
+    "id": "fixture-dev-005",
+    "model": "deepseek-v4-flash",
+    "object": "chat.completion",
+    "system_fingerprint": "fixture-v1",
+    "usage": {
+      "completion_tokens": 78,
+      "prompt_cache_hit_tokens": 0,
+      "prompt_cache_miss_tokens": 505,
+      "prompt_tokens": 505,
+      "total_tokens": 583
+    }
+  },
+  "schema_version": "1.0.0"
+}

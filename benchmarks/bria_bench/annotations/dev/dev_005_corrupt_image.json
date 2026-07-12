@@ -8,10 +8,10 @@
       ],
       "issue_family": "material_or_coverage_gap",
       "location": {
-        "file": "figures/Figure_5B_truncated.png",
+        "file": "figures/Figure_5B.png",
         "terms": [
-          "figures/Figure_5B_truncated.png",
-          "Figure_5B_truncated.png"
+          "figures/Figure_5B.png",
+          "Figure_5B.png"
         ]
       },
       "observation_id": "dev_005_corrupt_image_001",

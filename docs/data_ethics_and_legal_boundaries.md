@@ -53,6 +53,18 @@ matched papers with no known public concern at snapshot date
 Record the snapshot date and matching criteria. Absence of a PubPeer/RWDB signal is not proof that
 the article has no issue.
 
+## External LLM Baselines
+
+The audit product is local-first, but a benchmark comparison may deliberately send extracted text
+to an external model provider. Run that comparison only when every selected package is permitted
+to leave the local machine and both the provider key and explicit remote-transfer opt-in are set.
+Do not use the live baseline on confidential manuscripts, patient-level data, private source
+records, or materials whose license or institutional policy forbids third-party processing.
+
+API keys must remain in environment variables or a secret manager. Generated response caches,
+run outputs, and prompts are private local artifacts and must not enter source archives or releases.
+Offline response fixtures are the only LLM path allowed in CI.
+
 ## Public Release Rules
 
 Public releases may include:

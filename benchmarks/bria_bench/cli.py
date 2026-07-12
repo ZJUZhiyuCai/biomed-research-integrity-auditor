@@ -24,7 +24,7 @@ _CASE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 _SPLITS = ("dev", "test", "reference")
 _ADAPTER_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 _ADAPTER_VERSION = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$")
-_PLACEHOLDERS = frozenset({"package", "mode", "profile", "case_id", "output"})
+_PLACEHOLDERS = frozenset({"package", "package_sha256", "mode", "profile", "case_id", "output"})
 _REQUIRED_PRODUCER_FILES = (
     "AUDIT_JSON_SUMMARY.json",
     "coverage.json",
@@ -126,12 +126,22 @@ class CommandAdapter:
     ) -> list[str]:
         values = {
             "package": str(package),
+            "package_sha256": str(case.get("expected_sha256", "")),
             "mode": str(case["mode"]),
             "profile": str(case["scan_profile"]),
             "case_id": str(case["case_id"]),
             "output": str(output),
         }
-        return [values[arg[1:-1]] if arg.startswith("{") else arg for arg in self.argv_template]
+        result: list[str] = []
+        for argument in self.argv_template:
+            if argument.startswith("{"):
+                value = values[argument[1:-1]]
+                if not value:
+                    raise ValueError(f"adapter placeholder {argument!r} has no case value")
+                result.append(value)
+            else:
+                result.append(argument)
+        return result
 
 
 def _module_origin(name: str) -> Path:
@@ -173,8 +183,67 @@ def _full_adapter() -> CommandAdapter:
     )
 
 
+def _deepseek_adapter(*, transport: str, repeat_index: int) -> CommandAdapter:
+    if transport not in {"fixture", "live"} or not 1 <= repeat_index <= 3:
+        raise ValueError("invalid DeepSeek adapter configuration")
+    fixture_dir = Path(__file__).resolve().parent / "fixtures" / "deepseek-v4-flash"
+    name = "deepseek-fixture" if transport == "fixture" else f"deepseek-v4-flash-r{repeat_index}"
+    command = [
+        sys.executable,
+        "-m",
+        "benchmarks.bria_bench.llm_baseline",
+        "--package",
+        "{package}",
+        "--expected-package-sha256",
+        "{package_sha256}",
+        "--case-id",
+        "{case_id}",
+        "--output",
+        "{output}",
+        "--provider",
+        "deepseek",
+        "--base-url",
+        "https://api.deepseek.com",
+        "--model",
+        "deepseek-v4-flash",
+        "--api-key-env",
+        "DEEPSEEK_API_KEY",
+        "--transport",
+        transport,
+        "--repeat-index",
+        str(repeat_index),
+        "--temperature",
+        "0",
+        "--top-p",
+        "1",
+        "--max-output-tokens",
+        "8192",
+        "--thinking",
+        "disabled",
+        "--input-cache-hit-usd-per-million",
+        "0.0028",
+        "--input-cache-miss-usd-per-million",
+        "0.14",
+        "--output-usd-per-million",
+        "0.28",
+        "--usd-to-cny",
+        "7.2",
+    ]
+    if transport == "fixture":
+        command.extend(("--fixture-dir", str(fixture_dir)))
+    return CommandAdapter(name, "1", tuple(command))
+
+
 def default_adapters() -> dict[str, AdapterProtocol]:
-    return {"full": _full_adapter()}
+    adapters: dict[str, AdapterProtocol] = {
+        "full": _full_adapter(),
+        "deepseek-fixture": _deepseek_adapter(transport="fixture", repeat_index=1),
+    }
+    adapters.update({
+        f"deepseek-v4-flash-r{repeat}": _deepseek_adapter(transport="live", repeat_index=repeat)
+        for repeat in range(1, 4)
+    })
+    return adapters
 
 
 def _adapter_registry(adapters: Mapping[str, AdapterProtocol] | None) -> dict[str, AdapterProtocol]:
@@ -724,9 +793,127 @@ def _failure(
     return result
 
 
-def _telemetry(runtime: Any | None, output_size: int = 0) -> dict[str, Any]:
+_LLM_TELEMETRY_KEYS = frozenset({
+    "provider",
+    "model",
+    "prompt_sha256",
+    "system_prompt_sha256",
+    "user_prompt_sha256",
+    "request_sha256",
+    "input_tokens",
+    "output_tokens",
+    "prompt_cache_hit_tokens",
+    "prompt_cache_miss_tokens",
+    "latency_seconds",
+    "estimated_cost_cny",
+    "temperature",
+    "top_p",
+    "max_output_tokens",
+    "thinking",
+    "repeat_index",
+    "response_cache_status",
+    "response_model",
+    "finish_reason",
+    "system_fingerprint",
+})
+_LLM_TELEMETRY_REQUIRED = _LLM_TELEMETRY_KEYS - {"system_fingerprint"}
+
+
+def _optional_llm_telemetry(output: Path) -> dict[str, Any] | None:
+    path = output / "llm_telemetry.json"
+    if not path.exists():
+        return None
+    payload = _strict_json(path, label="LLM telemetry")
+    if not isinstance(payload, dict) or set(payload) - _LLM_TELEMETRY_KEYS:
+        raise CliError("LLM telemetry has an invalid structure")
+    missing = _LLM_TELEMETRY_REQUIRED - set(payload)
+    if missing:
+        raise CliError(f"LLM telemetry is missing required fields: {sorted(missing)!r}")
+    for key in ("provider", "model", "response_model", "finish_reason", "system_fingerprint"):
+        if key in payload and (not isinstance(payload[key], str) or not payload[key]):
+            raise CliError(f"LLM telemetry {key} must be a non-empty string")
+    for key in (
+        "prompt_sha256",
+        "system_prompt_sha256",
+        "user_prompt_sha256",
+        "request_sha256",
+    ):
+        if key in payload and (
+            not isinstance(payload[key], str) or re.fullmatch(r"[a-f0-9]{64}", payload[key]) is None
+        ):
+            raise CliError(f"LLM telemetry {key} must be SHA-256")
+    for key in (
+        "input_tokens",
+        "output_tokens",
+        "prompt_cache_hit_tokens",
+        "prompt_cache_miss_tokens",
+        "max_output_tokens",
+        "repeat_index",
+    ):
+        if key in payload and (
+            isinstance(payload[key], bool) or not isinstance(payload[key], int) or payload[key] < 0
+        ):
+            raise CliError(f"LLM telemetry {key} must be a non-negative integer")
+    if "repeat_index" in payload and not 1 <= payload["repeat_index"] <= 3:
+        raise CliError("LLM telemetry repeat_index must be between 1 and 3")
+    for key in ("latency_seconds", "estimated_cost_cny", "temperature", "top_p"):
+        if key in payload and (
+            isinstance(payload[key], bool)
+            or not isinstance(payload[key], (int, float))
+            or not math.isfinite(float(payload[key]))
+            or payload[key] < 0
+        ):
+            raise CliError(f"LLM telemetry {key} must be finite and non-negative")
+    if payload.get("thinking") not in (None, "enabled", "disabled"):
+        raise CliError("LLM telemetry thinking is invalid")
+    if "top_p" in payload and not 0 < payload["top_p"] <= 1:
+        raise CliError("LLM telemetry top_p is invalid")
+    if payload.get("response_cache_status") not in (None, "hit", "miss", "fixture"):
+        raise CliError("LLM telemetry response_cache_status is invalid")
+    return payload
+
+
+def _validate_llm_adapter_identity(
+    adapter_name: str, telemetry: Mapping[str, Any] | None
+) -> None:
+    if adapter_name == "deepseek-fixture":
+        expected = {
+            "provider": "deepseek-fixture",
+            "model": "deepseek-v4-flash",
+            "response_model": "deepseek-v4-flash",
+            "repeat_index": 1,
+            "response_cache_status": "fixture",
+        }
+    else:
+        match = re.fullmatch(r"deepseek-v4-flash-r([1-3])", adapter_name)
+        if match is None:
+            return
+        expected = {
+            "provider": "deepseek",
+            "model": "deepseek-v4-flash",
+            "response_model": "deepseek-v4-flash",
+            "repeat_index": int(match.group(1)),
+        }
+    if telemetry is None:
+        raise CliError(f"LLM adapter {adapter_name!r} requires complete LLM telemetry")
+    for key, value in expected.items():
+        if telemetry.get(key) != value:
+            raise CliError(
+                f"LLM adapter {adapter_name!r} telemetry mismatch for {key!r}"
+            )
+    if adapter_name != "deepseek-fixture" and telemetry.get(
+        "response_cache_status"
+    ) not in {"hit", "miss"}:
+        raise CliError(f"LLM adapter {adapter_name!r} has an invalid live cache status")
+
+
+def _telemetry(
+    runtime: Any | None,
+    output_size: int = 0,
+    llm: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
     if runtime is None:
-        return {
+        result: dict[str, Any] = {
             "elapsed_seconds": 0.0,
             "cpu_seconds": 0.0,
             "peak_rss_bytes": 0,
@@ -734,14 +921,18 @@ def _telemetry(runtime: Any | None, output_size: int = 0) -> dict[str, Any]:
             "returncode": None,
             "timed_out": False,
         }
-    return {
-        "elapsed_seconds": runtime.elapsed_seconds,
-        "cpu_seconds": runtime.cpu_seconds,
-        "peak_rss_bytes": runtime.peak_rss_bytes,
-        "output_size_bytes": output_size,
-        "returncode": runtime.returncode,
-        "timed_out": runtime.timed_out,
-    }
+    else:
+        result = {
+            "elapsed_seconds": runtime.elapsed_seconds,
+            "cpu_seconds": runtime.cpu_seconds,
+            "peak_rss_bytes": runtime.peak_rss_bytes,
+            "output_size_bytes": output_size,
+            "returncode": runtime.returncode,
+            "timed_out": runtime.timed_out,
+        }
+    if llm is not None:
+        result["llm"] = dict(llm)
+    return result
 
 
 def _tree_size(path: Path) -> int:
@@ -884,6 +1075,11 @@ def _validate_attempt(
             artifact = _inside_runs(runs, paths[key])
             if artifact.is_symlink() or not artifact.is_file():
                 raise CliError(f"Successful producer artifact is missing for case {case_id!r}: {key}")
+    artifact_llm = _optional_llm_telemetry(output)
+    if expected_adapter is not None:
+        _validate_llm_adapter_identity(expected_adapter.name, artifact_llm)
+    if artifact_llm != payload["telemetry"].get("llm"):
+        raise CliError(f"LLM telemetry artifact differs from run result for case {case_id!r}")
     renormalized = normalize_audit_output(
         case_id, output, package_root=package_root, staging_roots=(output,)
     )
@@ -1200,6 +1396,8 @@ def run_benchmark(
             normalized = _empty_normalized(case_id)
             staging_error: Exception | None = None
             normalization_error: Exception | None = None
+            llm_telemetry_error: Exception | None = None
+            llm_telemetry: dict[str, Any] | None = None
             try:
                 _reject_symlink_tree(staging, label="fresh producer staging")
             except Exception as exc:
@@ -1211,6 +1409,11 @@ def run_benchmark(
                     )
                 except Exception as exc:
                     normalization_error = exc
+                try:
+                    llm_telemetry = _optional_llm_telemetry(staging)
+                    _validate_llm_adapter_identity(adapter.name, llm_telemetry)
+                except Exception as exc:
+                    llm_telemetry_error = exc
 
             missing = [
                 name
@@ -1250,6 +1453,15 @@ def run_benchmark(
                     staging=staging,
                     package=package,
                 )
+            elif llm_telemetry_error is not None:
+                status = "invalid_output"
+                failure = _failure(
+                    "invalid_output",
+                    f"Could not validate LLM telemetry: {type(llm_telemetry_error).__name__}: {llm_telemetry_error}",
+                    runtime=runtime,
+                    staging=staging,
+                    package=package,
+                )
             elif missing:
                 status = "missing_output"
                 failure = _failure(
@@ -1272,7 +1484,11 @@ def run_benchmark(
                 status = "success"
                 failure = None
 
-            if staging_error is not None or normalization_error is not None:
+            if (
+                staging_error is not None
+                or normalization_error is not None
+                or llm_telemetry_error is not None
+            ):
                 if runtime.status == "timeout":
                     formal_status = "timeout"
                 elif runtime.status != "success":
@@ -1281,9 +1497,15 @@ def run_benchmark(
                     formal_status = "environment_failure"
                 elif staging_error is not None:
                     formal_status = "invalid_output"
+                elif llm_telemetry_error is not None:
+                    formal_status = "invalid_output"
                 else:
                     formal_status = "normalization_error"
-                detail = staging_error if staging_error is not None else normalization_error
+                detail = next(
+                    item
+                    for item in (staging_error, llm_telemetry_error, normalization_error)
+                    if item is not None
+                )
                 raise _CaseFailure(
                     formal_status,
                     f"Producer output could not be safely normalized: {type(detail).__name__}: {detail}",
@@ -1309,7 +1531,7 @@ def run_benchmark(
                 "cache_key": cache_key,
                 "cache_status": cache_status,
                 "command": logical,
-                "telemetry": _telemetry(runtime, output_size),
+                "telemetry": _telemetry(runtime, output_size, llm_telemetry),
                 "output_paths": {
                     "case_output": output_rel.as_posix(),
                     "run_result": result_rel.as_posix(),
@@ -1531,7 +1753,11 @@ def evaluate_benchmark(
             verify_frozen_case(manifest_file.parent, dict(case))
             package, _ = resolve_case_paths(manifest_file.parent, dict(case))
             run = _validate_attempt(
-                result_path, runs=runs, case_id=case_id, package_root=package
+                result_path,
+                runs=runs,
+                case_id=case_id,
+                expected_adapter=adapter,
+                package_root=package,
             )
             probe = adapter.build_command(package=package, case=case, output="{staging_output}")
             expected_key, expected_hashes, _ = _cache_material(

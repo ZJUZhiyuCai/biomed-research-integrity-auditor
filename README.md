@@ -339,9 +339,12 @@ A persisted scorecard at [`evals/llm_runs/2026-06-30-codex-orchestrated/`](evals
 ```bash
 python -m pip install -e ".[benchmark]"
 make benchmark-smoke
+make benchmark-llm-smoke  # offline DeepSeek-compatible response fixtures
 ```
 
 The current public BRIA-Bench corpus has 36 fixtures, no public test split, no completed independent blinded result, and zero headline-eligible cases. The 30 synthetic legacy cases are regression/reliability/performance fixtures only, and the 6 dev fixtures are controlled workflow cases; neither group measures real-manuscript validation. Read [`benchmarks/bria_bench/README.md`](benchmarks/bria_bench/README.md) before using the manual full benchmark targets.
+
+The optional live DeepSeek baseline is an explicit external-data transfer, not part of the local-first audit path. It requires both `DEEPSEEK_API_KEY` and `BRIA_BENCH_ALLOW_REMOTE_LLM=1`; the offline fixture does not make network requests. DeepSeek V4 is text-only, so image pixels are recorded as an unexecuted modality rather than silently treated as reviewed.
 
 ### Public-concern benchmark
 

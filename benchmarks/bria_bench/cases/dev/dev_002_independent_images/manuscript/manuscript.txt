@@ -1,1 +1,1 @@
-Controlled Figure 2 contains two independently generated panels supplied as an image-similarity negative control.
+Figure 2 contains two procedurally generated image panels.
