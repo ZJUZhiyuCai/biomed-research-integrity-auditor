@@ -1475,8 +1475,10 @@ def build_parser() -> argparse.ArgumentParser:
         "reviewer-packet", help="Export Task 11 reviewer packet (when installed)."
     )
     packet.add_argument("--manifest", required=True, type=Path)
+    packet.add_argument("--case", action="append", dest="case_ids", required=True)
     packet.add_argument("--output-dir", required=True, type=Path)
     packet.add_argument("--mapping-output", required=True, type=Path)
+    packet.add_argument("--seed-file", required=True, type=Path)
     return parser
 
 
@@ -1540,7 +1542,13 @@ def _dispatch(args: argparse.Namespace) -> int:
                     "The reviewer-packet command requires BRIA-Bench Task 11; reviewer_packet.py is not implemented yet"
                 ) from exc
             raise
-        export_reviewer_packet(args.manifest, args.output_dir, args.mapping_output)
+        export_reviewer_packet(
+            args.manifest,
+            args.case_ids,
+            args.output_dir,
+            args.mapping_output,
+            args.seed_file,
+        )
         return 0
     raise CliError(f"Unsupported command: {args.command}")
 

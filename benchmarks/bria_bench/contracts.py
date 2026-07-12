@@ -20,6 +20,10 @@ _SCHEMA_NAMES = frozenset(
         "benchmark_manifest.schema.json",
         "metrics.schema.json",
         "observation.schema.json",
+        "reviewer_form_completed.schema.json",
+        "reviewer_form_template.schema.json",
+        "reviewer_mapping.schema.json",
+        "reviewer_packet_manifest.schema.json",
         "run_result.schema.json",
     }
 )
@@ -444,11 +448,99 @@ def _validate_metrics(name: str, payload: dict[str, Any]) -> None:
     _require_unique(name, payload.get("case_results", []), "case_id", ("case_results",))
 
 
+def _validate_reviewer_packet_manifest(name: str, payload: dict[str, Any]) -> None:
+    _require_unique(
+        name,
+        payload["cases"],
+        "reviewer_case_id",
+        ("cases",),
+    )
+
+
+def _validate_reviewer_mapping(name: str, payload: dict[str, Any]) -> None:
+    _require_unique(
+        name,
+        payload["cases"],
+        "reviewer_case_id",
+        ("cases",),
+    )
+    _require_unique(
+        name,
+        payload["cases"],
+        "source_case_id",
+        ("cases",),
+    )
+
+
+def _validate_reviewer_form_template(name: str, payload: list[dict[str, Any]]) -> None:
+    if len(payload) != 1:
+        _raise_contract_error(name, (), "must contain exactly one blank row")
+
+
+def _validate_reviewer_form_completed(
+    name: str,
+    payload: list[dict[str, Any]],
+) -> None:
+    reviewer_case_id = payload[0]["reviewer_case_id"]
+    for index, row in enumerate(payload):
+        if row["reviewer_case_id"] != reviewer_case_id:
+            _raise_contract_error(
+                name,
+                (index, "reviewer_case_id"),
+                "must match every other row in the completed form",
+            )
+        presence = row["presence"]
+        if presence == "present":
+            if row["comment_class"] not in {"major", "minor"}:
+                _raise_contract_error(
+                    name,
+                    (index, "comment_class"),
+                    "must be major or minor when presence is present",
+                )
+            if not row["locations"]:
+                _raise_contract_error(
+                    name,
+                    (index, "locations"),
+                    "must identify at least one location when presence is present",
+                )
+            for field in ("observation", "scientific_relevance"):
+                if not row[field].strip():
+                    _raise_contract_error(
+                        name,
+                        (index, field),
+                        f"{field} narrative is required when presence is present",
+                    )
+        elif presence == "insufficient_materials":
+            if row["comment_class"] != "materials_request":
+                _raise_contract_error(
+                    name,
+                    (index, "comment_class"),
+                    "must be materials_request when materials are insufficient",
+                )
+            if not row["required_materials"]:
+                _raise_contract_error(
+                    name,
+                    (index, "required_materials"),
+                    "must identify required materials when materials are insufficient",
+                )
+        elif presence == "absent":
+            if len(payload) != 1:
+                _raise_contract_error(
+                    name,
+                    (index, "presence"),
+                    "absent must be the sole row in a completed form",
+                )
+
+
 _SEMANTIC_VALIDATORS = {
     "annotation.schema.json": _validate_annotation,
     "benchmark_manifest.schema.json": _validate_manifest,
     "metrics.schema.json": _validate_metrics,
     "observation.schema.json": _validate_normalized_observation,
+    "reviewer_form_completed.schema.json": _validate_reviewer_form_completed,
+    "reviewer_form_template.schema.json": _validate_reviewer_form_template,
+    "reviewer_mapping.schema.json": _validate_reviewer_mapping,
+    "reviewer_packet_manifest.schema.json": _validate_reviewer_packet_manifest,
     "run_result.schema.json": _validate_run_result,
 }
 

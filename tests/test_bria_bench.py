@@ -80,6 +80,10 @@ SCHEMA_NAMES = (
     "observation.schema.json",
     "run_result.schema.json",
     "metrics.schema.json",
+    "reviewer_packet_manifest.schema.json",
+    "reviewer_mapping.schema.json",
+    "reviewer_form_template.schema.json",
+    "reviewer_form_completed.schema.json",
 )
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
@@ -4019,7 +4023,7 @@ class BriaBenchRuntimeTests(unittest.TestCase):
         self.assertIn("benchmarks.bria_bench", setuptools["packages"])
         self.assertEqual(
             setuptools["package-data"]["benchmarks.bria_bench"],
-            ["schemas/*.json"],
+            ["REVIEWER_GUIDE.md", "schemas/*.json"],
         )
 
     def assert_identity_gone(self, pid: int, create_time: float) -> None:

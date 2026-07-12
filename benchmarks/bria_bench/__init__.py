@@ -9,6 +9,7 @@ __all__ = [
     "CommandAdapter",
     "ContractError",
     "evaluate_benchmark",
+    "export_reviewer_packet",
     "run_benchmark",
     "validate_contract",
     "__version__",
@@ -16,6 +17,10 @@ __all__ = [
 
 
 def __getattr__(name: str) -> Any:
+    if name == "export_reviewer_packet":
+        from .reviewer_packet import export_reviewer_packet
+
+        return export_reviewer_packet
     if name in {"AdapterProtocol", "CommandAdapter", "evaluate_benchmark", "run_benchmark"}:
         from . import cli
 
