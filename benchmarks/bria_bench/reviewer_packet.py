@@ -41,6 +41,37 @@ _LICENSE_ALLOWLIST = frozenset({"MIT", "CC0-1.0"})
 _SEED_PATTERN = re.compile(rb"^[a-f0-9]{64}$")
 _SEMANTIC_VERSION = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$")
 _CASE_ID_CHARS = rb"A-Za-z0-9._-"
+_CASE_ID_TEXT_CHARS = frozenset(
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-"
+)
+_ENCODED_TEXT_ENCODINGS = (
+    ("utf-8", 1),
+    ("utf-16-le", 2),
+    ("utf-16-be", 2),
+    ("utf-32-le", 4),
+    ("utf-32-be", 4),
+)
+_ENCODED_LOCAL_PATH_MARKERS = frozenset(
+    {
+        "/Users/",
+        "/home/",
+        "/private/",
+        "/root/",
+        "/tmp/",
+        "/var/folders/",
+        "/Volumes/",
+        "/mnt/",
+        "C:\\Users\\",
+        "file:///Users/",
+        "file:///home/",
+        "file:///private/",
+        "file:///root/",
+        "file:///tmp/",
+        "file:///var/folders/",
+        "file:///Volumes/",
+        "file:///mnt/",
+    }
+)
 _CHUNK_SIZE = 1024 * 1024
 _MAX_ARCHIVE_DEPTH = 4
 _MAX_ARCHIVE_MEMBERS = 10_000
@@ -234,10 +265,19 @@ class _SourceCase:
 
 
 @dataclass(frozen=True)
+class _EncodedIdentifierPattern:
+    encoding: str
+    unit_width: int
+    pattern: re.Pattern[bytes]
+
+
+@dataclass(frozen=True)
 class _ScanPolicy:
     identifiers: tuple[str, ...]
     paths: tuple[str, ...]
     forbidden_bytes: tuple[bytes, ...]
+    encoded_identifier_patterns: tuple[_EncodedIdentifierPattern, ...]
+    encoded_forbidden_patterns: tuple[re.Pattern[bytes], ...]
 
 
 def _as_path(value: Path | str, label: str) -> Path:
@@ -880,6 +920,105 @@ def _identifier_bytes_pattern(value: str) -> re.Pattern[bytes]:
     )
 
 
+def _text_marker_variants(value: str) -> tuple[str, ...]:
+    normalized = unicodedata.normalize("NFC", value)
+    bases = {value, normalized, unicodedata.normalize("NFD", normalized)}
+    return tuple(
+        sorted(
+            {
+                variant
+                for base in bases
+                for variant in (base, base.casefold(), base.lower(), base.upper())
+            }
+            - {""}
+        )
+    )
+
+
+def _compile_literal_pattern(payloads: set[bytes]) -> re.Pattern[bytes] | None:
+    if not payloads:
+        return None
+    alternatives = sorted(payloads, key=lambda value: (-len(value), value))
+    return re.compile(b"|".join(re.escape(value) for value in alternatives))
+
+
+def _compile_encoded_identifier_patterns(
+    identifiers: tuple[str, ...],
+) -> tuple[_EncodedIdentifierPattern, ...]:
+    compiled: list[_EncodedIdentifierPattern] = []
+    for encoding, unit_width in _ENCODED_TEXT_ENCODINGS:
+        payloads = {
+            variant.encode(encoding, errors="strict")
+            for identifier in identifiers
+            for variant in _text_marker_variants(identifier)
+        }
+        pattern = _compile_literal_pattern(payloads)
+        if pattern is not None:
+            compiled.append(_EncodedIdentifierPattern(encoding, unit_width, pattern))
+    return tuple(compiled)
+
+
+def _compile_encoded_forbidden_patterns(
+    values: tuple[str, ...],
+    *,
+    include_case_variants: bool = True,
+) -> tuple[re.Pattern[bytes], ...]:
+    compiled: list[re.Pattern[bytes]] = []
+    for encoding, _ in _ENCODED_TEXT_ENCODINGS:
+        payloads: set[bytes] = set()
+        for value in values:
+            variants = (
+                _text_marker_variants(value) if include_case_variants else (value,)
+            )
+            payloads.update(
+                variant.encode(encoding, errors="strict")
+                for variant in variants
+                if variant
+            )
+        pattern = _compile_literal_pattern(payloads)
+        if pattern is not None:
+            compiled.append(pattern)
+    return tuple(compiled)
+
+
+def _encoded_unit_is_case_id_character(
+    unit: bytes,
+    encoding: str,
+    unit_width: int,
+) -> bool:
+    if len(unit) != unit_width:
+        return False
+    try:
+        character = unit.decode(encoding, errors="strict")
+    except UnicodeError:
+        return False
+    return len(character) == 1 and character in _CASE_ID_TEXT_CHARS
+
+
+def _encoded_identifier_present(
+    data: bytes,
+    compiled: _EncodedIdentifierPattern,
+) -> bool:
+    position = 0
+    while True:
+        match = compiled.pattern.search(data, position)
+        if match is None:
+            return False
+        before = data[match.start() - compiled.unit_width : match.start()]
+        after = data[match.end() : match.end() + compiled.unit_width]
+        if not _encoded_unit_is_case_id_character(
+            before,
+            compiled.encoding,
+            compiled.unit_width,
+        ) and not _encoded_unit_is_case_id_character(
+            after,
+            compiled.encoding,
+            compiled.unit_width,
+        ):
+            return True
+        position = match.start() + 1
+
+
 def _raise_leak(label: str, category: str) -> None:
     raise ReviewerPacketError(f"Packet leakage scan found {category} in {label}")
 
@@ -917,6 +1056,9 @@ def _scan_raw_bytes(data: bytes, label: str, policy: _ScanPolicy) -> None:
     for identifier in policy.identifiers:
         if _identifier_bytes_pattern(identifier).search(data):
             _raise_leak(label, "an exact source identifier")
+    for compiled in policy.encoded_identifier_patterns:
+        if _encoded_identifier_present(data, compiled):
+            _raise_leak(label, "an exact source identifier")
     for path in policy.paths:
         encoded = path.encode("utf-8", errors="strict")
         if encoded and encoded.lower() in lowered:
@@ -927,6 +1069,9 @@ def _scan_raw_bytes(data: bytes, label: str, policy: _ScanPolicy) -> None:
     for forbidden in policy.forbidden_bytes:
         if forbidden and forbidden in data:
             _raise_leak(label, "seed or external mapping bytes")
+    for pattern in policy.encoded_forbidden_patterns:
+        if pattern.search(data):
+            _raise_leak(label, "a sensitive encoded marker")
     if b"-----begin " in lowered and b"private key-----" in lowered:
         _raise_leak(label, "a private-key or credential form")
     if re.search(
@@ -1498,10 +1643,16 @@ def _scan_staged_packet(
     mapping_identity: tuple[int, int] | None = None,
 ) -> None:
     stage_inventory = _inventory_tree(stage, enforce_material_policy=False)
+    encoded_mapping_patterns = _compile_encoded_forbidden_patterns(
+        (mapping_bytes.decode("utf-8", errors="strict"),),
+        include_case_variants=False,
+    )
     mapping_policy = _ScanPolicy(
         policy.identifiers,
         policy.paths,
         tuple(item for item in policy.forbidden_bytes + (mapping_bytes,) if item),
+        policy.encoded_identifier_patterns,
+        policy.encoded_forbidden_patterns + encoded_mapping_patterns,
     )
     _assert_no_xattrs(stage)
     for kind, relative in stage_inventory:
@@ -1569,10 +1720,22 @@ def _make_scan_policy(
             paths.add(str(path.absolute()))
     paths.discard("")
     identifiers.discard("")
+    identifier_values = tuple(sorted(identifiers))
+    path_values = tuple(sorted(paths))
+    encoded_forbidden_values = tuple(
+        sorted(
+            set(path_values)
+            | set(_SENSITIVE_MARKERS)
+            | set(_ENCODED_LOCAL_PATH_MARKERS)
+            | {seed_text.decode("ascii", errors="strict")}
+        )
+    )
     return _ScanPolicy(
-        tuple(sorted(identifiers)),
-        tuple(sorted(paths)),
+        identifier_values,
+        path_values,
         (seed, seed_text),
+        _compile_encoded_identifier_patterns(identifier_values),
+        _compile_encoded_forbidden_patterns(encoded_forbidden_values),
     )
 
 

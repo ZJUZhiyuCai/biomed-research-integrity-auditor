@@ -591,10 +591,34 @@ class ReviewerFormContractTests(unittest.TestCase):
 
 
 class ReviewerPacketLeakageTests(ReviewerPacketFixture):
+    def make_unicode_source_case(self, source_id: str = "\u6e90\u6848") -> Path:
+        old_id = "source_alpha"
+        package = self.cases_root / source_id
+        (self.cases_root / old_id).rename(package)
+
+        old_annotation = self.annotations_root / f"{old_id}.json"
+        annotation = json.loads(old_annotation.read_text(encoding="utf-8"))
+        annotation["case_id"] = source_id
+        new_annotation = self.annotations_root / f"{source_id}.json"
+        new_annotation.write_bytes(_json_bytes(annotation))
+        old_annotation.unlink()
+
+        source_manifest = json.loads(self.source_manifest.read_text(encoding="utf-8"))
+        case = next(
+            item for item in source_manifest["cases"] if item["case_id"] == old_id
+        )
+        case["case_id"] = source_id
+        case["package_path"] = f"cases/{source_id}"
+        case["annotation_path"] = f"annotations/{source_id}.json"
+        self.source_manifest.write_bytes(_json_bytes(source_manifest))
+        self.case_ids[self.case_ids.index(old_id)] = source_id
+        return package
+
     def assert_leak_rejected(
         self,
         expected: str | None = None,
         *,
+        case_id: str = "source_alpha",
         hidden_values: tuple[str, ...] = (),
     ) -> None:
         from benchmarks.bria_bench.reviewer_packet import ReviewerPacketError
@@ -605,7 +629,7 @@ class ReviewerPacketLeakageTests(ReviewerPacketFixture):
             else self.assertRaises(ReviewerPacketError)
         )
         with context as caught:
-            self.export(case_ids=["source_alpha"])
+            self.export(case_ids=[case_id])
         message = str(caught.exception)
         for value in hidden_values:
             self.assertNotIn(value, message)
@@ -652,6 +676,47 @@ class ReviewerPacketLeakageTests(ReviewerPacketFixture):
         )
         self.refreeze()
         self.assert_leak_rejected(hidden_values=sensitive)
+
+    def test_rejects_unicode_source_id_in_bomless_utf16_le(self) -> None:
+        source_id = "\u6e90\u6848"
+        package = self.make_unicode_source_case(source_id)
+        secret = "\u6c49\u5b57" * 200 + f" {source_id} " + "\u7814\u7a76" * 200
+        (package / "unicode-le.bin").write_bytes(secret.encode("utf-16-le"))
+        self.refreeze()
+        self.assert_leak_rejected(
+            case_id=source_id,
+            hidden_values=(source_id,),
+        )
+
+    def test_rejects_unicode_source_id_in_bomless_utf16_be_archive(self) -> None:
+        source_id = "\u6e90\u6848"
+        package = self.make_unicode_source_case(source_id)
+        secret = "\u6c49\u5b57" * 200 + f" {source_id} " + "\u7814\u7a76" * 200
+        with zipfile.ZipFile(
+            package / "unicode.docx",
+            "w",
+            compression=zipfile.ZIP_DEFLATED,
+        ) as archive:
+            archive.writestr("word/document.xml", secret.encode("utf-16-be"))
+        self.refreeze()
+        self.assert_leak_rejected(
+            case_id=source_id,
+            hidden_values=(source_id,),
+        )
+
+    def test_allows_neutral_bomless_utf16_cjk_for_unicode_case(self) -> None:
+        source_id = "\u6e90\u6848"
+        package = self.make_unicode_source_case(source_id)
+        neutral = (
+            "\u6c49\u5b57" * 200
+            + " \u4e2d\u6027\u79d1\u5b66\u6750\u6599 "
+            + "\u7814\u7a76" * 200
+        ).encode("utf-16-le")
+        (package / "neutral-cjk.bin").write_bytes(neutral)
+        self.refreeze()
+        self.export(case_ids=[source_id])
+        copied = self.output / "cases" / "BRIA-R001" / "materials" / "neutral-cjk.bin"
+        self.assertEqual(copied.read_bytes(), neutral)
 
     def test_rejects_bomless_utf16_be_with_mixed_non_ascii_prose(self) -> None:
         sensitive = (
