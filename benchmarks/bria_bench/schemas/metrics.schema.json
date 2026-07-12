@@ -39,6 +39,9 @@
     "manifest_sha256": {
       "$ref": "#/$defs/sha256"
     },
+    "reproduction": {
+      "$ref": "#/$defs/reproduction"
+    },
     "run_count": {
       "type": "integer",
       "minimum": 0
@@ -66,6 +69,242 @@
     "sha256": {
       "type": "string",
       "pattern": "^[a-f0-9]{64}$"
+    },
+    "safeIdentifier": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$"
+    },
+    "portableCommand": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "allOf": [
+        {
+          "pattern": "^[^\\r\\n]+$"
+        },
+        {
+          "not": {
+            "pattern": "(^|[\\s\"'=])(?:/|~|[A-Za-z]:[\\\\/]|file:)"
+          }
+        }
+      ]
+    },
+    "selection": {
+      "type": "object",
+      "required": [
+        "case_ids",
+        "splits"
+      ],
+      "properties": {
+        "case_ids": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/safeIdentifier"
+              },
+              "uniqueItems": true
+            }
+          ]
+        },
+        "splits": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "array",
+              "items": {
+                "enum": [
+                  "dev",
+                  "test",
+                  "reference"
+                ]
+              },
+              "uniqueItems": true
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "reproductionCommands": {
+      "type": "object",
+      "required": [
+        "run",
+        "evaluate",
+        "report"
+      ],
+      "properties": {
+        "run": {
+          "$ref": "#/$defs/portableCommand"
+        },
+        "evaluate": {
+          "$ref": "#/$defs/portableCommand"
+        },
+        "report": {
+          "$ref": "#/$defs/portableCommand"
+        }
+      },
+      "additionalProperties": false
+    },
+    "reproductionAdapter": {
+      "type": "object",
+      "required": [
+        "name",
+        "version"
+      ],
+      "properties": {
+        "name": {
+          "$ref": "#/$defs/safeIdentifier"
+        },
+        "version": {
+          "$ref": "#/$defs/safeIdentifier"
+        }
+      },
+      "additionalProperties": false
+    },
+    "selectedCase": {
+      "type": "object",
+      "required": [
+        "case_id",
+        "track",
+        "split",
+        "mode",
+        "scan_profile"
+      ],
+      "properties": {
+        "case_id": {
+          "$ref": "#/$defs/safeIdentifier"
+        },
+        "track": {
+          "enum": [
+            "regression",
+            "blinded_challenge",
+            "public_realism",
+            "public_concern",
+            "robustness_scale"
+          ]
+        },
+        "split": {
+          "enum": [
+            "dev",
+            "test",
+            "reference"
+          ]
+        },
+        "mode": {
+          "enum": [
+            "internal_presubmission",
+            "external_public_material",
+            "response_to_concern"
+          ]
+        },
+        "scan_profile": {
+          "enum": [
+            "quick",
+            "standard",
+            "deep"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "caseHash": {
+      "type": "object",
+      "required": [
+        "case_id",
+        "run_result_sha256",
+        "cache_key",
+        "package_sha256",
+        "annotation_sha256",
+        "runner_sha256",
+        "command_sha256",
+        "environment_sha256",
+        "manifest_sha256"
+      ],
+      "properties": {
+        "case_id": {
+          "$ref": "#/$defs/safeIdentifier"
+        },
+        "run_result_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "cache_key": {
+          "$ref": "#/$defs/sha256"
+        },
+        "package_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "annotation_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "runner_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "command_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "environment_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "manifest_sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      },
+      "additionalProperties": false
+    },
+    "reproduction": {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "manifest_sha256",
+        "adapter",
+        "timeout_seconds",
+        "selection",
+        "commands",
+        "selected_cases",
+        "case_hashes"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": "1.0.0"
+        },
+        "manifest_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "adapter": {
+          "$ref": "#/$defs/reproductionAdapter"
+        },
+        "timeout_seconds": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "selection": {
+          "$ref": "#/$defs/selection"
+        },
+        "commands": {
+          "$ref": "#/$defs/reproductionCommands"
+        },
+        "selected_cases": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/selectedCase"
+          },
+          "uniqueItems": true
+        },
+        "case_hashes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/caseHash"
+          },
+          "uniqueItems": true
+        }
+      },
+      "additionalProperties": false
     },
     "fraction": {
       "type": "object",

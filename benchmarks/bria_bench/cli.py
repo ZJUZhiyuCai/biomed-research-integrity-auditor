@@ -41,6 +41,14 @@ _CASE_OUTPUT_ARTIFACTS = {
     "stdout_log": "stdout.log",
     "stderr_log": "stderr.log",
 }
+_PROVENANCE_HASH_KEYS = (
+    "package_sha256",
+    "annotation_sha256",
+    "runner_sha256",
+    "command_sha256",
+    "environment_sha256",
+    "manifest_sha256",
+)
 _RUNNER_SUFFIXES = frozenset({".json", ".md", ".py", ".toml", ".yaml", ".yml"})
 _DEPENDENCIES = {
     "numpy": ("numpy",),
@@ -383,6 +391,192 @@ def _timeout_from_command(command: object) -> float:
     if len(markers) != 1 or command[-1] != markers[0]:
         raise CliError("run result lacks one canonical timeout execution policy")
     return _normalized_timeout(markers[0].split("=", 1)[1])
+
+
+def _strict_json_bytes(data: bytes, *, label: str) -> Any:
+    try:
+        return json.loads(
+            data.decode("utf-8"),
+            object_pairs_hook=_strict_pairs,
+            parse_constant=lambda value: (_ for _ in ()).throw(
+                CliError(f"non-finite JSON value: {value}")
+            ),
+        )
+    except CliError:
+        raise
+    except (UnicodeError, json.JSONDecodeError) as exc:
+        raise CliError(f"Could not read strict JSON {label}: {exc}") from exc
+
+
+def _validated_run_result_artifact_sha256(
+    path: Path,
+    *,
+    runs: Path,
+    case_id: str,
+    expected_payload: Mapping[str, Any],
+) -> str:
+    from .contracts import validate_contract
+
+    if path.is_symlink() or not path.is_file():
+        raise CliError(f"Run result artifact is unsafe or missing for case {case_id!r}")
+    relative = path.relative_to(runs).as_posix()
+    try:
+        data = path.read_bytes()
+    except OSError as exc:
+        raise CliError(f"Could not read run result artifact for case {case_id!r}") from exc
+    payload = _strict_json_bytes(data, label=f"run result artifact for {case_id}")
+    validate_contract("run_result.schema.json", payload)
+    if (
+        not isinstance(payload, dict)
+        or payload.get("case_id") != case_id
+        or payload.get("output_paths", {}).get("run_result") != relative
+    ):
+        raise CliError(f"Run result artifact identity mismatch for case {case_id!r}")
+    if payload != dict(expected_payload):
+        raise CliError(f"Run result artifact changed during validation for case {case_id!r}")
+    return hashlib.sha256(data).hexdigest()
+
+
+def _manifest_order_selection(
+    manifest: Mapping[str, Any], selected: Sequence[Mapping[str, Any]]
+) -> list[Mapping[str, Any]]:
+    selected_ids = [str(case["case_id"]) for case in selected]
+    if len(selected_ids) != len(set(selected_ids)):
+        raise CliError("case selection contains duplicate case IDs")
+    requested = set(selected_ids)
+    ordered = [case for case in manifest["cases"] if case["case_id"] in requested]
+    if len(ordered) != len(selected_ids):
+        raise CliError("case selection contradicts the frozen manifest")
+    return ordered
+
+
+def _selection_filter_payload(
+    *,
+    case_ids: Sequence[str] | None,
+    splits: str | Sequence[str] | None,
+    selected_cases: Sequence[Mapping[str, Any]],
+) -> dict[str, list[str] | None]:
+    if case_ids is None:
+        canonical_cases: list[str] | None = None
+    else:
+        canonical_cases = [str(case["case_id"]) for case in selected_cases]
+    if splits is None:
+        canonical_splits: list[str] | None = None
+    else:
+        split_values = [splits] if isinstance(splits, str) else list(splits)
+        requested = set(split_values)
+        canonical_splits = [split for split in _SPLITS if split in requested]
+    return {"case_ids": canonical_cases, "splits": canonical_splits}
+
+
+def _reproduction_selection_args(selection: Mapping[str, Any]) -> list[str]:
+    args: list[str] = []
+    for case_id in selection.get("case_ids") or []:
+        args.extend(["--case", str(case_id)])
+    for split in selection.get("splits") or []:
+        args.extend(["--split", str(split)])
+    return args
+
+
+def _render_reproduction_command(parts: Sequence[str]) -> str:
+    for part in parts:
+        if not part or re.search(r"[\r\n]", part):
+            raise CliError("reproduction command contains an unsafe argument")
+    return " ".join(parts)
+
+
+def _build_reproduction_record(
+    *,
+    manifest_sha: str,
+    selected_cases: Sequence[Mapping[str, Any]],
+    case_ids: Sequence[str] | None,
+    splits: str | Sequence[str] | None,
+    adapters_seen: set[tuple[str, str]],
+    timeouts: set[float],
+    case_hashes_by_id: Mapping[str, Mapping[str, Any]],
+) -> dict[str, Any]:
+    if len(adapters_seen) != 1:
+        raise CliError("selected run results do not share one adapter identity")
+    adapter_name, adapter_version = next(iter(adapters_seen))
+    if _ADAPTER_ID.fullmatch(adapter_name) is None:
+        raise CliError("selected run results use an unsafe adapter name")
+    if _ADAPTER_VERSION.fullmatch(adapter_version) is None:
+        raise CliError("selected run results use an unsafe adapter version")
+    if len(timeouts) != 1:
+        raise CliError("selected run results do not share one timeout policy")
+    timeout_seconds = next(iter(timeouts))
+    selected_ids = [str(case["case_id"]) for case in selected_cases]
+    if set(case_hashes_by_id) != set(selected_ids):
+        raise CliError("case hash rows do not match the selected cases")
+    selection = _selection_filter_payload(
+        case_ids=case_ids,
+        splits=splits,
+        selected_cases=selected_cases,
+    )
+    selection_args = _reproduction_selection_args(selection)
+    timeout_text = format(timeout_seconds, ".17g")
+    commands = {
+        "run": _render_reproduction_command(
+            [
+                "bria-bench",
+                "run",
+                "--manifest",
+                '"${BRIA_BENCH_MANIFEST_JSON}"',
+                "--runs-dir",
+                '"${BRIA_BENCH_RUNS_DIR}"',
+                *selection_args,
+                "--adapter",
+                adapter_name,
+                "--timeout-seconds",
+                timeout_text,
+            ]
+        ),
+        "evaluate": _render_reproduction_command(
+            [
+                "bria-bench",
+                "evaluate",
+                "--manifest",
+                '"${BRIA_BENCH_MANIFEST_JSON}"',
+                "--runs-dir",
+                '"${BRIA_BENCH_RUNS_DIR}"',
+                "--output",
+                '"${BRIA_BENCH_METRICS_JSON}"',
+                *selection_args,
+            ]
+        ),
+        "report": _render_reproduction_command(
+            [
+                "bria-bench",
+                "report",
+                "--metrics",
+                '"${BRIA_BENCH_METRICS_JSON}"',
+                "--output",
+                '"${BRIA_BENCH_REPORT_MD}"',
+            ]
+        ),
+    }
+    return {
+        "schema_version": "1.0.0",
+        "manifest_sha256": manifest_sha,
+        "adapter": {"name": adapter_name, "version": adapter_version},
+        "timeout_seconds": timeout_seconds,
+        "selection": selection,
+        "commands": commands,
+        "selected_cases": [
+            {
+                "case_id": str(case["case_id"]),
+                "track": str(case["track"]),
+                "split": str(case["split"]),
+                "mode": str(case["mode"]),
+                "scan_profile": str(case["scan_profile"]),
+            }
+            for case in selected_cases
+        ],
+        "case_hashes": [
+            dict(case_hashes_by_id[case_id])
+            for case_id in selected_ids
+        ],
+    }
 
 
 def _cache_material(
@@ -1355,6 +1549,7 @@ def evaluate_benchmark(
     manifest_file = Path(manifest_path)
     manifest = load_manifest(manifest_file, require_frozen=True, resolve_paths=False)
     selected = _select_cases(manifest, case_ids, splits)
+    selected_manifest_order = _manifest_order_selection(manifest, selected)
     registry = _adapter_registry(adapters)
     providers = dict(assertion_providers or {})
     manifest_sha = hashlib.sha256(manifest_file.read_bytes()).hexdigest()
@@ -1366,6 +1561,9 @@ def evaluate_benchmark(
         raise CliError(f"Run summary lacks requested cases: {missing!r}")
 
     bundles: list[dict[str, Any]] = []
+    adapters_seen: set[tuple[str, str]] = set()
+    timeouts: set[float] = set()
+    case_hashes_by_id: dict[str, dict[str, Any]] = {}
     for case in selected:
         case_id = str(case["case_id"])
         _, annotation = _verified_annotation(manifest_file, case)
@@ -1376,12 +1574,13 @@ def evaluate_benchmark(
         if adapter_name not in registry:
             raise CliError(f"No registered adapter can verify run {case_id!r}: {adapter_name!r}")
         adapter = registry[adapter_name]
+        timeout_seconds = _timeout_from_command(raw_run["command"])
         fallback_key, fallback_hashes, fallback_logical = _fallback_material(
             manifest,
             case,
             adapter,
             manifest_sha,
-            _timeout_from_command(raw_run["command"]),
+            timeout_seconds,
         )
         is_preflight_failure = (
             raw_run["status"] == "environment_failure"
@@ -1411,6 +1610,40 @@ def evaluate_benchmark(
 
         if run["status"] != summary_case["status"]:
             raise CliError(f"Run summary status mismatch for case {case_id!r}")
+        adapter_version = run.get("adapter_version")
+        if not isinstance(adapter_version, str) or not adapter_version:
+            raise CliError(f"Run result lacks adapter version for case {case_id!r}")
+        adapters_seen.add((adapter_name, adapter_version))
+        run_timeout = _timeout_from_command(run["command"])
+        if run_timeout != timeout_seconds:
+            raise CliError(f"Run result timeout policy changed for case {case_id!r}")
+        timeouts.add(run_timeout)
+        hashes = run["hashes"]
+        missing_hashes = [key for key in _PROVENANCE_HASH_KEYS if key not in hashes]
+        if missing_hashes:
+            raise CliError(
+                f"Run result lacks provenance hashes for case {case_id!r}: {missing_hashes!r}"
+            )
+        if hashes["manifest_sha256"] != manifest_sha:
+            raise CliError(f"Run result manifest hash mismatch for case {case_id!r}")
+        if hashes["package_sha256"] != str(case["expected_sha256"]):
+            raise CliError(f"Run result package hash mismatch for case {case_id!r}")
+        if hashes["annotation_sha256"] != str(case["annotation_sha256"]):
+            raise CliError(f"Run result annotation hash mismatch for case {case_id!r}")
+        if case_id in case_hashes_by_id:
+            raise CliError(f"duplicate evaluated case hash row: {case_id}")
+        run_result_sha = _validated_run_result_artifact_sha256(
+            result_path,
+            runs=runs,
+            case_id=case_id,
+            expected_payload=run,
+        )
+        case_hashes_by_id[case_id] = {
+            "case_id": case_id,
+            "run_result_sha256": run_result_sha,
+            "cache_key": run["cache_key"],
+            **{key: hashes[key] for key in _PROVENANCE_HASH_KEYS},
+        }
         labels = select_evaluation_labels(case, annotation)
         match = match_labels(
             labels,
@@ -1435,11 +1668,21 @@ def evaluate_benchmark(
             }
         )
 
+    reproduction = _build_reproduction_record(
+        manifest_sha=manifest_sha,
+        selected_cases=selected_manifest_order,
+        case_ids=case_ids,
+        splits=splits,
+        adapters_seen=adapters_seen,
+        timeouts=timeouts,
+        case_hashes_by_id=case_hashes_by_id,
+    )
     metrics = aggregate_metrics(
         cases=bundles,
         benchmark_id=manifest["benchmark_id"],
         benchmark_version=manifest["benchmark_version"],
         manifest_sha256=manifest_sha,
+        reproduction=reproduction,
         generated_at=generated_at,
     )
     _write_json_atomic(Path(output_path), metrics)

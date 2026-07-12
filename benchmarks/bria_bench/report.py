@@ -97,6 +97,10 @@ _CREDENTIAL_ASSIGNMENT = re.compile(
     r"password|passwd|private[._\s-]?key|secret)\s*[:=]",
     re.IGNORECASE,
 )
+_COMMAND_LOCAL_PATH = re.compile(
+    r"(^|[\s\"'=])(?:/|~|[A-Za-z]:[\\/]|file:)",
+    re.IGNORECASE,
+)
 _PROHIBITED_REPORT_LANGUAGE = re.compile(
     r"(?<![a-z0-9])(?:pass|fail|verdict)(?![a-z0-9])|"
     r"(?<![a-z0-9])(?:overall[^a-z0-9]+score|composite[^a-z0-9]+score|"
@@ -176,6 +180,18 @@ def _require_safe_identifier(value: str, path: str) -> None:
         raise _contract_error(path, "unsafe identifier content is not reportable")
 
 
+def _require_safe_command(value: str, path: str) -> None:
+    if (
+        _COMMAND_LOCAL_PATH.search(value)
+        or _EMAIL.search(value)
+        or _SECRET_WORD.search(value)
+        or _SECRET_TOKEN.search(value)
+        or _CREDENTIAL_ASSIGNMENT.search(value)
+        or _PROHIBITED_REPORT_LANGUAGE.search(value)
+    ):
+        raise _contract_error(path, "unsafe command content is not reportable")
+
+
 def _iter_distributions(
     metrics: Mapping[str, Any],
 ) -> Iterator[tuple[tuple[str, ...], Mapping[str, Any]]]:
@@ -203,6 +219,27 @@ def _iter_distributions(
 def _validate_safe_fields(metrics: Mapping[str, Any]) -> None:
     for key in ("schema_version", "benchmark_id", "benchmark_version"):
         _require_safe_identifier(metrics[key], key)
+
+    reproduction = metrics.get("reproduction")
+    if reproduction is not None:
+        adapter = reproduction["adapter"]
+        _require_safe_identifier(adapter["name"], "reproduction.adapter.name")
+        _require_safe_identifier(adapter["version"], "reproduction.adapter.version")
+        for key, command in reproduction["commands"].items():
+            _require_safe_command(command, f"reproduction.commands.{key}")
+        selection = reproduction["selection"]
+        for index, case_id in enumerate(selection.get("case_ids") or []):
+            _require_safe_identifier(
+                case_id, f"reproduction.selection.case_ids.{index}"
+            )
+        for index, case in enumerate(reproduction["selected_cases"]):
+            _require_safe_identifier(
+                case["case_id"], f"reproduction.selected_cases.{index}.case_id"
+            )
+        for index, row in enumerate(reproduction["case_hashes"]):
+            _require_safe_identifier(
+                row["case_id"], f"reproduction.case_hashes.{index}.case_id"
+            )
 
     for index, case in enumerate(metrics.get("case_results", [])):
         _require_safe_identifier(case["case_id"], f"case_results.{index}.case_id")
@@ -447,6 +484,148 @@ def _validate_reliability_case_rows(
         )
 
 
+def _require_unique_sequence(values: list[str], path: str) -> None:
+    seen: dict[str, int] = {}
+    for index, value in enumerate(values):
+        if value in seen:
+            raise _contract_error(
+                f"{path}.{index}",
+                f"must be unique; first used at {path}.{seen[value]}",
+            )
+        seen[value] = index
+
+
+def _validate_reproduction(
+    metrics: Mapping[str, Any],
+    case_results: list[Mapping[str, Any]] | None,
+) -> None:
+    reproduction = metrics.get("reproduction")
+    if reproduction is None:
+        return
+
+    recorded_manifest = metrics.get("manifest_sha256")
+    if (
+        recorded_manifest is not None
+        and reproduction["manifest_sha256"] != recorded_manifest
+    ):
+        raise _contract_error(
+            "reproduction.manifest_sha256", "must match manifest_sha256"
+        )
+
+    selected_cases = reproduction["selected_cases"]
+    case_hashes = reproduction["case_hashes"]
+    selected_ids = [case["case_id"] for case in selected_cases]
+    hash_ids = [row["case_id"] for row in case_hashes]
+    _require_unique_sequence(selected_ids, "reproduction.selected_cases.case_id")
+    _require_unique_sequence(hash_ids, "reproduction.case_hashes.case_id")
+    if selected_ids != hash_ids:
+        raise _contract_error(
+            "reproduction.case_hashes",
+            "must contain one row per selected case in selected_cases order",
+        )
+
+    run_count = metrics.get("run_count")
+    if run_count is not None and run_count != len(selected_ids):
+        raise _contract_error(
+            "reproduction.selected_cases", "must contain exactly run_count rows"
+        )
+    if case_results is not None:
+        case_result_ids = [case["case_id"] for case in case_results]
+        if set(case_result_ids) != set(selected_ids):
+            raise _contract_error(
+                "reproduction.selected_cases",
+                "must match the case_results case_id set",
+            )
+
+    selection = reproduction["selection"]
+    selected_filter = selection.get("case_ids")
+    if selected_filter is not None and selected_filter != selected_ids:
+        raise _contract_error(
+            "reproduction.selection.case_ids",
+            "must equal selected_cases case_id order when present",
+        )
+    split_filter = selection.get("splits")
+    if split_filter is not None:
+        selected_splits = {case["split"] for case in selected_cases}
+        if any(split not in split_filter for split in selected_splits):
+            raise _contract_error(
+                "reproduction.selection.splits",
+                "must include every selected case split",
+            )
+
+    for index, row in enumerate(case_hashes):
+        if row["manifest_sha256"] != reproduction["manifest_sha256"]:
+            raise _contract_error(
+                f"reproduction.case_hashes.{index}.manifest_sha256",
+                "must match reproduction.manifest_sha256",
+            )
+
+    adapter_name = reproduction["adapter"]["name"]
+    timeout_text = format(float(reproduction["timeout_seconds"]), ".17g")
+    commands = reproduction["commands"]
+    expected_prefixes = {
+        "run": "bria-bench run ",
+        "evaluate": "bria-bench evaluate ",
+        "report": "bria-bench report ",
+    }
+    for key, prefix in expected_prefixes.items():
+        if not commands[key].startswith(prefix):
+            raise _contract_error(
+                f"reproduction.commands.{key}", "must be a canonical bria-bench command"
+            )
+    if f"--adapter {adapter_name}" not in commands["run"]:
+        raise _contract_error(
+            "reproduction.commands.run", "must record the selected adapter"
+        )
+    if f"--timeout-seconds {timeout_text}" not in commands["run"]:
+        raise _contract_error(
+            "reproduction.commands.run", "must record the selected timeout"
+        )
+    if '"${BRIA_BENCH_MANIFEST_JSON}"' not in commands["run"]:
+        raise _contract_error(
+            "reproduction.commands.run", "must use the manifest placeholder"
+        )
+    for key in ("run", "evaluate"):
+        command = commands[key]
+        if '"${BRIA_BENCH_RUNS_DIR}"' not in command:
+            raise _contract_error(
+                f"reproduction.commands.{key}", "must use the runs-dir placeholder"
+            )
+        if selected_filter is None and "--case " in command:
+            raise _contract_error(
+                f"reproduction.commands.{key}", "must not add case filters"
+            )
+        if selected_filter is not None:
+            for case_id in selected_filter:
+                if f"--case {case_id}" not in command:
+                    raise _contract_error(
+                        f"reproduction.commands.{key}",
+                        "must include every selected case filter",
+                    )
+        if split_filter is None and "--split " in command:
+            raise _contract_error(
+                f"reproduction.commands.{key}", "must not add split filters"
+            )
+        if split_filter is not None:
+            for split in split_filter:
+                if f"--split {split}" not in command:
+                    raise _contract_error(
+                        f"reproduction.commands.{key}",
+                        "must include every selected split filter",
+                    )
+    if '"${BRIA_BENCH_METRICS_JSON}"' not in commands["evaluate"]:
+        raise _contract_error(
+            "reproduction.commands.evaluate", "must use the metrics placeholder"
+        )
+    if (
+        '"${BRIA_BENCH_METRICS_JSON}"' not in commands["report"]
+        or '"${BRIA_BENCH_REPORT_MD}"' not in commands["report"]
+    ):
+        raise _contract_error(
+            "reproduction.commands.report", "must use report placeholders"
+        )
+
+
 def _validate_cross_fields(metrics: Mapping[str, Any]) -> None:
     case_results = metrics.get("case_results")
     rows_by_id = (
@@ -559,6 +738,7 @@ def _validate_cross_fields(metrics: Mapping[str, Any]) -> None:
     _validate_distribution_case_values(metrics, rows_by_id)
     _validate_core_distributions(metrics, case_results)
     _validate_profile_totals(metrics)
+    _validate_reproduction(metrics, case_results)
 
 
 def _escape_markdown(value: object) -> str:
@@ -726,6 +906,70 @@ def _append_case_table(lines: list[str], cases: list[Mapping[str, Any]]) -> None
         )
 
 
+def _append_reproduction_section(lines: list[str], metrics: Mapping[str, Any]) -> None:
+    lines.extend(
+        [
+            "",
+            "## Reproduction command and hashes",
+            "",
+            "| Artifact | Recorded value |",
+            "| --- | --- |",
+            f"| Manifest SHA-256 | {_escape_markdown(metrics.get('manifest_sha256', 'unavailable'))} |",
+        ]
+    )
+    reproduction = metrics.get("reproduction")
+    if reproduction is None:
+        lines.extend(
+            [
+                "",
+                "Reproduction provenance is unavailable in this metrics artifact.",
+            ]
+        )
+        return
+
+    adapter = reproduction["adapter"]
+    lines.extend(
+        [
+            f"| Adapter | {_escape_markdown(adapter['name'])} |",
+            f"| Adapter version | {_escape_markdown(adapter['version'])} |",
+            f"| Timeout seconds | {_format_number(reproduction['timeout_seconds'], places=17)} |",
+            f"| Selected cases | {len(reproduction['selected_cases'])} |",
+            "",
+            "```sh",
+            "# Run",
+            reproduction["commands"]["run"],
+            "",
+            "# Evaluate",
+            reproduction["commands"]["evaluate"],
+            "",
+            "# Report",
+            reproduction["commands"]["report"],
+            "```",
+            "",
+            "| Case ID | Run result SHA-256 | Cache key | Package | Annotation | Runner | Command | Environment | Manifest |",
+            "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
+        ]
+    )
+    for row in reproduction["case_hashes"]:
+        lines.append(
+            "| "
+            + " | ".join(
+                (
+                    _escape_markdown(row["case_id"]),
+                    row["run_result_sha256"],
+                    row["cache_key"],
+                    row["package_sha256"],
+                    row["annotation_sha256"],
+                    row["runner_sha256"],
+                    row["command_sha256"],
+                    row["environment_sha256"],
+                    row["manifest_sha256"],
+                )
+            )
+            + " |"
+        )
+
+
 def render_metrics_report(metrics: dict[str, Any]) -> str:
     """Return a deterministic Markdown report for one metrics artifact.
 
@@ -876,23 +1120,7 @@ def render_metrics_report(metrics: dict[str, Any]) -> str:
     else:
         _append_case_table(lines, case_results)
 
-    manifest_sha = metrics.get("manifest_sha256", "unavailable")
-    lines.extend(
-        [
-            "",
-            "## Reproduction command and hashes",
-            "",
-            "| Artifact | Recorded value |",
-            "| --- | --- |",
-            f"| Manifest SHA-256 | {manifest_sha} |",
-            "",
-            "```sh",
-            "bria-bench report --metrics <metrics.json> --output <REPORT.md>",
-            "```",
-            "",
-            "The benchmark run command and per-run hashes are not recorded in this metrics artifact.",
-        ]
-    )
+    _append_reproduction_section(lines, metrics)
     return "\n".join(lines) + "\n"
 
 

@@ -225,6 +225,69 @@ def minimal_metrics() -> dict[str, object]:
     }
 
 
+def fixture_sha256(index: int) -> str:
+    return hashlib.sha256(f"bria-bench-fixture-{index}".encode("utf-8")).hexdigest()
+
+
+def minimal_reproduction(
+    selected_cases: list[dict[str, str]],
+    *,
+    manifest_sha256: str = "a" * 64,
+    case_filter: list[str] | None = None,
+    split_filter: list[str] | None = None,
+    adapter_name: str = "fake",
+    adapter_version: str = "1",
+    timeout_seconds: float = 5.0,
+) -> dict[str, object]:
+    selection = {"case_ids": case_filter, "splits": split_filter}
+    selection_parts: list[str] = []
+    for case_id in case_filter or []:
+        selection_parts.extend(["--case", case_id])
+    for split in split_filter or []:
+        selection_parts.extend(["--split", split])
+    selection_text = (" " + " ".join(selection_parts)) if selection_parts else ""
+    timeout_text = format(timeout_seconds, ".17g")
+    case_hashes = []
+    for index, case in enumerate(selected_cases, start=1):
+        case_hashes.append(
+            {
+                "case_id": case["case_id"],
+                "run_result_sha256": fixture_sha256(index * 10 + 1),
+                "cache_key": fixture_sha256(index * 10 + 2),
+                "package_sha256": fixture_sha256(index * 10 + 3),
+                "annotation_sha256": fixture_sha256(index * 10 + 4),
+                "runner_sha256": fixture_sha256(index * 10 + 5),
+                "command_sha256": fixture_sha256(index * 10 + 6),
+                "environment_sha256": fixture_sha256(index * 10 + 7),
+                "manifest_sha256": manifest_sha256,
+            }
+        )
+    return {
+        "schema_version": "1.0.0",
+        "manifest_sha256": manifest_sha256,
+        "adapter": {"name": adapter_name, "version": adapter_version},
+        "timeout_seconds": timeout_seconds,
+        "selection": selection,
+        "commands": {
+            "run": (
+                'bria-bench run --manifest "${BRIA_BENCH_MANIFEST_JSON}" '
+                f'--runs-dir "${{BRIA_BENCH_RUNS_DIR}}"{selection_text} '
+                f"--adapter {adapter_name} --timeout-seconds {timeout_text}"
+            ),
+            "evaluate": (
+                'bria-bench evaluate --manifest "${BRIA_BENCH_MANIFEST_JSON}" '
+                f'--runs-dir "${{BRIA_BENCH_RUNS_DIR}}" --output "${{BRIA_BENCH_METRICS_JSON}}"{selection_text}'
+            ),
+            "report": (
+                'bria-bench report --metrics "${BRIA_BENCH_METRICS_JSON}" '
+                '--output "${BRIA_BENCH_REPORT_MD}"'
+            ),
+        },
+        "selected_cases": selected_cases,
+        "case_hashes": case_hashes,
+    }
+
+
 def metric_bundle(
     case_id: str,
     *,
@@ -2712,6 +2775,42 @@ class BriaBenchContractTests(unittest.TestCase):
             r"case_results\.1\.case_id:.*unique",
         ):
             validate_contract("metrics.schema.json", payload)
+
+    def test_metrics_reproduction_schema_is_strict_and_portable(self) -> None:
+        selected = [
+            {
+                "case_id": "dev_001",
+                "track": "blinded_challenge",
+                "split": "dev",
+                "mode": "internal_presubmission",
+                "scan_profile": "quick",
+            }
+        ]
+        payload = minimal_metrics()
+        payload["manifest_sha256"] = "a" * 64
+        payload["reproduction"] = minimal_reproduction(
+            selected,
+            case_filter=["dev_001"],
+            split_filter=["dev"],
+        )
+        validate_contract("metrics.schema.json", payload)
+
+        extra = copy.deepcopy(payload)
+        extra["reproduction"]["unexpected"] = True
+        with self.assertRaisesRegex(ContractError, "unexpected"):
+            validate_contract("metrics.schema.json", extra)
+
+        invalid_hash = copy.deepcopy(payload)
+        invalid_hash["reproduction"]["case_hashes"][0]["run_result_sha256"] = "g" * 64
+        with self.assertRaisesRegex(ContractError, "run_result_sha256"):
+            validate_contract("metrics.schema.json", invalid_hash)
+
+        local_path = copy.deepcopy(payload)
+        local_path["reproduction"]["commands"][
+            "evaluate"
+        ] = "bria-bench evaluate --manifest /Users/alice/benchmark_manifest.json"
+        with self.assertRaisesRegex(ContractError, "evaluate"):
+            validate_contract("metrics.schema.json", local_path)
 
     def test_contracts_recursively_reject_non_finite_numbers(self) -> None:
         for label, non_finite in (
@@ -6721,6 +6820,41 @@ class BriaBenchReportTests(unittest.TestCase):
         metrics["performance"]["over_budget_rate"]["value"] = 0.3333333334
         return metrics
 
+    def metrics_with_reproduction(self) -> dict[str, object]:
+        metrics = self.metrics_fixture()
+        selected = [
+            {
+                "case_id": "case_a",
+                "track": "regression",
+                "split": "dev",
+                "mode": "internal_presubmission",
+                "scan_profile": "standard",
+            },
+            {
+                "case_id": "case_b",
+                "track": "blinded_challenge",
+                "split": "dev",
+                "mode": "internal_presubmission",
+                "scan_profile": "quick",
+            },
+            {
+                "case_id": "case_c",
+                "track": "blinded_challenge",
+                "split": "dev",
+                "mode": "internal_presubmission",
+                "scan_profile": "deep",
+            },
+        ]
+        metrics["reproduction"] = minimal_reproduction(
+            selected,
+            case_filter=[case["case_id"] for case in selected],
+            split_filter=["dev"],
+            adapter_name="fake",
+            adapter_version="1",
+            timeout_seconds=5.0,
+        )
+        return metrics
+
     def assert_appears_in_order(self, text: str, values: list[str]) -> None:
         positions = [text.index(value) for value in values]
         self.assertEqual(positions, sorted(positions))
@@ -7263,14 +7397,68 @@ class BriaBenchReportTests(unittest.TestCase):
         report = render_metrics_report(self.metrics_fixture())
 
         self.assertIn(f"| Manifest SHA-256 | {'a' * 64} |", report)
+        self.assertIn("Reproduction provenance is unavailable", report)
+        self.assertNotIn("per-run hashes are not recorded", report)
+        self.assertNotIn(str(Path.home()), report)
+
+    def test_reproduction_renders_commands_and_case_hashes(self) -> None:
+        metrics = self.metrics_with_reproduction()
+        report = render_metrics_report(metrics)
+
         self.assertIn(
-            "bria-bench report --metrics <metrics.json> --output <REPORT.md>", report
+            'bria-bench run --manifest "${BRIA_BENCH_MANIFEST_JSON}"', report
         )
+        self.assertIn("--adapter fake --timeout-seconds 5", report)
         self.assertIn(
-            "The benchmark run command and per-run hashes are not recorded in this metrics artifact.",
+            'bria-bench evaluate --manifest "${BRIA_BENCH_MANIFEST_JSON}"',
             report,
         )
+        self.assertIn(
+            'bria-bench report --metrics "${BRIA_BENCH_METRICS_JSON}"',
+            report,
+        )
+        self.assertIn(
+            "| Case ID | Run result SHA-256 | Cache key | Package | Annotation | Runner | Command | Environment | Manifest |",
+            report,
+        )
+        for row in metrics["reproduction"]["case_hashes"]:
+            self.assertEqual(report.count(row["run_result_sha256"]), 1)
+            self.assertEqual(report.count(row["cache_key"]), 1)
+        self.assertIn("--case case_a --case case_b --case case_c --split dev", report)
         self.assertNotIn(str(Path.home()), report)
+        self.assertNotIn("/Users/", report)
+        self.assertNotIn("per-run hashes are not recorded", report)
+
+    def test_reproduction_tampering_is_rejected(self) -> None:
+        missing = self.metrics_with_reproduction()
+        missing["reproduction"]["case_hashes"].pop()
+
+        duplicate = self.metrics_with_reproduction()
+        duplicate_row = copy.deepcopy(duplicate["reproduction"]["case_hashes"][0])
+        duplicate_row["run_result_sha256"] = fixture_sha256(999)
+        duplicate["reproduction"]["case_hashes"].append(duplicate_row)
+
+        reordered = self.metrics_with_reproduction()
+        reordered["reproduction"]["case_hashes"][0], reordered["reproduction"][
+            "case_hashes"
+        ][1] = (
+            reordered["reproduction"]["case_hashes"][1],
+            reordered["reproduction"]["case_hashes"][0],
+        )
+
+        unsafe_command = self.metrics_with_reproduction()
+        unsafe_command["reproduction"]["commands"][
+            "run"
+        ] = 'bria-bench run --manifest "/Users/alice/manifest.json"'
+
+        for name, payload in (
+            ("missing", missing),
+            ("duplicate", duplicate),
+            ("reordered", reordered),
+            ("unsafe-command", unsafe_command),
+        ):
+            with self.subTest(name=name), self.assertRaises(ContractError):
+                render_metrics_report(payload)
 
 
 class BriaBenchCliTests(unittest.TestCase):
@@ -7355,6 +7543,37 @@ class BriaBenchCliTests(unittest.TestCase):
             path.rmdir()
         except OSError:
             pass
+
+    def assert_reproduction_matches_run_files(
+        self, metrics: dict[str, Any], runs: Path, summary: dict[str, Any]
+    ) -> None:
+        reproduction = metrics["reproduction"]
+        self.assertEqual(
+            [case["case_id"] for case in reproduction["selected_cases"]],
+            [row["case_id"] for row in reproduction["case_hashes"]],
+        )
+        self.assertEqual(
+            len(reproduction["case_hashes"]),
+            len({row["case_id"] for row in reproduction["case_hashes"]}),
+        )
+        summary_by_id = {row["case_id"]: row for row in summary["cases"]}
+        for row in reproduction["case_hashes"]:
+            path = runs / summary_by_id[row["case_id"]]["run_result"]
+            data = path.read_bytes()
+            run_result = json.loads(data)
+            self.assertEqual(
+                row["run_result_sha256"], hashlib.sha256(data).hexdigest()
+            )
+            self.assertEqual(row["cache_key"], run_result["cache_key"])
+            for key in (
+                "package_sha256",
+                "annotation_sha256",
+                "runner_sha256",
+                "command_sha256",
+                "environment_sha256",
+                "manifest_sha256",
+            ):
+                self.assertEqual(row[key], run_result["hashes"][key])
 
     def configure_legacy_regression_case(
         self, *, required_report_terms: list[str] | None = None
@@ -7854,6 +8073,90 @@ class BriaBenchCliTests(unittest.TestCase):
         )
         self.assertEqual(metrics["detection"]["expected_finding_recall"]["value"], 1)
         self.assertNotIn("generated_at", metrics)
+        self.assertIn("reproduction", metrics)
+        self.assertEqual(
+            metrics["reproduction"]["selection"], {"case_ids": None, "splits": None}
+        )
+        self.assert_reproduction_matches_run_files(metrics, self.runs, second)
+        rendered = render_metrics_report(metrics)
+        self.assertIn('bria-bench run --manifest "${BRIA_BENCH_MANIFEST_JSON}"', rendered)
+        self.assertIn("| case\\_001 |", rendered)
+        serialized_reproduction = json.dumps(metrics["reproduction"], sort_keys=True)
+        self.assertNotIn(str(self.root), serialized_reproduction)
+        self.assertNotIn(str(Path.home()), serialized_reproduction)
+
+    def test_evaluate_reproduction_is_byte_identical_across_roots(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            left = base / "left"
+            left.mkdir()
+            package = left / "package"
+            package.mkdir()
+            (package / "input.txt").write_text("input\n", encoding="utf-8")
+            annotation = minimal_annotation()
+            annotation["case_id"] = "case_001"
+            (left / "annotation.json").write_text(json.dumps(annotation), encoding="utf-8")
+            source = minimal_manifest()
+            source["cases"][0].update(
+                {
+                    "case_id": "case_001",
+                    "package_path": "package",
+                    "annotation_path": "annotation.json",
+                    "headline_eligible": True,
+                }
+            )
+            source_path = left / "source.json"
+            source_path.write_text(json.dumps(source), encoding="utf-8")
+            manifest = left / "manifest.json"
+            freeze_manifest(source_path, manifest, "2026-07-11T00:00:00Z")
+            producer = left / "producer.py"
+            producer.write_text(self.producer.read_text(encoding="utf-8"), encoding="utf-8")
+            adapter = CommandAdapter(
+                name="fake",
+                version="1",
+                argv_template=(sys.executable, str(producer), "{output}", "{case_id}"),
+            )
+            runs = left / "runs"
+            run_benchmark(
+                manifest,
+                runs,
+                adapter_name="fake",
+                adapters={"fake": adapter},
+                timeout_seconds=5,
+            )
+
+            right = base / "right"
+            shutil.copytree(left, right)
+            generated_at = "2026-07-11T00:00:00Z"
+            left_metrics = left / "metrics.json"
+            right_metrics = right / "metrics.json"
+            right_adapter = CommandAdapter(
+                name="fake",
+                version="1",
+                argv_template=(
+                    sys.executable,
+                    str(right / "producer.py"),
+                    "{output}",
+                    "{case_id}",
+                ),
+            )
+
+            evaluate_benchmark(
+                manifest,
+                runs,
+                left_metrics,
+                adapters={"fake": adapter},
+                generated_at=generated_at,
+            )
+            evaluate_benchmark(
+                right / "manifest.json",
+                right / "runs",
+                right_metrics,
+                adapters={"fake": right_adapter},
+                generated_at=generated_at,
+            )
+
+            self.assertEqual(left_metrics.read_bytes(), right_metrics.read_bytes())
 
     def test_unknown_and_duplicate_case_filters_fail(self) -> None:
         for case_ids, message in ((["missing"], "unknown"), (["case_001", "case_001"], "duplicate")):
@@ -7908,6 +8211,17 @@ class BriaBenchCliTests(unittest.TestCase):
         self.assertEqual(
             [item["case_id"] for item in test_metrics["case_results"]], ["case_002"]
         )
+        self.assertEqual(
+            test_metrics["reproduction"]["selection"],
+            {"case_ids": None, "splits": ["test"]},
+        )
+        self.assertEqual(
+            [item["case_id"] for item in test_metrics["reproduction"]["selected_cases"]],
+            ["case_002"],
+        )
+        self.assertIn("--split test", test_metrics["reproduction"]["commands"]["run"])
+        self.assertNotIn("--case", test_metrics["reproduction"]["commands"]["run"])
+        self.assert_reproduction_matches_run_files(test_metrics, test_runs, test_summary)
 
         intersection_runs = self.root / "intersection-runs"
         intersection = run_benchmark(

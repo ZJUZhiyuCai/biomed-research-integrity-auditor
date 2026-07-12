@@ -404,10 +404,16 @@ def aggregate_metrics(
     benchmark_id: str,
     benchmark_version: str,
     manifest_sha256: str | None = None,
+    reproduction: Mapping[str, Any] | None = None,
     generated_at: str | None = None,
     schema_version: str = "1.0.0",
 ) -> dict[str, Any]:
-    """Aggregate validated case bundles into a metrics-schema payload."""
+    """Aggregate validated case bundles into a metrics-schema payload.
+
+    ``reproduction`` is optional for focused unit fixtures.  CLI-produced public
+    metrics must supply it so every rendered number can be traced to the exact
+    run-result artifacts and sealed benchmark inputs.
+    """
     if isinstance(cases, (str, bytes)) or not isinstance(cases, Sequence):
         raise ValueError("cases must be an array of case bundles")
     for name, value in (
@@ -767,6 +773,8 @@ def aggregate_metrics(
     }
     if manifest_sha256 is not None:
         result["manifest_sha256"] = manifest_sha256
+    if reproduction is not None:
+        result["reproduction"] = dict(reproduction)
     if generated_at is not None:
         result["generated_at"] = generated_at
     result = _json_safe_numbers(result)
