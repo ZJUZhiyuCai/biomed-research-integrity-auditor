@@ -486,6 +486,26 @@ def _close_chain(descriptors: list[int], label: str) -> None:
         raise HashingError(f"Could not close {label}") from first_error
 
 
+def _close_file_and_chain(
+    file_fd: int,
+    descriptors: list[int],
+    file_label: str,
+    chain_label: str,
+) -> None:
+    first_error: HashingError | None = None
+    try:
+        _close_fd(file_fd, file_label)
+    except HashingError as exc:
+        first_error = exc
+    try:
+        _close_chain(descriptors, chain_label)
+    except HashingError as exc:
+        if first_error is None:
+            first_error = exc
+    if first_error is not None:
+        raise first_error
+
+
 def _open_file_path(path: Path) -> tuple[int, list[int], int, os.stat_result]:
     path_stat = _stat_path(path)
     _ensure_regular(path_stat, str(path), "before open")
@@ -540,9 +560,13 @@ def _hash_file_bytes(path: Path) -> str:
     try:
         parent_stat = _fstat(parent_fd, str(path.parent), "before streaming")
     except BaseException:
-        _close_fd(file_fd, f"annotation file {path}")
         try:
-            _close_chain(descriptors, f"annotation path {path}")
+            _close_file_and_chain(
+                file_fd,
+                descriptors,
+                f"annotation file {path}",
+                f"annotation path {path}",
+            )
         except HashingError:
             pass
         raise
@@ -556,13 +580,24 @@ def _hash_file_bytes(path: Path) -> str:
         if byte_count != path_stat.st_size or byte_count != streamed.st_size:
             raise HashingError(f"Annotation file byte count changed during streaming: {path}")
     except BaseException:
+        try:
+            _close_file_and_chain(
+                file_fd,
+                descriptors,
+                f"annotation file {path}",
+                f"annotation path {path}",
+            )
+        except HashingError:
+            pass
+        raise
+    try:
         _close_fd(file_fd, f"annotation file {path}")
+    except HashingError:
         try:
             _close_chain(descriptors, f"annotation path {path}")
         except HashingError:
             pass
         raise
-    _close_fd(file_fd, f"annotation file {path}")
     try:
         after = _stat_at(parent_fd, path.name, str(path))
         _ensure_regular(after, str(path), "after close")

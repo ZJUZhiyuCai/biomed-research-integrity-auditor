@@ -3788,6 +3788,45 @@ class BriaBenchRegistryTests(unittest.TestCase):
                 hashing_module._close_chain([1, 2, 3], "test descriptor chain")
         self.assertEqual(attempted, [3, 2, 1])
 
+    def test_hash_file_close_failure_still_closes_directory_chain(self) -> None:
+        self.require_secure_hashing()
+        annotation = self.root / "close-failure-annotation.json"
+        annotation.write_bytes(b"sealed")
+        real_close_fd = hashing_module._close_fd
+        real_close_chain = hashing_module._close_chain
+        file_close_failed = False
+        chain_attempted = False
+
+        def fail_file_close_once(descriptor: int, label: str) -> None:
+            nonlocal file_close_failed
+            if label.startswith("annotation file") and not file_close_failed:
+                file_close_failed = True
+                real_close_fd(descriptor, label)
+                raise HashingError("injected annotation close failure")
+            real_close_fd(descriptor, label)
+
+        def record_chain_close(descriptors: list[int], label: str) -> None:
+            nonlocal chain_attempted
+            chain_attempted = True
+            real_close_chain(descriptors, label)
+
+        with (
+            patch.object(
+                hashing_module,
+                "_close_fd",
+                side_effect=fail_file_close_once,
+            ),
+            patch.object(
+                hashing_module,
+                "_close_chain",
+                side_effect=record_chain_close,
+            ),
+        ):
+            with self.assertRaisesRegex(HashingError, "injected annotation close"):
+                hash_file(annotation)
+        self.assertTrue(file_close_failed)
+        self.assertTrue(chain_attempted)
+
     def test_load_frozen_checks_shape_only_and_verify_detects_stale_package(self) -> None:
         self.require_secure_hashing()
         source = self.write_manifest("source.json", self.manifest())
