@@ -156,7 +156,8 @@ def _full_adapter() -> CommandAdapter:
         "2",
         (
             sys.executable,
-            str(_module_origin("scripts.audit_package")),
+            "-m",
+            "scripts.audit_package",
             "{package}",
             "--mode",
             "{mode}",
